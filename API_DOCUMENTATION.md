@@ -12,9 +12,11 @@
 ### Configuration
 
 #### `GET /api/config/keys`
+
 Get API keys configuration (keys masked as `"***"`).
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -27,9 +29,11 @@ Get API keys configuration (keys masked as `"***"`).
 ```
 
 #### `POST /api/config/keys`
+
 Save API keys configuration. Masked values (`"***"`) are ignored.
 
 **Request:**
+
 ```json
 {
   "keys": { "openai": "sk-...", "grok": "gsk_..." },
@@ -45,17 +49,21 @@ Save API keys configuration. Masked values (`"***"`) are ignored.
 ### Context State
 
 #### `GET /api/context-state`
+
 Get context usage state.
 
 **Response:**
+
 ```json
 { "useContextEnabled": false }
 ```
 
 #### `POST /api/context-state`
+
 Update context usage state.
 
 **Request:**
+
 ```json
 { "enabled": true }
 ```
@@ -67,6 +75,7 @@ Update context usage state.
 ### Image Processing
 
 #### `POST /api/upload`
+
 Upload and process image (OCR + AI analysis).
 
 **Content-Type:** `multipart/form-data`
@@ -74,6 +83,7 @@ Upload and process image (OCR + AI analysis).
 **Request:** Form field `image` (file, max 10MB, formats: JPEG, PNG, GIF, BMP, WEBP)
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -90,9 +100,11 @@ Upload and process image (OCR + AI analysis).
 **Note:** File deleted after processing.
 
 #### `GET /api/data`
+
 Get all processed data (images + transcriptions).
 
 **Response:**
+
 ```json
 [
   {
@@ -117,7 +129,7 @@ Get all processed data (images + transcriptions).
 
 ```javascript
 const socket = io('http://localhost:4000/data-updates', {
-  transports: ['websocket']
+  transports: ['websocket'],
 });
 ```
 
@@ -126,9 +138,11 @@ const socket = io('http://localhost:4000/data-updates', {
 ### Client → Server Events
 
 #### `transcription`
+
 Send audio transcription text chunk.
 
 **Payload:**
+
 ```json
 { "textChunk": "The interviewer is asking..." }
 ```
@@ -136,6 +150,7 @@ Send audio transcription text chunk.
 **Behavior:** Chunks accumulated per connection. Send multiple chunks before processing.
 
 #### `process_transcription`
+
 Process all accumulated transcription chunks.
 
 **Payload:** None
@@ -143,9 +158,11 @@ Process all accumulated transcription chunks.
 **Flow:** Combines chunks → AI processing → Returns answer with `messageId`
 
 #### `use_prompt`
+
 Process a previous AI response with a different prompt type.
 
 **Payload:**
+
 ```json
 {
   "promptType": "debug" | "theory" | "coding",
@@ -155,6 +172,7 @@ Process a previous AI response with a different prompt type.
 ```
 
 **Behavior:**
+
 - If `screenshotRequired: true`, waits for next screenshot upload
 - If `screenshotRequired: false`, processes immediately
 - Generates new `messageId` for the response
@@ -164,9 +182,11 @@ Process a previous AI response with a different prompt type.
 ### Server → Client Events
 
 #### `connected`
+
 Emitted on connection.
 
 **Payload:**
+
 ```json
 {
   "socketId": "abc123",
@@ -176,41 +196,51 @@ Emitted on connection.
 ```
 
 #### `screenshot_captured`
+
 Screenshot captured and ready for processing.
 
 **Payload:**
+
 ```json
 { "message": "Screenshot captured: screenshot.png" }
 ```
 
 #### `ocr_started`
+
 OCR processing started.
 
 **Payload:**
+
 ```json
 { "message": "OCR started" }
 ```
 
 #### `ocr_complete`
+
 OCR processing completed.
 
 **Payload:**
+
 ```json
 { "message": "OCR completed" }
 ```
 
 #### `ai_processing_started`
+
 AI processing started.
 
 **Payload:**
+
 ```json
 { "message": "AI processing started" }
 ```
 
 #### `ai_processing_complete`
+
 AI processing completed.
 
 **Payload:**
+
 ```json
 {
   "response": "AI-generated response...",
@@ -220,9 +250,11 @@ AI processing completed.
 ```
 
 #### `use_prompt_set`
+
 Prompt type set (waiting or processing).
 
 **Payload:**
+
 ```json
 {
   "promptType": "debug",
@@ -234,9 +266,11 @@ Prompt type set (waiting or processing).
 ```
 
 #### `use_prompt_error`
+
 Error with use_prompt request.
 
 **Payload:**
+
 ```json
 {
   "error": "Invalid prompt type or messageId not found",
@@ -245,9 +279,11 @@ Error with use_prompt request.
 ```
 
 #### `aiprocessing_error`
+
 Processing error (OCR, AI, or transcription).
 
 **Payload:**
+
 ```json
 {
   "error": "Error message",
@@ -256,9 +292,11 @@ Processing error (OCR, AI, or transcription).
 ```
 
 #### `connection_status`
+
 Connection status change (e.g., disconnect).
 
 **Payload:**
+
 ```json
 {
   "status": "disconnected",
@@ -269,9 +307,11 @@ Connection status change (e.g., disconnect).
 ```
 
 #### `error`
+
 Socket error.
 
 **Payload:**
+
 ```json
 {
   "socketId": "abc123",
@@ -285,6 +325,7 @@ Socket error.
 ## Processing Flows
 
 ### Screenshot Flow
+
 1. Screenshot captured → `screenshot_captured`
 2. OCR starts → `ocr_started`
 3. OCR completes → `ocr_complete`
@@ -292,12 +333,14 @@ Socket error.
 5. AI completes → `ai_processing_complete` (with `messageId`)
 
 ### Transcription Flow
+
 1. Send chunks → `transcription` (multiple times)
 2. Process → `process_transcription`
 3. AI starts → `ai_processing_started`
 4. AI completes → `ai_processing_complete` (with `messageId`)
 
 ### Use Prompt Flow
+
 1. Request → `use_prompt` (with `messageId` from previous response)
 2. If `screenshotRequired: true` → `use_prompt_set` → wait for screenshot
 3. If `screenshotRequired: false` → `use_prompt_set` → process immediately
@@ -309,11 +352,12 @@ Socket error.
 ## Frontend Integration Guide
 
 ### Connection Setup
+
 ```javascript
 import io from 'socket.io-client';
 
 const socket = io('http://localhost:4000/data-updates', {
-  transports: ['websocket']
+  transports: ['websocket'],
 });
 
 socket.on('connected', (data) => {
@@ -322,12 +366,22 @@ socket.on('connected', (data) => {
 ```
 
 ### Screenshot Processing
+
 Listen for screenshot processing events:
+
 ```javascript
-socket.on('screenshot_captured', (data) => { /* ... */ });
-socket.on('ocr_started', (data) => { /* ... */ });
-socket.on('ocr_complete', (data) => { /* ... */ });
-socket.on('ai_processing_started', (data) => { /* ... */ });
+socket.on('screenshot_captured', (data) => {
+  /* ... */
+});
+socket.on('ocr_started', (data) => {
+  /* ... */
+});
+socket.on('ocr_complete', (data) => {
+  /* ... */
+});
+socket.on('ai_processing_started', (data) => {
+  /* ... */
+});
 socket.on('ai_processing_complete', (data) => {
   // Store messageId for use_prompt functionality
   const messageId = data.messageId;
@@ -335,7 +389,9 @@ socket.on('ai_processing_complete', (data) => {
 ```
 
 ### Audio Transcription
+
 Send transcription chunks and process:
+
 ```javascript
 // Send chunks as they arrive
 socket.emit('transcription', { textChunk: 'Chunk 1...' });
@@ -352,20 +408,22 @@ socket.on('ai_processing_complete', (data) => {
 ```
 
 ### Use Prompt Feature
+
 Process previous responses with different prompts:
+
 ```javascript
 // Process without screenshot
 socket.emit('use_prompt', {
   promptType: 'debug', // or 'theory', 'coding'
   messageId: 'msg-123...',
-  screenshotRequired: false
+  screenshotRequired: false,
 });
 
 // Process with screenshot (waits for next upload)
 socket.emit('use_prompt', {
   promptType: 'debug',
   messageId: 'msg-123...',
-  screenshotRequired: true
+  screenshotRequired: true,
 });
 
 // Listen for prompt set confirmation
@@ -382,6 +440,7 @@ socket.on('use_prompt_error', (error) => {
 ```
 
 ### Error Handling
+
 ```javascript
 socket.on('aiprocessing_error', (error) => {
   console.error('Processing error:', error.error);
@@ -403,6 +462,7 @@ socket.on('connection_status', (status) => {
 ## Audio Integration Guide
 
 ### Transcription Chunk Flow
+
 1. **Capture audio** → Convert to text (client-side or external service)
 2. **Send chunks** → `socket.emit('transcription', { textChunk: '...' })`
 3. **Accumulate** → Multiple chunks stored per connection
@@ -410,12 +470,14 @@ socket.on('connection_status', (status) => {
 5. **Receive** → `ai_processing_complete` with answer and `messageId`
 
 ### Best Practices
+
 - Send meaningful chunks (complete phrases/sentences)
 - Process when question is fully transcribed
 - Store `messageId` from responses for follow-up prompts
 - Handle errors gracefully with retry logic
 
 ### Integration Points
+
 - **Audio capture:** Use browser MediaRecorder API or external service
 - **Speech-to-text:** Integrate with Web Speech API, Google Cloud Speech, or similar
 - **Chunking:** Send chunks as they're transcribed (real-time or batched)
@@ -446,11 +508,13 @@ Every AI response includes a `messageId` that can be used with `use_prompt`:
 ## Error Handling
 
 ### REST API
+
 - `200` - Success
 - `400` - Bad Request (invalid input)
 - `500` - Server Error
 
 ### WebSocket
+
 - `aiprocessing_error` - Processing errors
 - `use_prompt_error` - Prompt request errors
 - `error` - Socket errors
