@@ -49,19 +49,32 @@ Real-time status events pushed to connected clients (OCR started, AI processing,
 
 ## Setup
 
+**1. Configure API keys**
 ```bash
-# Install dependencies
+cp .env.example .env                                    # Add your OpenAI / Groq / Gemini keys
+cp api-keys.json.example backend/config/api-keys.json   # Set provider order and fallback
+```
+
+**2. Install dependencies**
+```bash
 npm install
+```
 
-# Configure API keys
-cp .env.example .env       # Add your OpenAI / Groq / Gemini keys
-cp api-keys.json.example backend/config/api-keys.json
+**3. Start everything**
+```bash
+./start.sh              # Starts Node backend + Python transcriber + Electron HUD
+./start.sh small        # Optional: specify Whisper model (tiny | base | small | medium | large)
+```
 
-# Start the backend
-npm start
+This single script starts all three services, waits for the backend to be ready, streams live logs from each service, and shuts everything down cleanly on `Ctrl+C`.
 
-# Start the Electron overlay (separate terminal)
-npm run hud
+**Logs** are written to `logs/node.log`, `logs/transcriber.log`, and `logs/electron.log`.
+
+**Alternatively, start services individually:**
+```bash
+npm start               # Node backend only (port 4000)
+npm run hud             # Electron overlay only
+cd transcriber && python main.py  # Python transcriber only
 ```
 
 ---
