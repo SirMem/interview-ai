@@ -7,6 +7,8 @@ dotenv.config();
 
 const log = logger('ImageProcessingService');
 
+const MAX_PROCESSED_DATA = 100; // Cap in-memory history to prevent unbounded growth
+
 class ImageProcessingService {
   constructor() {
     this.processedData = [];
@@ -41,6 +43,10 @@ class ImageProcessingService {
 
   addProcessedData(data) {
     this.processedData.push(data);
+    // Keep only the most recent entries to prevent unbounded memory growth
+    if (this.processedData.length > MAX_PROCESSED_DATA) {
+      this.processedData = this.processedData.slice(-MAX_PROCESSED_DATA);
+    }
     // COMMENTED OUT: Frontend removed - no longer needed
     // // Notify WebSocket clients about the new data
     // this.dataHandlers.forEach((handler) => {
@@ -203,15 +209,7 @@ class ImageProcessingService {
         usedContext: actuallyUsedContext,
       };
 
-      this.processedData.push(processedItem);
-
-      // COMMENTED OUT: Frontend removed - no longer needed
-      // // Notify WebSocket clients about the new data
-      // this.dataHandlers.forEach((handler) => {
-      //   if (handler) {
-      //     handler.notifyDataChanged(processedItem);
-      //   }
-      // });
+      this.addProcessedData(processedItem);
 
       return {
         success: true,
@@ -250,15 +248,7 @@ class ImageProcessingService {
         usedContext: false,
         type: 'image',
       };
-      this.processedData.push(errorItem);
-
-      // COMMENTED OUT: Frontend removed - no longer needed
-      // // Notify WebSocket clients about the error data
-      // this.dataHandlers.forEach((handler) => {
-      //   if (handler) {
-      //     handler.notifyDataChanged(errorItem);
-      //   }
-      // });
+      this.addProcessedData(errorItem);
 
       throw err;
     }

@@ -39,6 +39,16 @@ Constraints: <key constraints>
 **For Theoretical Questions:**
 Question: <the exact theoretical question extracted from transcription>
 
-Answer: <comprehensive answer explaining the concept, including relevant details, examples, trade-offs, and best practices>
+Answer:
+<2-3 sentences: accurate, plain-English explanation of what the concept actually is and why it matters. This is the core understanding the interviewer is looking for.>
+
+Key points:
+- <specific technical detail or mechanism>
+- <important distinction, edge case, or trade-off>
+- <real-world example or where you'd encounter this>
+- <additional key point if relevant>
+- <additional key point if relevant>
+
+Rules: bullets must be accurate and complete (no word limit — correctness over brevity). No "In summary" lines.
 -----
 

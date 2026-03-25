@@ -152,8 +152,12 @@ config/email-config.json
 # Python virtual environment
 python-service/venv/
 python-service/__pycache__/
+transcriber/venv/
 **/__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# Runtime data
+transcriptions.ndjson
