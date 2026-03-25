@@ -17,16 +17,33 @@ const CONFIG_FILE_PATH = path.join(
   'api-keys.json',
 );
 
+const PROMPT_FILE_MAP = {
+  system: 'system-prompt.txt',
+  context: 'context-prompt.txt',
+  transcription: 'transcription-prompt.txt',
+  debug: 'debug-prompt.txt',
+  coding: 'coding-prompt.txt',
+  theory: 'theory-prompt.txt',
+};
+
 class AIService {
   constructor() {
     this.config = null;
     this.loadConfig();
-    // Track failed providers with timestamps
-    // Format: { providerId: timestamp }
+
+    // Track failed providers: { providerId -> { failedAt, failures } }
     this.failedProviders = new Map();
-    // Retry failed providers after 5 minutes (300000 ms)
-    this.FAILURE_TIMEOUT = 5 * 60 * 1000;
+
+    // Cache for prompt file contents — loaded at startup, refreshed via fs.watch
+    this._promptCache = new Map();
+    this._loadAllPrompts();
+
+    // Watch config file and prompts directory for changes
+    this._watchConfig();
+    this._watchPrompts();
   }
+
+  // ==================== Config Management ====================
 
   loadConfig() {
     try {
@@ -34,13 +51,7 @@ class AIService {
         const configData = fs.readFileSync(CONFIG_FILE_PATH, 'utf8');
         this.config = JSON.parse(configData);
       } else {
-        // Fallback to environment variables for backward compatibility
-        this.config = {
-          keys: {},
-          order: [],
-        };
-
-        // Check for env vars and add them
+        this.config = { keys: {}, order: [] };
         if (process.env.OPENAI_API_KEY) {
           this.config.keys.openai = process.env.OPENAI_API_KEY;
           this.config.order.push('openai');
@@ -60,181 +71,223 @@ class AIService {
     }
   }
 
-  reloadConfig() {
-    this.loadConfig();
+  _watchConfig() {
+    let debounceTimer = null;
+    try {
+      const dir = path.dirname(CONFIG_FILE_PATH);
+      const filename = path.basename(CONFIG_FILE_PATH);
+      if (fs.existsSync(dir)) {
+        fs.watch(dir, (event, changedFile) => {
+          if (changedFile === filename) {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              this.loadConfig();
+              log.info('Config reloaded due to file change');
+            }, 150);
+          }
+        });
+      }
+    } catch (err) {
+      log.warn('Could not watch config file for changes', { error: err.message });
+    }
+  }
+
+  // ==================== Prompt Cache ====================
+
+  _loadAllPrompts() {
+    const promptsDir = path.join(process.cwd(), 'prompts');
+    for (const [type, filename] of Object.entries(PROMPT_FILE_MAP)) {
+      try {
+        const promptPath = path.join(promptsDir, filename);
+        const content = fs.readFileSync(promptPath, 'utf8').trim();
+        this._promptCache.set(type, content);
+      } catch (err) {
+        log.warn(`Could not load prompt file for type: ${type}`);
+      }
+    }
+    log.info(`Prompt cache loaded (${this._promptCache.size} prompts)`);
+  }
+
+  _watchPrompts() {
+    let debounceTimer = null;
+    try {
+      const promptsDir = path.join(process.cwd(), 'prompts');
+      if (fs.existsSync(promptsDir)) {
+        fs.watch(promptsDir, () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            this._loadAllPrompts();
+            log.info('Prompt cache refreshed due to file change');
+          }, 150);
+        });
+      }
+    } catch (err) {
+      log.warn('Could not watch prompts directory', { error: err.message });
+    }
+  }
+
+  readPromptFromFile(promptType = 'system') {
+    const cached = this._promptCache.get(promptType);
+    if (cached) return cached;
+    log.warn(`Prompt type "${promptType}" not in cache, using default`);
+    return 'Analyze this screenshot text and provide insights';
+  }
+
+  readContextPromptFromFile(context, promptType = 'context') {
+    const cached = this._promptCache.get(promptType);
+    if (cached) {
+      return cached.replace('{CONTEXT}', context || 'No previous context available');
+    }
+    log.warn(`Context prompt type "${promptType}" not in cache, using default`);
+    return `Previous context:\n${context}\n\nAnalyze this screenshot text and provide insights`;
+  }
+
+  readTranscriptionPromptFromFile(promptType = 'transcription') {
+    const cached = this._promptCache.get(promptType);
+    if (cached) return cached;
+    log.warn(`Transcription prompt type "${promptType}" not in cache, using default`);
+    return 'Identify the coding interview question from this transcription and provide a complete solution.';
+  }
+
+  // ==================== Provider Failure Tracking (exponential backoff) ====================
+
+  /**
+   * Returns the backoff delay in ms for a given failure count.
+   * 1 failure → 30s, 2 → 60s, 3 → 120s, 4+ → max 600s
+   */
+  _getBackoffMs(failures) {
+    return Math.min(30_000 * Math.pow(2, failures - 1), 600_000);
+  }
+
+  markProviderAsFailed(providerId) {
+    const existing = this.failedProviders.get(providerId);
+    const failures = existing ? existing.failures + 1 : 1;
+    this.failedProviders.set(providerId, { failedAt: Date.now(), failures });
+    const backoffSec = Math.round(this._getBackoffMs(failures) / 1000);
+    log.warn(`Marked ${providerId} as failed`, { failures, retryInSec: backoffSec });
+  }
+
+  markProviderAsSuccess(providerId) {
+    if (this.failedProviders.has(providerId)) {
+      this.failedProviders.delete(providerId);
+      log.info(`${providerId} recovered — removed from failed list`);
+    }
   }
 
   getAvailableProviders() {
-    this.reloadConfig();
-    if (!this.config) {
-      return [];
-    }
+    if (!this.config) return [];
 
-    // Use enabled providers if specified, otherwise fall back to order with keys
     const enabledProviders = this.config.enabled || [];
     const providersToUse =
       enabledProviders.length > 0
         ? enabledProviders
-        : (this.config.order || []).filter((providerId) => {
-            const key = this.config.keys[providerId];
+        : (this.config.order || []).filter((id) => {
+            const key = this.config.keys[id];
             return key && key.trim().length > 0;
           });
 
-    // Filter to only include providers that have keys
-    const availableProviders = providersToUse.filter((providerId) => {
-      const key = this.config.keys[providerId];
+    const availableProviders = providersToUse.filter((id) => {
+      const key = this.config.keys[id];
       return key && key.trim().length > 0;
     });
 
-    // Filter out recently failed providers (unless timeout has passed)
     const now = Date.now();
     return availableProviders.filter((providerId) => {
-      const failedAt = this.failedProviders.get(providerId);
-      if (!failedAt) {
-        return true; // Provider hasn't failed, include it
-      }
+      const entry = this.failedProviders.get(providerId);
+      if (!entry) return true;
 
-      // Check if failure timeout has passed
-      const timeSinceFailure = now - failedAt;
-      if (timeSinceFailure >= this.FAILURE_TIMEOUT) {
-        // Timeout passed, remove from failed list and retry
+      const { failedAt, failures } = entry;
+      const backoff = this._getBackoffMs(failures);
+      if (now - failedAt >= backoff) {
         this.failedProviders.delete(providerId);
-        log.info(`Retrying ${providerId} after timeout`, {
-          timeSinceFailure: `${Math.round(timeSinceFailure / 1000)}s`,
+        log.info(`Retrying ${providerId} after backoff`, {
+          failures,
+          elapsed: `${Math.round((now - failedAt) / 1000)}s`,
         });
         return true;
       }
-
-      // Provider failed recently, skip it
       return false;
     });
   }
 
-  markProviderAsFailed(providerId) {
-    this.failedProviders.set(providerId, Date.now());
-    log.warn(`Marked ${providerId} as failed`, {
-      retryAfter: `${this.FAILURE_TIMEOUT / 1000}s`,
-    });
-  }
-
-  markProviderAsSuccess(providerId) {
-    // Clear failed status if provider succeeds
-    if (this.failedProviders.has(providerId)) {
-      this.failedProviders.delete(providerId);
-      log.info(`${providerId} recovered - removed from failed list`);
-    }
-  }
+  // ==================== Non-streaming AI calls ====================
 
   async callOpenAI(messages, options = {}) {
     const apiKey = this.config?.keys?.openai;
-    if (!apiKey) {
-      throw new Error('OpenAI API key not configured');
-    }
-
-    const openai = new OpenAI({
-      apiKey: apiKey,
-    });
-
+    if (!apiKey) throw new Error('OpenAI API key not configured');
+    const openai = new OpenAI({ apiKey });
     const completion = await openai.chat.completions.create({
       model: options.model || 'gpt-4o-mini',
-      messages: messages,
+      messages,
       temperature: options.temperature || 0.7,
       max_tokens: options.max_tokens || 2048,
     });
-
     return completion.choices[0]?.message?.content || 'No response generated';
   }
 
   async callGrok(messages, options = {}) {
     const apiKey = this.config?.keys?.grok;
-    if (!apiKey) {
-      throw new Error('Grok API key not configured');
-    }
-
-    const groq = new Groq({
-      apiKey: apiKey,
-    });
-
+    if (!apiKey) throw new Error('Grok API key not configured');
+    const groq = new Groq({ apiKey });
     const completion = await groq.chat.completions.create({
       model: options.model || 'llama-3.3-70b-versatile',
-      messages: messages,
+      messages,
       temperature: options.temperature || 0.7,
       max_tokens: options.max_tokens || 2048,
     });
-
     return completion.choices[0]?.message?.content || 'No response generated';
   }
 
   async callGemini(messages, options = {}) {
     const apiKey = this.config?.keys?.gemini;
-    if (!apiKey) {
-      throw new Error('Gemini API key not configured');
-    }
-
+    if (!apiKey) throw new Error('Gemini API key not configured');
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: options.model || 'gemini-2.5-flash',
     });
-
-    // Convert messages format for Gemini
-    // Gemini expects a single prompt string or structured content
     const userMessage = messages.find((m) => m.role === 'user')?.content || '';
     const systemMessage =
       messages.find((m) => m.role === 'system')?.content || '';
-
     const prompt = systemMessage
       ? `${systemMessage}\n\n${userMessage}`
       : userMessage;
-
     const result = await model.generateContent(prompt);
     const response = await result.response;
     return response.text() || 'No response generated';
   }
 
   async callAIWithFallback(messages, options = {}) {
-    // Get providers, excluding recently failed ones
     const providers = this.getAvailableProviders();
 
     if (providers.length === 0) {
-      // Check if all providers are failed (but timeout hasn't passed)
-      this.reloadConfig();
-      const enabledProviders = this.config?.enabled || this.config?.order || [];
-      const allProviders = enabledProviders.filter((providerId) => {
-        const key = this.config?.keys?.[providerId];
-        return key && key.trim().length > 0;
-      });
+      const allProviders = (
+        this.config?.enabled ||
+        this.config?.order || []
+      ).filter((id) => this.config?.keys?.[id]?.trim());
 
-      if (allProviders.length > 0) {
-        const failedCount = Array.from(this.failedProviders.keys()).length;
-        if (failedCount > 0) {
-          const now = Date.now();
-          const failedList = Array.from(this.failedProviders.entries())
-            .map(([id, timestamp]) => {
-              const timeLeft = Math.ceil(
-                (this.FAILURE_TIMEOUT - (now - timestamp)) / 1000,
-              );
-              return `${id} (retry in ${timeLeft}s)`;
-            })
-            .join(', ');
-
-          throw new Error(
-            `All AI providers are temporarily unavailable. Failed providers: ${failedList}. Will retry after timeout.`,
-          );
-        }
+      if (allProviders.length > 0 && this.failedProviders.size > 0) {
+        const now = Date.now();
+        const failedList = Array.from(this.failedProviders.entries())
+          .map(([id, { failedAt, failures }]) => {
+            const backoff = this._getBackoffMs(failures);
+            const timeLeft = Math.ceil((backoff - (now - failedAt)) / 1000);
+            return `${id} (retry in ${timeLeft}s)`;
+          })
+          .join(', ');
+        throw new Error(
+          `All AI providers temporarily unavailable: ${failedList}`,
+        );
       }
-
       throw new Error(
         'No AI providers configured. Please configure at least one API key.',
       );
     }
 
     let lastError = null;
-
     for (const providerId of providers) {
       try {
         log.debug(`Trying AI provider: ${providerId}`);
         let response;
-
         switch (providerId) {
           case 'openai':
             response = await this.callOpenAI(messages, options);
@@ -248,122 +301,145 @@ class AIService {
           default:
             throw new Error(`Unknown provider: ${providerId}`);
         }
-
-        // Mark provider as successful (clear any failed status)
         this.markProviderAsSuccess(providerId);
         log.info(`Success with AI provider: ${providerId}`);
-        return {
-          message: {
-            content: response,
-          },
-          provider: providerId,
-        };
+        return { message: { content: response }, provider: providerId };
       } catch (err) {
         log.warn(`${providerId} failed`, { error: err.message });
-        // Mark provider as failed
         this.markProviderAsFailed(providerId);
         lastError = err;
-        // Continue to next provider
       }
     }
 
-    // All available providers failed (they're now marked as failed)
     throw new Error(
-      `All AI providers failed. Last error: ${
-        lastError?.message || 'Unknown error'
-      }`,
+      `All AI providers failed. Last error: ${lastError?.message || 'Unknown error'}`,
     );
   }
 
-  readPromptFromFile(promptType = 'system') {
-    try {
-      // Map prompt types to filenames
-      const promptFileMap = {
-        system: 'system-prompt.txt',
-        context: 'context-prompt.txt',
-        transcription: 'transcription-prompt.txt',
-        debug: 'debug-prompt.txt',
-        coding: 'coding-prompt.txt',
-        theory: 'theory-prompt.txt',
-      };
+  // ==================== Streaming AI calls ====================
 
-      const filename = promptFileMap[promptType] || 'system-prompt.txt';
-      const promptPath = path.join(process.cwd(), 'prompts', filename);
-      return fs.readFileSync(promptPath, 'utf8').trim();
-    } catch (err) {
-      log.warn(
-        `Could not read prompt file (${promptType}), using default prompt`,
-      );
-      return 'Analyze this screenshot text and provide insights';
+  async *streamOpenAI(messages, options = {}) {
+    const apiKey = this.config?.keys?.openai;
+    if (!apiKey) throw new Error('OpenAI API key not configured');
+    const openai = new OpenAI({ apiKey });
+    const stream = await openai.chat.completions.create({
+      model: options.model || 'gpt-4o-mini',
+      messages,
+      temperature: options.temperature || 0.7,
+      max_tokens: options.max_tokens || 2048,
+      stream: true,
+    });
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content || '';
+      if (token) yield token;
     }
   }
 
-  readContextPromptFromFile(context, promptType = 'context') {
-    try {
-      // Map prompt types to filenames
-      const promptFileMap = {
-        system: 'system-prompt.txt',
-        context: 'context-prompt.txt',
-        transcription: 'transcription-prompt.txt',
-        debug: 'debug-prompt.txt',
-        coding: 'coding-prompt.txt',
-        theory: 'theory-prompt.txt',
-      };
-
-      const filename = promptFileMap[promptType] || 'context-prompt.txt';
-      const promptPath = path.join(process.cwd(), 'prompts', filename);
-      let contextPrompt = fs.readFileSync(promptPath, 'utf8').trim();
-      contextPrompt = contextPrompt.replace(
-        '{CONTEXT}',
-        context || 'No previous context available',
-      );
-      return contextPrompt;
-    } catch (err) {
-      log.warn(
-        `Could not read context prompt file (${promptType}), using default prompt`,
-      );
-      return `Previous context:\n${context}\n\nAnalyze this screenshot text and provide insights`;
+  async *streamGrok(messages, options = {}) {
+    const apiKey = this.config?.keys?.grok;
+    if (!apiKey) throw new Error('Grok API key not configured');
+    const groq = new Groq({ apiKey });
+    const stream = await groq.chat.completions.create({
+      model: options.model || 'llama-3.3-70b-versatile',
+      messages,
+      temperature: options.temperature || 0.7,
+      max_tokens: options.max_tokens || 2048,
+      stream: true,
+    });
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content || '';
+      if (token) yield token;
     }
   }
 
-  readTranscriptionPromptFromFile(promptType = 'transcription') {
-    try {
-      // Map prompt types to filenames
-      const promptFileMap = {
-        system: 'system-prompt.txt',
-        context: 'context-prompt.txt',
-        transcription: 'transcription-prompt.txt',
-        debug: 'debug-prompt.txt',
-        coding: 'coding-prompt.txt',
-        theory: 'theory-prompt.txt',
-      };
-
-      const filename = promptFileMap[promptType] || 'transcription-prompt.txt';
-      const promptPath = path.join(process.cwd(), 'prompts', filename);
-      return fs.readFileSync(promptPath, 'utf8').trim();
-    } catch (err) {
-      log.warn(
-        `Could not read transcription prompt file (${promptType}), using default prompt`,
-      );
-      return 'Identify the coding interview question from this transcription and provide a complete solution.';
+  async *streamGemini(messages, options = {}) {
+    const apiKey = this.config?.keys?.gemini;
+    if (!apiKey) throw new Error('Gemini API key not configured');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: options.model || 'gemini-2.5-flash',
+    });
+    const userMessage = messages.find((m) => m.role === 'user')?.content || '';
+    const systemMessage =
+      messages.find((m) => m.role === 'system')?.content || '';
+    const prompt = systemMessage
+      ? `${systemMessage}\n\n${userMessage}`
+      : userMessage;
+    const result = await model.generateContentStream(prompt);
+    for await (const chunk of result.stream) {
+      const token = chunk.text() || '';
+      if (token) yield token;
     }
   }
+
+  /**
+   * Streams tokens from the first available provider.
+   * Falls back to the next provider if connection fails before any tokens arrive.
+   * Yields { token, provider } objects.
+   */
+  async *callAIWithFallbackStream(messages, options = {}) {
+    const providers = this.getAvailableProviders();
+
+    if (providers.length === 0) {
+      throw new Error('No AI providers available for streaming.');
+    }
+
+    let lastError = null;
+
+    for (const providerId of providers) {
+      try {
+        let gen;
+        switch (providerId) {
+          case 'openai':
+            gen = this.streamOpenAI(messages, options);
+            break;
+          case 'grok':
+            gen = this.streamGrok(messages, options);
+            break;
+          case 'gemini':
+            gen = this.streamGemini(messages, options);
+            break;
+          default:
+            throw new Error(`Unknown provider: ${providerId}`);
+        }
+
+        // Await the first token — surfaces connection/auth errors before we start yielding
+        const first = await gen.next();
+
+        // Successfully connected — clear any failure tracking
+        this.markProviderAsSuccess(providerId);
+        log.info(`Streaming with provider: ${providerId}`);
+
+        if (!first.done && first.value) {
+          yield { token: first.value, provider: providerId };
+        }
+
+        for await (const token of gen) {
+          if (token) yield { token, provider: providerId };
+        }
+
+        return; // Done
+      } catch (err) {
+        log.warn(`${providerId} streaming failed`, { error: err.message });
+        this.markProviderAsFailed(providerId);
+        lastError = err;
+        // Try next provider
+      }
+    }
+
+    throw new Error(
+      `All AI providers failed for streaming. Last error: ${lastError?.message}`,
+    );
+  }
+
+  // ==================== High-level API (non-streaming) ====================
 
   async askGpt(text, promptType = null) {
-    this.reloadConfig();
     const systemPrompt = this.readPromptFromFile(promptType || 'system');
-
     const messages = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-      {
-        role: 'user',
-        content: `Screenshot text:\n${text}`,
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Screenshot text:\n${text}` },
     ];
-
     return await this.callAIWithFallback(messages, {
       temperature: 0.7,
       max_tokens: 2048,
@@ -371,23 +447,14 @@ class AIService {
   }
 
   async askGptWithContext(text, previousResponse, promptType = null) {
-    this.reloadConfig();
     const systemPrompt = this.readContextPromptFromFile(
       previousResponse,
       promptType || 'context',
     );
-
     const messages = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-      {
-        role: 'user',
-        content: `Screenshot text:\n${text}`,
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Screenshot text:\n${text}` },
     ];
-
     return await this.callAIWithFallback(messages, {
       temperature: 0.7,
       max_tokens: 2048,
@@ -395,8 +462,6 @@ class AIService {
   }
 
   async askGptQuestion(question) {
-    this.reloadConfig();
-
     const prompt = `Answer this technical question clearly and comprehensively.
 
 If the question is about programming:
@@ -418,12 +483,8 @@ Question: ${question}`;
         content:
           'You are a helpful technical assistant specializing in programming and software development. Provide clear, accurate, and practical answers to technical questions.',
       },
-      {
-        role: 'user',
-        content: prompt,
-      },
+      { role: 'user', content: prompt },
     ];
-
     return await this.callAIWithFallback(messages, {
       temperature: 0.7,
       max_tokens: 2048,
@@ -431,23 +492,66 @@ Question: ${question}`;
   }
 
   async askGptTranscription(transcriptionText, promptType = null) {
-    this.reloadConfig();
     const systemPrompt = this.readTranscriptionPromptFromFile(
       promptType || 'transcription',
     );
-
     const messages = [
-      {
-        role: 'system',
-        content: systemPrompt,
-      },
-      {
-        role: 'user',
-        content: `Live transcription:\n${transcriptionText}`,
-      },
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Live transcription:\n${transcriptionText}` },
     ];
-
     return await this.callAIWithFallback(messages, {
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+  }
+
+  // ==================== High-level API (streaming) ====================
+
+  /**
+   * Streaming version of askGpt. Yields { token, provider } objects.
+   */
+  async *askGptStream(text, promptType = null) {
+    const systemPrompt = this.readPromptFromFile(promptType || 'system');
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Screenshot text:\n${text}` },
+    ];
+    yield* this.callAIWithFallbackStream(messages, {
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+  }
+
+  /**
+   * Streaming version of askGptTranscription. Yields { token, provider } objects.
+   */
+  async *askGptTranscriptionStream(transcriptionText, promptType = null) {
+    const systemPrompt = this.readTranscriptionPromptFromFile(
+      promptType || 'transcription',
+    );
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Live transcription:\n${transcriptionText}` },
+    ];
+    yield* this.callAIWithFallbackStream(messages, {
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+  }
+
+  /**
+   * Streaming version of askGptWithContext. Yields { token, provider } objects.
+   */
+  async *askGptWithContextStream(text, previousResponse, promptType = null) {
+    const systemPrompt = this.readContextPromptFromFile(
+      previousResponse,
+      promptType || 'context',
+    );
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Screenshot text:\n${text}` },
+    ];
+    yield* this.callAIWithFallbackStream(messages, {
       temperature: 0.7,
       max_tokens: 2048,
     });

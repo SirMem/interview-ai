@@ -405,6 +405,9 @@ class ScreenshotMonitorService {
               // Get socket from namespace
               const socket = handler.namespace?.sockets?.get(socketId) || null;
 
+              // Cancel the fallback timeout and clear pending prompt before processing
+              handler.clearPendingPrompt(socketId);
+
               // Process the prompt with the extracted text from screenshot
               const screenshotText = result?.extractedText || '';
               await handler.processPromptWithQuestion(
@@ -415,9 +418,6 @@ class ScreenshotMonitorService {
                 pendingPrompt.answer,
                 screenshotText,
               );
-
-              // Clear the pending prompt
-              handler.clearPendingPrompt(socketId);
               break; // Only process one pending prompt per screenshot
             }
           }

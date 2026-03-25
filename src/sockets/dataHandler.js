@@ -9,7 +9,7 @@
  *
  * 2. Transcription Flow:
  *    - Receives text_chunk events → Accumulates chunks → process_transcription event
- *    - AI processing with 'transcription' prompt
+ *    - AI processing with 'transcription' prompt (streamed token-by-token)
  *    - Generates messageId and stores question/answer
  */
 import { EventEmitter } from 'events';
@@ -21,66 +21,78 @@ const log = logger('DataHandler');
 
 // Constants
 const VALID_PROMPT_TYPES = ['debug', 'theory', 'coding'];
-const DEFAULT_PROMPT_TYPE = 'transcription'; // Default for transcription flow
-const SCREENSHOT_PROMPT_TYPE = 'system'; // Default for screenshot flow
+const DEFAULT_PROMPT_TYPE = 'transcription';
+const SCREENSHOT_PROMPT_TYPE = 'system';
+
+// Message data TTL: expire entries older than 30 minutes
+const MESSAGE_TTL_MS = 30 * 60 * 1000;
+// Cleanup interval: run every 5 minutes
+const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 class DataHandler extends EventEmitter {
   constructor(io) {
     super();
     this.io = io;
     this.namespace = null;
-    this.transcriptionChunks = new Map(); // Store transcription chunks per socket connection
-    this.selectedPrompts = new Map(); // Store selected prompt type per socket connection
-    this.messageData = new Map(); // Store messageId -> {question, answer, promptType, socketId, timestamp}
-    this.pendingPrompts = new Map(); // Store pending prompts waiting for screenshots: socketId -> {promptType, messageId, screenshotRequired, question, answer}
+    this.transcriptionChunks = new Map();
+    this.selectedPrompts = new Map();
+    this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
+    this.pendingPrompts = new Map();
+    this._cleanupTimer = null;
     this.setupNamespace();
+    this._startMessageCleanup();
   }
 
   setupNamespace() {
     this.namespace = this.io.of('/data-updates');
     log.info('Setting up /data-updates namespace');
-
     this.namespace.on('connection', (socket) => {
       this.handleConnection(socket);
     });
-
     log.info('Namespace setup complete');
   }
 
-  /**
-   * Handle new socket connection
-   */
+  // ==================== TTL Cleanup ====================
+
+  _startMessageCleanup() {
+    this._cleanupTimer = setInterval(() => {
+      const now = Date.now();
+      let removed = 0;
+      for (const [id, data] of this.messageData) {
+        if (now - data.timestamp > MESSAGE_TTL_MS) {
+          this.messageData.delete(id);
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        log.info(`TTL cleanup: removed ${removed} expired message(s), ${this.messageData.size} remaining`);
+      }
+    }, CLEANUP_INTERVAL_MS);
+
+    // Don't block process exit
+    if (this._cleanupTimer.unref) this._cleanupTimer.unref();
+  }
+
+  // ==================== Connection Handling ====================
+
   handleConnection(socket) {
     log.info('Client connected', { socketId: socket.id });
-
-    // Emit connected event
     this.emitToSocket(socket, 'connected', {
       socketId: socket.id,
       connectedAt: new Date().toISOString(),
       timestamp: Date.now(),
     });
 
-    // Register event handlers
     socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
     socket.on('error', (error) => this.handleError(socket, error));
     socket.on('use_prompt', (data) => this.handleUsePrompt(socket, data));
-    socket.on('transcription', (data) =>
-      this.handleTranscription(socket, data),
-    );
-    socket.on('process_transcription', () =>
-      this.handleProcessTranscription(socket),
-    );
+    socket.on('transcription', (data) => this.handleTranscription(socket, data));
+    socket.on('process_transcription', () => this.handleProcessTranscription(socket));
   }
 
-  /**
-   * Handle socket disconnect
-   */
   handleDisconnect(socket, reason) {
     log.info('Client disconnected', { socketId: socket.id, reason });
-
-    // Clean up socket-specific data
     this.cleanupSocketData(socket.id);
-
     this.emitToSocket(socket, 'connection_status', {
       status: 'disconnected',
       socketId: socket.id,
@@ -89,25 +101,12 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  /**
-   * Clean up all data associated with a socket
-   */
   cleanupSocketData(socketId) {
     const cleanupActions = [
-      {
-        map: this.transcriptionChunks,
-        name: 'transcription chunks',
-      },
-      {
-        map: this.selectedPrompts,
-        name: 'selected prompt',
-      },
-      {
-        map: this.pendingPrompts,
-        name: 'pending prompt',
-      },
+      { map: this.transcriptionChunks, name: 'transcription chunks' },
+      { map: this.selectedPrompts, name: 'selected prompt' },
+      { map: this.pendingPrompts, name: 'pending prompt' },
     ];
-
     cleanupActions.forEach(({ map, name }) => {
       if (map.has(socketId)) {
         map.delete(socketId);
@@ -116,13 +115,9 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  /**
-   * Handle socket errors
-   */
   handleError(socket, error) {
     const errorMessage = error.message || 'Unknown error';
     log.error('Socket error', { socketId: socket.id, error: errorMessage });
-
     this.emitToSocket(socket, 'error', {
       socketId: socket.id,
       error: errorMessage,
@@ -130,29 +125,17 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  /**
-   * Handle use_prompt event
-   */
+  // ==================== use_prompt ====================
+
   async handleUsePrompt(socket, data) {
     const { promptType, screenshotRequired = false, messageId } = data || {};
 
-    // Validate input
-    const validationError = this.validateUsePromptInput(
-      socket,
-      promptType,
-      messageId,
-    );
-    if (validationError) {
-      return; // Error already emitted
-    }
+    const validationError = this.validateUsePromptInput(socket, promptType, messageId);
+    if (validationError) return;
 
-    // Get stored message data
     const messageData = this.messageData.get(messageId);
     if (!messageData) {
-      log.warn('Message data not found for messageId', {
-        socketId: socket.id,
-        messageId,
-      });
+      log.warn('Message data not found for messageId', { socketId: socket.id, messageId });
       this.emitToSocket(socket, 'use_prompt_error', {
         error: 'Message data not found for the provided messageId',
         messageId,
@@ -162,18 +145,11 @@ class DataHandler extends EventEmitter {
 
     const { question, answer } = messageData;
 
-    // Handle screenshot required case
     if (screenshotRequired) {
-      this.handleScreenshotRequired(socket, {
-        promptType,
-        messageId,
-        question,
-        answer,
-      });
+      this.handleScreenshotRequired(socket, { promptType, messageId, question, answer });
       return;
     }
 
-    // Process immediately without screenshot
     this.emitToSocket(socket, 'use_prompt_set', {
       promptType,
       messageId,
@@ -182,68 +158,60 @@ class DataHandler extends EventEmitter {
       timestamp: Date.now(),
     });
 
-    await this.processPromptWithQuestion(
-      socket,
-      promptType,
-      messageId,
-      question,
-      answer,
-      null, // No screenshot text
-    );
+    await this.processPromptWithQuestion(socket, promptType, messageId, question, answer, null);
   }
 
-  /**
-   * Validate use_prompt input
-   */
   validateUsePromptInput(socket, promptType, messageId) {
-    // Validate prompt type
     if (!promptType || !VALID_PROMPT_TYPES.includes(promptType)) {
-      log.warn('Invalid prompt type received', {
-        socketId: socket.id,
-        promptType,
-        validTypes: VALID_PROMPT_TYPES,
-      });
+      log.warn('Invalid prompt type received', { socketId: socket.id, promptType });
       this.emitToSocket(socket, 'use_prompt_error', {
-        error: `Invalid prompt type. Must be one of: ${VALID_PROMPT_TYPES.join(
-          ', ',
-        )}`,
+        error: `Invalid prompt type. Must be one of: ${VALID_PROMPT_TYPES.join(', ')}`,
         received: promptType,
       });
-      return true; // Error occurred
+      return true;
     }
-
-    // Validate messageId
     if (!messageId) {
       log.warn('Missing messageId in use_prompt', { socketId: socket.id });
-      this.emitToSocket(socket, 'use_prompt_error', {
-        error: 'messageId is required',
-      });
-      return true; // Error occurred
+      this.emitToSocket(socket, 'use_prompt_error', { error: 'messageId is required' });
+      return true;
     }
-
-    return false; // No error
+    return false;
   }
 
-  /**
-   * Handle screenshot required case
-   */
-  handleScreenshotRequired(
-    socket,
-    { promptType, messageId, question, answer },
-  ) {
-    log.info('Screenshot required, waiting for screenshot', {
+  handleScreenshotRequired(socket, { promptType, messageId, question, answer }) {
+    log.info('Screenshot required, waiting up to 3s for screenshot', {
       socketId: socket.id,
       messageId,
       promptType,
     });
 
-    // Store pending prompt
+    const timeoutId = setTimeout(async () => {
+      const pending = this.pendingPrompts.get(socket.id);
+      if (pending && pending.messageId === messageId) {
+        log.info('Screenshot timeout elapsed, processing without screenshot', {
+          socketId: socket.id,
+          messageId,
+          promptType,
+        });
+        this.pendingPrompts.delete(socket.id);
+        this.emitToSocket(socket, 'use_prompt_set', {
+          promptType,
+          messageId,
+          screenshotRequired: false,
+          message: `Processing with ${promptType} prompt (no screenshot captured)`,
+          timestamp: Date.now(),
+        });
+        await this.processPromptWithQuestion(socket, promptType, messageId, question, answer, null);
+      }
+    }, 3000);
+
     this.pendingPrompts.set(socket.id, {
       promptType,
       messageId,
       screenshotRequired: true,
       question,
       answer,
+      timeoutId,
     });
 
     this.emitToSocket(socket, 'use_prompt_set', {
@@ -255,29 +223,19 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  /**
-   * Handle transcription chunk event
-   */
+  // ==================== Transcription ====================
+
   handleTranscription(socket, data) {
     const { textChunk } = data || {};
-
     if (!textChunk || typeof textChunk !== 'string') {
-      log.warn('Invalid transcription chunk received', {
-        socketId: socket.id,
-        data,
-      });
+      log.warn('Invalid transcription chunk received', { socketId: socket.id, data });
       return;
     }
-
-    // Initialize array if it doesn't exist for this socket
     if (!this.transcriptionChunks.has(socket.id)) {
       this.transcriptionChunks.set(socket.id, []);
     }
-
-    // Add chunk to the array
     const chunks = this.transcriptionChunks.get(socket.id);
     chunks.push(textChunk);
-
     log.debug('Transcription chunk received', {
       socketId: socket.id,
       chunkLength: textChunk.length,
@@ -286,17 +244,15 @@ class DataHandler extends EventEmitter {
   }
 
   /**
-   * Handle process_transcription event (Transcription Flow)
-   * Processes accumulated transcription chunks with 'transcription' prompt
-   * Generates messageId and stores question/answer for use_prompt functionality
+   * Processes accumulated transcription chunks using streaming AI.
+   * Emits ai_token events to the requesting socket during generation,
+   * then emits ai_processing_complete to the full namespace when done.
    */
   async handleProcessTranscription(socket) {
     const chunks = this.transcriptionChunks.get(socket.id);
 
     if (!chunks || chunks.length === 0) {
-      log.warn('No transcription chunks found for processing', {
-        socketId: socket.id,
-      });
+      log.warn('No transcription chunks found for processing', { socketId: socket.id });
       this.emitToSocket(socket, 'aiprocessing_error', {
         error: 'No transcription data available',
         message: 'Error during transcription processing',
@@ -305,47 +261,37 @@ class DataHandler extends EventEmitter {
     }
 
     try {
-      // Combine all chunks into full transcription
       const fullTranscription = chunks.join(' ');
+      const promptType = this.selectedPrompts.get(socket.id) || DEFAULT_PROMPT_TYPE;
+      const messageId = this.generateMessageId();
 
       log.info('Processing transcription', {
         socketId: socket.id,
         chunkCount: chunks.length,
         transcriptionLength: fullTranscription.length,
+        messageId,
       });
 
-      // Emit AI processing started event
       this.emitAIStarted('transcription', fullTranscription, false);
 
       const aiStartTime = Date.now();
+      let fullResponse = '';
+      let provider = 'unknown';
 
-      // Get selected prompt type for this socket (default to 'transcription')
-      const promptType =
-        this.selectedPrompts.get(socket.id) || DEFAULT_PROMPT_TYPE;
-
-      // Call AI service to process transcription
-      const aiResponse = await aiService.askGptTranscription(
+      // Stream tokens to the requesting socket
+      for await (const { token, provider: p } of aiService.askGptTranscriptionStream(
         fullTranscription,
         promptType,
-      );
+      )) {
+        fullResponse += token;
+        provider = p;
+        this.emitToSocket(socket, 'ai_token', { token, messageId });
+      }
 
       const aiDuration = Date.now() - aiStartTime;
-      const provider = aiResponse.provider || 'unknown';
-      const responseContent = aiResponse.message.content;
 
-      // Generate messageId for this transcription processing
-      const messageId = this.generateMessageId();
+      this.storeMessageData(messageId, fullTranscription, fullResponse, promptType, socket.id);
 
-      // Store question (transcription text) and answer (AI response) with messageId
-      this.storeMessageData(
-        messageId,
-        fullTranscription, // question = transcription text
-        responseContent, // answer = AI response
-        promptType, // 'transcription' prompt type
-        socket.id,
-      );
-
-      // Store the AI response in imageProcessingService
       const processedItem = {
         filename: 'transcription',
         timestamp: new Date().toLocaleString(),
@@ -353,54 +299,39 @@ class DataHandler extends EventEmitter {
           fullTranscription.substring(0, 500) +
           (fullTranscription.length > 500 ? '...' : ''),
         gptResponse:
-          responseContent.substring(0, 1000) +
-          (responseContent.length > 1000 ? '...' : ''),
+          fullResponse.substring(0, 1000) +
+          (fullResponse.length > 1000 ? '...' : ''),
         usedContext: false,
         type: 'transcription',
       };
       imageProcessingService.addProcessedData(processedItem);
+      imageProcessingService.setLastResponse(fullResponse);
 
-      // Update last response for potential context use
-      imageProcessingService.setLastResponse(responseContent);
-
-      // Clear transcription chunks after processing
       this.transcriptionChunks.delete(socket.id);
 
-      log.info('Transcription processing completed successfully', {
+      log.info('Transcription processing completed', {
         socketId: socket.id,
         messageId,
         provider,
         aiDuration: `${aiDuration}ms`,
-        responseLength: responseContent.length,
+        responseLength: fullResponse.length,
       });
 
-      // Emit AI processing complete event with messageId
-      this.emitAIComplete(
-        'transcription',
-        responseContent,
-        provider,
-        aiDuration,
-        false,
-        messageId,
-      );
+      this.emitAIComplete('transcription', fullResponse, provider, aiDuration, false, messageId);
     } catch (err) {
       log.error('Error processing transcription', {
         socketId: socket.id,
         error: err.message,
         stack: err.stack,
       });
-
-      // Clear chunks even on error
       this.transcriptionChunks.delete(socket.id);
-
-      // Emit processing error event
       this.emitProcessingError('transcription', 'transcription', err);
     }
   }
 
   /**
-   * Process prompt with question and optional screenshot text
-   * Generates a new messageId for the response and stores question/answer
+   * Processes a prompt with streaming AI.
+   * Emits ai_token to the requesting socket, ai_processing_complete to the namespace.
    */
   async processPromptWithQuestion(
     socket,
@@ -419,57 +350,36 @@ class DataHandler extends EventEmitter {
         hasScreenshotText: !!screenshotText,
       });
 
-      // Emit AI processing started event
+      const promptText = this.buildPromptText(promptType, question, answer, screenshotText);
+      const messageId = this.generateMessageId();
+
       this.emitAIStarted('prompt', question, false);
 
       const aiStartTime = Date.now();
+      let fullResponse = '';
+      let provider = 'unknown';
 
-      // Build prompt text based on prompt type
-      const promptText = this.buildPromptText(
-        promptType,
-        question,
-        answer,
-        screenshotText,
-      );
-
-      // Call AI service with appropriate prompt type
-      const gptResponse = await aiService.askGpt(promptText, promptType);
+      for await (const { token, provider: p } of aiService.askGptStream(promptText, promptType)) {
+        fullResponse += token;
+        provider = p;
+        this.emitToSocket(socket, 'ai_token', { token, messageId });
+      }
 
       const aiDuration = Date.now() - aiStartTime;
-      const provider = gptResponse.provider || 'unknown';
-      const responseContent = gptResponse.message.content;
 
-      // Generate NEW messageId for this response
-      const newMessageId = this.generateMessageId();
+      this.storeMessageData(messageId, question, fullResponse, promptType, socketId);
 
-      // Store question and answer with the NEW messageId
-      this.storeMessageData(
-        newMessageId,
-        question, // Store the question from source
-        responseContent,
-        promptType,
-        socketId,
-      );
-
-      log.info('Prompt processing completed successfully', {
+      log.info('Prompt processing completed', {
         socketId,
         sourceMessageId,
-        newMessageId,
+        newMessageId: messageId,
         promptType,
         provider,
         aiDuration: `${aiDuration}ms`,
-        responseLength: responseContent.length,
+        responseLength: fullResponse.length,
       });
 
-      // Emit AI processing complete event with NEW messageId
-      this.emitAIComplete(
-        'prompt',
-        responseContent,
-        provider,
-        aiDuration,
-        false,
-        newMessageId,
-      );
+      this.emitAIComplete('prompt', fullResponse, provider, aiDuration, false, messageId);
     } catch (err) {
       log.error('Error processing prompt with question', {
         socketId: socket?.id || 'unknown',
@@ -478,47 +388,31 @@ class DataHandler extends EventEmitter {
         error: err.message,
         stack: err.stack,
       });
-
-      // Emit processing error event
       this.emitProcessingError('prompt', 'prompt', err);
     }
   }
 
-  /**
-   * Build prompt text based on prompt type
-   */
   buildPromptText(promptType, question, answer, screenshotText) {
     switch (promptType) {
-      case 'debug':
-        // For debug: pass question, answer, and screenshot text if available
+      case 'debug': {
         let promptText = `Question: ${question}\n\nAnswer: ${answer}`;
-        if (screenshotText) {
-          promptText += `\n\nScreenshot text:\n${screenshotText}`;
-        }
+        if (screenshotText) promptText += `\n\nScreenshot text:\n${screenshotText}`;
         return promptText;
-
+      }
       case 'theory':
       case 'coding':
-        // For theory/coding: pass just the question
         return question;
-
       default:
         throw new Error(`Unknown prompt type: ${promptType}`);
     }
   }
 
-  /**
-   * Generate a unique messageId
-   */
   generateMessageId() {
     return `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
   // ==================== Message Data Management ====================
 
-  /**
-   * Store message data (question and answer) with messageId
-   */
   storeMessageData(messageId, question, answer, promptType, socketId) {
     this.messageData.set(messageId, {
       question,
@@ -536,154 +430,69 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  /**
-   * Get message data by messageId
-   */
   getMessageData(messageId) {
     return this.messageData.get(messageId) || null;
   }
 
-  // ==================== Pending Prompts Management ====================
-
-  /**
-   * Get pending prompt for a socket
-   */
   getPendingPrompt(socketId) {
     return this.pendingPrompts.get(socketId) || null;
   }
 
-  /**
-   * Clear pending prompt for a socket
-   */
   clearPendingPrompt(socketId) {
+    const pending = this.pendingPrompts.get(socketId);
+    if (pending?.timeoutId) clearTimeout(pending.timeoutId);
     this.pendingPrompts.delete(socketId);
   }
 
-  // ==================== Utility Methods ====================
-
-  /**
-   * Get selected prompt type from any active socket
-   * Returns the first available prompt type, or null if none set
-   */
   getSelectedPromptType() {
-    if (this.selectedPrompts.size === 0) {
-      return null;
-    }
+    if (this.selectedPrompts.size === 0) return null;
     return this.selectedPrompts.values().next().value;
   }
 
-  /**
-   * Emit event to a specific socket
-   */
+  // ==================== Emit Helpers ====================
+
   emitToSocket(socket, event, data) {
-    if (socket && socket.emit) {
-      socket.emit(event, data);
-    }
+    if (socket && socket.emit) socket.emit(event, data);
   }
 
-  // ==================== Event Emitters ====================
-
-  /**
-   * Emit screenshot captured event
-   */
   emitScreenshotCaptured(filename, filePath) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
+    if (!this.namespace) return;
     log.info('Screenshot captured', { filename });
     this.namespace.emit('screenshot_captured', {
       message: `Screenshot captured: ${filename}`,
     });
   }
 
-  /**
-   * Emit OCR processing started event
-   */
   emitOCRStarted(filename, filePath) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
+    if (!this.namespace) return;
     log.info('OCR started');
     this.namespace.emit('ocr_started', { message: 'OCR started' });
   }
 
-  /**
-   * Emit OCR processing completed event
-   */
   emitOCRComplete(filename, extractedText, duration) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
+    if (!this.namespace) return;
     log.info('OCR completed', { extractedTextLength: extractedText?.length });
     this.namespace.emit('ocr_complete', { message: 'OCR completed' });
   }
 
-  /**
-   * Emit AI processing started event
-   */
   emitAIStarted(filename, extractedText, useContext) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
+    if (!this.namespace) return;
     log.info('AI processing started');
-    this.namespace.emit('ai_processing_started', {
-      message: 'AI processing started',
-    });
+    this.namespace.emit('ai_processing_started', { message: 'AI processing started' });
   }
 
-  /**
-   * Emit AI processing completed event
-   */
-  emitAIComplete(
-    filename,
-    response,
-    provider,
-    duration,
-    useContext,
-    messageId = null,
-  ) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
-    log.info('AI processing completed', {
-      messageId,
-      responseLength: response?.length,
-    });
-
-    const eventData = {
-      response,
-      message: 'AI processing completed',
-    };
-
-    if (messageId) {
-      eventData.messageId = messageId;
-    }
-
+  emitAIComplete(filename, response, provider, duration, useContext, messageId = null) {
+    if (!this.namespace) return;
+    log.info('AI processing completed', { messageId, responseLength: response?.length });
+    const eventData = { response, message: 'AI processing completed' };
+    if (messageId) eventData.messageId = messageId;
     this.namespace.emit('ai_processing_complete', eventData);
   }
 
-  /**
-   * Emit processing error event
-   */
   emitProcessingError(filename, stage, error) {
-    if (!this.namespace) {
-      log.warn('Namespace not initialized, skipping emit');
-      return;
-    }
-
+    if (!this.namespace) return;
     const errorMessage = error.message || 'Unknown error';
     log.error(`Error during ${stage} processing`, { error: errorMessage });
-
     this.namespace.emit('aiprocessing_error', {
       error: errorMessage,
       message: `Error during ${stage} processing`,
