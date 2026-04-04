@@ -453,11 +453,10 @@
       to   { opacity: 1; transform: translateY(0) scale(1); }
     }
 
-    .settings-row {
-      display: grid;
-      grid-template-columns: 60px 1fr;
-      align-items: center;
-      gap: 8px;
+    .settings-section {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
     }
 
     .settings-label {
@@ -466,7 +465,6 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
       font-weight: 600;
-      white-space: nowrap;
     }
 
     .settings-select {
@@ -536,22 +534,27 @@
 
     <!-- Settings floating dropdown (anchored to hud-panel, shown via gear) -->
     <div class="settings-dropdown" id="settingsDropdown">
-      <div class="settings-row">
-        <span class="settings-label">STT</span>
+      <div class="settings-section">
+        <span class="settings-label">STT Model</span>
         <select class="settings-select" id="selectSttModel">
-          <option value="tiny">tiny – local</option>
-          <option value="base">base – local</option>
-          <option value="small" selected>small – local</option>
-          <option value="medium">medium – local</option>
-          <option value="large">large – local</option>
-          <option value="whisper-1">whisper-1 – API</option>
+          <option value="tiny">tiny – local (MLX)</option>
+          <option value="base">base – local (MLX)</option>
+          <option value="small" selected>small – local (MLX)</option>
+          <option value="medium">medium – local (MLX)</option>
+          <option value="large">large – local (MLX)</option>
+          <option value="whisper-1">whisper-1 – OpenAI API</option>
         </select>
       </div>
-      <div class="settings-row">
-        <span class="settings-label">AI</span>
+      <div class="settings-section">
+        <span class="settings-label">Question Classifier</span>
         <select class="settings-select" id="selectClassifier">
-          <option value="ollama" selected>Local (Ollama)</option>
-          <option value="remote">Remote (Grok)</option>
+          <option value="ollama:llama3.2:1b" selected>Local: llama3.2:1b</option>
+        </select>
+      </div>
+      <div class="settings-section">
+        <span class="settings-label">Answer From</span>
+        <select class="settings-select" id="selectAnswerMode">
+          <option value="auto" selected>Auto (fallback chain)</option>
         </select>
       </div>
       <div class="settings-footer">
@@ -893,12 +896,16 @@
     // ─────────────────────────────────────────────────────────────────────────
 
     // ── Settings dropdown ────────────────────────────────────────────────────
-    const btnGear          = document.getElementById('btnGear');
-    const settingsDropdown = document.getElementById('settingsDropdown');
-    const selectSttModel   = document.getElementById('selectSttModel');
-    const selectClassifier = document.getElementById('selectClassifier');
-    const settingsStatus   = document.getElementById('settingsStatus');
-    const btnSettingsApply = document.getElementById('btnSettingsApply');
+    const btnGear           = document.getElementById('btnGear');
+    const settingsDropdown  = document.getElementById('settingsDropdown');
+    const selectSttModel    = document.getElementById('selectSttModel');
+    const selectClassifier  = document.getElementById('selectClassifier');
+    const selectAnswerMode  = document.getElementById('selectAnswerMode');
+    const settingsStatus    = document.getElementById('settingsStatus');
+    const btnSettingsApply  = document.getElementById('btnSettingsApply');
+
+    const PROVIDER_LABELS = { openai: 'OpenAI', grok: 'Grok', gemini: 'Gemini' };
+    function providerLabel(p) { return PROVIDER_LABELS[p] || p; }
 
     let settingsOpen = false;
 
@@ -921,7 +928,6 @@
       settingsOpen ? closeSettings() : openSettings();
     });
 
-    // Close when clicking outside
     document.addEventListener('click', (e) => {
       if (settingsOpen && !settingsDropdown.contains(e.target) && e.target !== btnGear) {
         closeSettings();
@@ -931,36 +937,86 @@
     btnSettingsApply.addEventListener('click', () => {
       const sttModel       = selectSttModel.value;
       const classifierMode = selectClassifier.value;
+      const answerMode     = selectAnswerMode.value;
 
       btnSettingsApply.disabled = true;
       settingsStatus.style.color = '#64748b';
       settingsStatus.textContent = 'Saving…';
 
-      let pending = 2;
-      function onDone() {
-        if (--pending === 0) {
-          btnSettingsApply.disabled = false;
-          settingsStatus.style.color = '#22c55e';
-          settingsStatus.textContent = 'Saved ✓';
-          setTimeout(closeSettings, 1200);
-        }
+      let pending = 3;
+      let settled = false;
+
+      function settle() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(fallbackTimer);
+        btnSettingsApply.disabled = false;
+        settingsStatus.style.color = '#22c55e';
+        settingsStatus.textContent = 'Saved ✓';
+        setTimeout(closeSettings, 1200);
       }
 
-      const fallback = setTimeout(() => { onDone(); onDone(); }, 4000);
-      socket.once('stt_model_updated', () => { clearTimeout(fallback); onDone(); });
-      socket.once('classifier_updated', () => { clearTimeout(fallback); onDone(); });
+      function onDone() { if (--pending <= 0) settle(); }
 
-      socket.emit('set_stt_model', { model: sttModel });
-      socket.emit('set_classifier', { mode: classifierMode });
+      const fallbackTimer = setTimeout(settle, 4000);
+
+      socket.once('stt_model_updated',  onDone);
+      socket.once('classifier_updated', onDone);
+      socket.once('answer_mode_updated', onDone);
+
+      socket.emit('set_stt_model',   { model: sttModel });
+      socket.emit('set_classifier',  { mode: classifierMode });
+      socket.emit('set_answer_mode', { mode: answerMode });
     });
 
     socket.on('settings_state', (data) => {
+      // STT model
       if (data.sttModel) {
         const opt = selectSttModel.querySelector(`option[value="${data.sttModel}"]`);
         if (opt) opt.selected = true;
       }
+
+      // Question Classifier — rebuild dynamically from server data
+      const ollamaModels    = data.ollamaModels    || ['llama3.2:1b', 'llama3.2:3b'];
+      const enabledProviders = data.enabledProviders || [];
+
+      selectClassifier.innerHTML = '';
+      for (const model of ollamaModels) {
+        const opt = document.createElement('option');
+        opt.value = `ollama:${model}`;
+        opt.textContent = `Local: ${model}`;
+        selectClassifier.appendChild(opt);
+      }
+      for (const provider of enabledProviders) {
+        const opt = document.createElement('option');
+        opt.value = `remote:${provider}`;
+        opt.textContent = `Remote: ${providerLabel(provider)}`;
+        selectClassifier.appendChild(opt);
+      }
       if (data.classifierMode) {
         const opt = selectClassifier.querySelector(`option[value="${data.classifierMode}"]`);
+        if (opt) opt.selected = true;
+        else if (selectClassifier.options.length) selectClassifier.options[0].selected = true;
+      }
+
+      // Answer From — rebuild dynamically
+      selectAnswerMode.innerHTML = '';
+      const autoOpt = document.createElement('option');
+      autoOpt.value = 'auto';
+      autoOpt.textContent = 'Auto (provider chain)';
+      selectAnswerMode.appendChild(autoOpt);
+      const ollamaOpt = document.createElement('option');
+      ollamaOpt.value = 'ollama';
+      ollamaOpt.textContent = 'Local: Ollama';
+      selectAnswerMode.appendChild(ollamaOpt);
+      for (const provider of enabledProviders) {
+        const opt = document.createElement('option');
+        opt.value = provider;
+        opt.textContent = `Remote: ${providerLabel(provider)}`;
+        selectAnswerMode.appendChild(opt);
+      }
+      if (data.answerMode) {
+        const opt = selectAnswerMode.querySelector(`option[value="${data.answerMode}"]`);
         if (opt) opt.selected = true;
       }
     });

@@ -95,6 +95,7 @@ class DataHandler extends EventEmitter {
     socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
+    socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
   }
 
@@ -619,6 +620,14 @@ class DataHandler extends EventEmitter {
     this.emitToSocket(socket, 'classifier_updated', { mode });
   }
 
+  handleSetAnswerMode(socket, data) {
+    const { mode } = data || {};
+    if (!mode) return;
+    aiService.setAnswerMode(mode);
+    log.info('Answer mode changed', { mode });
+    this.emitToSocket(socket, 'answer_mode_updated', { mode });
+  }
+
   async handleGetSettings(socket) {
     let sttModel = 'small';
     try {
@@ -630,8 +639,11 @@ class DataHandler extends EventEmitter {
     } catch (_) {
       // transcriber may not be running; return defaults
     }
-    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama';
-    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode });
+    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama:llama3.2:1b';
+    const answerMode = aiService._answerMode || aiService.config?.answer_mode || 'auto';
+    const enabledProviders = aiService.config?.enabled || aiService.config?.order || [];
+    const ollamaModels = ['llama3.2:1b', 'llama3.2:3b'];
+    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
   }
 }
 
