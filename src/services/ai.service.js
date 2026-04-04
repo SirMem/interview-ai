@@ -10,12 +10,7 @@ dotenv.config();
 
 const log = logger('AIService');
 
-const CONFIG_FILE_PATH = path.join(
-  process.cwd(),
-  'backend',
-  'config',
-  'api-keys.json',
-);
+const CONFIG_FILE_PATH = path.join(process.cwd(), 'config', 'api-keys.json');
 
 const PROMPT_FILE_MAP = {
   system: 'system-prompt.txt',

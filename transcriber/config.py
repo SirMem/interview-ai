@@ -15,7 +15,7 @@ CHANNELS: int = 1  # Mono audio
 BLOCK_SIZE: int = int(SAMPLE_RATE * CHUNK_DURATION)  # Samples per chunk
 
 # Whisper Model Configuration (MLX Whisper - optimized for Apple Silicon)
-WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")  # base, small, medium, large
+WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # base, small, medium, large
 LANGUAGE: Optional[str] = os.getenv("LANGUAGE", "en")  # None for auto-detect
 VAD_FILTER: bool = True  # Voice Activity Detection filter (handled by Whisper internally)
 # Note: MLX automatically uses Apple Silicon GPU, no device selection needed
@@ -61,3 +61,9 @@ TRANSCRIPTIONS_JSON_FILE: str = os.getenv("TRANSCRIPTIONS_JSON_FILE", "transcrip
 # Keyboard Configuration
 KEYBOARD_ENABLED: bool = os.getenv("KEYBOARD_ENABLED", "true").lower() == "true"
 RECORD_KEY: str = os.getenv("RECORD_KEY", "cmd+shift+x")  # Key for push-to-record
+
+# Always-On Listener Configuration (continuous interviewer speech detection)
+ALWAYS_ON_ENABLED: bool = os.getenv("ALWAYS_ON_ENABLED", "false").lower() == "true"
+ALWAYS_ON_SILENCE_THRESHOLD: float = float(os.getenv("ALWAYS_ON_SILENCE_THRESHOLD", "1.0"))  # seconds of silence = utterance boundary
+ALWAYS_ON_MIN_SPEECH_DURATION: float = float(os.getenv("ALWAYS_ON_MIN_SPEECH_DURATION", "0.5"))  # min seconds before transcribing
+ALWAYS_ON_MAX_UTTERANCE_DURATION: float = float(os.getenv("ALWAYS_ON_MAX_UTTERANCE_DURATION", "30.0"))  # flush after this many seconds

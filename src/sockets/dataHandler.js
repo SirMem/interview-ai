@@ -97,6 +97,7 @@ class DataHandler extends EventEmitter {
     socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
+    socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
   }
 
   handleDisconnect(socket, reason) {
@@ -527,6 +528,8 @@ class DataHandler extends EventEmitter {
 
     if (!result.isQuestion || result.confidence < 0.75) return;
 
+    let questionId;
+
     if (result.mergeWithPrevious && lastQ) {
       this.transcriptBuffer.mergeQuestion(lastQ.questionId, result.questionText);
       this.namespace.emit('merge_question', {
@@ -534,14 +537,44 @@ class DataHandler extends EventEmitter {
         questionText: result.questionText,
       });
       log.info('Question merged', { questionId: lastQ.questionId });
+      // Re-answer the merged question with updated text
+      questionId = lastQ.questionId;
+      // Update the stored question text before auto-answering
+      const entry = this.transcriptBuffer.getQuestions().find(q => q.questionId === questionId);
+      if (entry) entry.questionText = result.questionText;
     } else {
-      const questionId = `q-${Date.now()}`;
+      questionId = `q-${Date.now()}`;
       this.transcriptBuffer.addQuestion(questionId, result.questionText);
       this.namespace.emit('interviewer_question', {
         questionId,
         questionText: result.questionText,
       });
       log.info('New question detected', { questionId, questionText: result.questionText });
+    }
+
+    // Auto-answer immediately without waiting for user button press
+    this._autoAnswerQuestion(questionId);
+  }
+
+  async _autoAnswerQuestion(questionId) {
+    const questions = this.transcriptBuffer.getQuestions();
+    const entry = questions.find((q) => q.questionId === questionId);
+    if (!entry) return;
+
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    this.namespace.emit('question_answer_started', { questionId });
+
+    try {
+      let fullResponse = '';
+      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
+        fullResponse += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('Question auto-answered', { questionId, responseLength: fullResponse.length });
+    } catch (err) {
+      log.error('Error auto-answering question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
     }
   }
 
@@ -557,7 +590,6 @@ class DataHandler extends EventEmitter {
     }
 
     const transcriptContext = this.transcriptBuffer.getTranscriptContext();
-
     this.namespace.emit('question_answer_started', { questionId });
 
     try {
@@ -644,6 +676,17 @@ class DataHandler extends EventEmitter {
     const enabledProviders = aiService.config?.enabled || aiService.config?.order || [];
     const ollamaModels = ['llama3.2:1b', 'llama3.2:3b'];
     this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
+  }
+
+  handleSetHudOpacity(data) {
+    const { value } = data || {};
+    if (value === undefined || value === null) return;
+    const clamped = Math.max(0, Math.min(100, parseInt(value) || 0));
+    log.info('HUD opacity changed', { value: clamped });
+    // Broadcast to all clients (HUD will pick this up)
+    if (this.namespace) {
+      this.namespace.emit('hud_opacity_updated', { value: clamped });
+    }
   }
 }
 

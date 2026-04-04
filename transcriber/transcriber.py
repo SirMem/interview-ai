@@ -161,12 +161,27 @@ class Transcriber:
         buf.seek(0)
         return buf.read()
 
+    @staticmethod
+    def _load_openai_key() -> str:
+        """Return the OpenAI API key from env var or config/api-keys.json."""
+        import os, json as _json, pathlib
+        key = os.getenv("OPENAI_API_KEY", "")
+        if key:
+            return key
+        # Fall back to project config file (two levels up from transcriber/)
+        try:
+            cfg_path = pathlib.Path(__file__).parent.parent / "config" / "api-keys.json"
+            with open(cfg_path) as f:
+                cfg = _json.load(f)
+            return cfg.get("keys", {}).get("openai", "")
+        except Exception:
+            return ""
+
     def _transcribe_api(self, audio: np.ndarray, sample_rate: int) -> str:
-        import os
         from openai import OpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = self._load_openai_key()
         if not api_key:
-            logger.error("OPENAI_API_KEY not set; cannot use Whisper API")
+            logger.error("OpenAI API key not found. Set OPENAI_API_KEY env var or add 'openai' key in config/api-keys.json")
             return ""
         client = OpenAI(api_key=api_key)
         wav_bytes = self._audio_to_wav_bytes(audio, sample_rate)
