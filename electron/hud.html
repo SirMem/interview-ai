@@ -32,11 +32,12 @@
       -webkit-backdrop-filter: blur(14px);
       border: 1px solid rgba(148, 163, 184, 0.2);
       border-radius: 12px;
-      overflow: hidden;
+      overflow: visible;
       height: 100%;
       display: flex;
       flex-direction: column;
       -webkit-app-region: drag;
+      position: relative;
     }
 
     .drag-region {
@@ -428,115 +429,97 @@
     .gear-btn:hover { color: #94a3b8; background: rgba(148, 163, 184, 0.08); }
     .gear-btn.gear-active { color: #facc15; }
 
-    /* ── Settings panel ───────────────────────────────────────────── */
-    .settings-panel {
+    /* ── Settings floating dropdown ──────────────────────────────── */
+    .settings-dropdown {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      z-index: 50;
-      background: rgba(16, 18, 26, 0.98);
-      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-      border-radius: 0 0 10px 10px;
-      padding: 12px 14px 10px;
+      top: 38px;
+      right: 10px;
+      z-index: 100;
+      width: 230px;
+      background: rgba(18, 20, 30, 0.98);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 9px;
+      padding: 10px 12px;
       display: none;
       flex-direction: column;
-      gap: 10px;
-      animation: settingsSlideIn 0.15s ease-out;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      gap: 8px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+      animation: dropIn 0.13s ease-out;
     }
-    .settings-panel.open { display: flex; }
+    .settings-dropdown.open { display: flex; }
 
-    @keyframes settingsSlideIn {
-      from { opacity: 0; transform: translateY(-6px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    .settings-title {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #475569;
-      margin-bottom: 2px;
+    @keyframes dropIn {
+      from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     .settings-row {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+      display: grid;
+      grid-template-columns: 60px 1fr;
+      align-items: center;
+      gap: 8px;
     }
 
     .settings-label {
       font-size: 10px;
       color: #64748b;
       text-transform: uppercase;
-      letter-spacing: 0.6px;
+      letter-spacing: 0.5px;
       font-weight: 600;
+      white-space: nowrap;
     }
 
     .settings-select {
       width: 100%;
-      padding: 5px 8px;
-      background: rgba(30, 32, 44, 0.9);
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 6px;
+      padding: 4px 22px 4px 7px;
+      background: rgba(30, 32, 44, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 5px;
       color: #cbd5e1;
-      font-size: 11px;
+      font-size: 10px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%2364748b' stroke-width='1.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
-      background-position: right 8px center;
-      padding-right: 24px;
+      background-position: right 6px center;
       outline: none;
       transition: border-color 0.12s;
     }
-    .settings-select:hover { border-color: rgba(148, 163, 184, 0.4); }
-    .settings-select:focus { border-color: rgba(99, 130, 180, 0.6); }
+    .settings-select:hover { border-color: rgba(148, 163, 184, 0.35); }
+    .settings-select:focus { border-color: rgba(99, 130, 180, 0.55); }
 
     .settings-footer {
       display: flex;
       justify-content: flex-end;
+      align-items: center;
       gap: 6px;
       margin-top: 2px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      padding-top: 8px;
+    }
+
+    .settings-status {
+      flex: 1;
+      font-size: 10px;
+      color: #22c55e;
+      height: 12px;
     }
 
     .settings-apply-btn {
-      padding: 4px 12px;
+      padding: 3px 10px;
       border-radius: 5px;
       border: 1px solid rgba(34, 197, 94, 0.4);
-      background: rgba(34, 197, 94, 0.1);
+      background: rgba(34, 197, 94, 0.08);
       color: #86efac;
-      font-size: 11px;
+      font-size: 10px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       cursor: pointer;
       transition: background 0.12s;
     }
-    .settings-apply-btn:hover { background: rgba(34, 197, 94, 0.22); }
-
-    .settings-close-btn {
-      padding: 4px 9px;
-      border-radius: 5px;
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      background: transparent;
-      color: #64748b;
-      font-size: 11px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      cursor: pointer;
-      transition: color 0.12s, border-color 0.12s;
-    }
-    .settings-close-btn:hover { color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); }
-
-    .settings-status {
-      font-size: 10px;
-      color: #22c55e;
-      text-align: right;
-      height: 12px;
-      transition: opacity 0.3s;
-    }
+    .settings-apply-btn:hover { background: rgba(34, 197, 94, 0.2); }
+    .settings-apply-btn:disabled { opacity: 0.45; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -551,35 +534,33 @@
       </div>
     </div>
 
-    <div class="content" style="position:relative;">
-      <!-- Settings panel (overlays content when open) -->
-      <div class="settings-panel" id="settingsPanel">
-        <div class="settings-title">Settings</div>
-        <div class="settings-row">
-          <span class="settings-label">STT Model</span>
-          <select class="settings-select" id="selectSttModel">
-            <option value="tiny">tiny – local (MLX)</option>
-            <option value="base">base – local (MLX)</option>
-            <option value="small" selected>small – local (MLX)</option>
-            <option value="medium">medium – local (MLX)</option>
-            <option value="large">large – local (MLX)</option>
-            <option value="whisper-1">whisper-1 – OpenAI API</option>
-          </select>
-        </div>
-        <div class="settings-row">
-          <span class="settings-label">Classifier</span>
-          <select class="settings-select" id="selectClassifier">
-            <option value="ollama" selected>Local: llama3.2:1b</option>
-            <option value="ollama_3b">Local: llama3.2:3b</option>
-            <option value="remote">Remote: Grok</option>
-          </select>
-        </div>
-        <div class="settings-status" id="settingsStatus"></div>
-        <div class="settings-footer">
-          <button class="settings-close-btn" id="btnSettingsClose">✕ Close</button>
-          <button class="settings-apply-btn" id="btnSettingsApply">Apply</button>
-        </div>
+    <!-- Settings floating dropdown (anchored to hud-panel, shown via gear) -->
+    <div class="settings-dropdown" id="settingsDropdown">
+      <div class="settings-row">
+        <span class="settings-label">STT</span>
+        <select class="settings-select" id="selectSttModel">
+          <option value="tiny">tiny – local</option>
+          <option value="base">base – local</option>
+          <option value="small" selected>small – local</option>
+          <option value="medium">medium – local</option>
+          <option value="large">large – local</option>
+          <option value="whisper-1">whisper-1 – API</option>
+        </select>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">AI</span>
+        <select class="settings-select" id="selectClassifier">
+          <option value="ollama" selected>Local (Ollama)</option>
+          <option value="remote">Remote (Grok)</option>
+        </select>
+      </div>
+      <div class="settings-footer">
+        <span class="settings-status" id="settingsStatus"></span>
+        <button class="settings-apply-btn" id="btnSettingsApply">Apply</button>
+      </div>
+    </div>
+
+    <div class="content">
       <div id="interviewQueue" class="interview-queue" style="display:none">
         <div class="queue-label">
           <span>Detected Questions</span>
@@ -911,20 +892,19 @@
     });
     // ─────────────────────────────────────────────────────────────────────────
 
-    // ── Settings panel ───────────────────────────────────────────────────────
-    const btnGear = document.getElementById('btnGear');
-    const settingsPanel = document.getElementById('settingsPanel');
-    const selectSttModel = document.getElementById('selectSttModel');
+    // ── Settings dropdown ────────────────────────────────────────────────────
+    const btnGear          = document.getElementById('btnGear');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const selectSttModel   = document.getElementById('selectSttModel');
     const selectClassifier = document.getElementById('selectClassifier');
-    const settingsStatus = document.getElementById('settingsStatus');
+    const settingsStatus   = document.getElementById('settingsStatus');
     const btnSettingsApply = document.getElementById('btnSettingsApply');
-    const btnSettingsClose = document.getElementById('btnSettingsClose');
 
     let settingsOpen = false;
 
     function openSettings() {
       settingsOpen = true;
-      settingsPanel.classList.add('open');
+      settingsDropdown.classList.add('open');
       btnGear.classList.add('gear-active');
       settingsStatus.textContent = '';
       socket.emit('get_settings');
@@ -932,47 +912,46 @@
 
     function closeSettings() {
       settingsOpen = false;
-      settingsPanel.classList.remove('open');
+      settingsDropdown.classList.remove('open');
       btnGear.classList.remove('gear-active');
     }
 
-    btnGear.addEventListener('click', () => {
+    btnGear.addEventListener('click', (e) => {
+      e.stopPropagation();
       settingsOpen ? closeSettings() : openSettings();
     });
 
-    btnSettingsClose.addEventListener('click', closeSettings);
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+      if (settingsOpen && !settingsDropdown.contains(e.target) && e.target !== btnGear) {
+        closeSettings();
+      }
+    });
 
     btnSettingsApply.addEventListener('click', () => {
-      const sttModel = selectSttModel.value;
-      const classifierRaw = selectClassifier.value;
-      // ollama_3b maps to mode 'ollama' but with model hint embedded in value
-      const classifierMode = classifierRaw === 'remote' ? 'remote' : 'ollama';
+      const sttModel       = selectSttModel.value;
+      const classifierMode = selectClassifier.value;
 
       btnSettingsApply.disabled = true;
       settingsStatus.style.color = '#64748b';
-      settingsStatus.textContent = 'Applying…';
+      settingsStatus.textContent = 'Saving…';
 
       let pending = 2;
       function onDone() {
-        pending--;
-        if (pending === 0) {
+        if (--pending === 0) {
           btnSettingsApply.disabled = false;
           settingsStatus.style.color = '#22c55e';
-          settingsStatus.textContent = 'Saved';
-          setTimeout(() => { settingsStatus.textContent = ''; }, 2000);
+          settingsStatus.textContent = 'Saved ✓';
+          setTimeout(closeSettings, 1200);
         }
       }
 
+      const fallback = setTimeout(() => { onDone(); onDone(); }, 4000);
+      socket.once('stt_model_updated', () => { clearTimeout(fallback); onDone(); });
+      socket.once('classifier_updated', () => { clearTimeout(fallback); onDone(); });
+
       socket.emit('set_stt_model', { model: sttModel });
       socket.emit('set_classifier', { mode: classifierMode });
-
-      // resolve both via acknowledgement or timeout
-      const timer = setTimeout(() => { onDone(); onDone(); }, 3000);
-
-      const onStt = () => { clearTimeout(timer); onDone(); socket.off('stt_model_updated', onStt); };
-      const onCls = () => { clearTimeout(timer); onDone(); socket.off('classifier_updated', onCls); };
-      socket.once('stt_model_updated', onStt);
-      socket.once('classifier_updated', onCls);
     });
 
     socket.on('settings_state', (data) => {

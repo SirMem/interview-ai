@@ -576,7 +576,8 @@ Question: ${question}`;
       model,
       messages,
       temperature: 0,
-      max_tokens: 120,
+      max_tokens: 256,           // 120 truncates JSON when questionText is long
+      response_format: { type: 'json_object' }, // force valid JSON output
     });
     return completion.choices[0]?.message?.content || '';
   }
