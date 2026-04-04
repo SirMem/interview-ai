@@ -24,6 +24,8 @@ const PROMPT_FILE_MAP = {
   debug: 'debug-prompt.txt',
   coding: 'coding-prompt.txt',
   theory: 'theory-prompt.txt',
+  'interview-classifier': 'interview-classifier-prompt.txt',
+  'interview-answer': 'interview-answer-prompt.txt',
 };
 
 class AIService {
@@ -550,6 +552,108 @@ Question: ${question}`;
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: `Screenshot text:\n${text}` },
+    ];
+    yield* this.callAIWithFallbackStream(messages, {
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+  }
+
+  // ==================== Interview Listener ====================
+
+  /**
+   * Classify using a local Ollama model (OpenAI-compatible API).
+   * Returns the raw string content from the model.
+   * Throws if Ollama is unreachable.
+   */
+  async _callOllamaClassifier(messages) {
+    const model = this.config?.keys?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({
+      apiKey: 'ollama',
+      baseURL: 'http://localhost:11434/v1',
+    });
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: 0,
+      max_tokens: 120,
+    });
+    return completion.choices[0]?.message?.content || '';
+  }
+
+  /**
+   * Runtime classifier mode: 'ollama' (default) or 'remote'.
+   * 'ollama' tries local first, falls back to remote on connection failure.
+   * 'remote' always uses the configured remote providers.
+   */
+  setClassifierMode(mode) {
+    if (mode === 'ollama' || mode === 'remote') {
+      this._classifierMode = mode;
+      log.info(`Classifier mode set to: ${mode}`);
+    }
+  }
+
+  /**
+   * Classify an interviewer utterance as a question (or follow-up).
+   * Uses local Ollama by default; falls back to remote if unavailable.
+   * Returns { isQuestion, questionText, mergeWithPrevious, confidence }
+   */
+  async classifyInterviewerUtterance(text, previousQuestionText = '') {
+    const template = this.readPromptFromFile('interview-classifier');
+    const systemPrompt = template
+      .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
+      .replace('{UTTERANCE}', text);
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: text },
+    ];
+
+    let raw = '';
+    const mode = this._classifierMode || this.config?.classifier_mode || 'ollama';
+
+    if (mode === 'ollama') {
+      try {
+        raw = await this._callOllamaClassifier(messages);
+        log.debug('Ollama classifier used', { model: this.config?.keys?.ollama_model || 'llama3.2:1b' });
+      } catch (err) {
+        log.warn('Ollama unavailable, falling back to remote classifier', { error: err.message });
+        try {
+          const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 120 });
+          raw = result?.message?.content || '';
+        } catch (err2) {
+          log.warn('Remote classifier also failed', { error: err2.message });
+          return { isQuestion: false };
+        }
+      }
+    } else {
+      try {
+        const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 120 });
+        raw = result?.message?.content || '';
+      } catch (err) {
+        log.warn('Remote classifier failed', { error: err.message });
+        return { isQuestion: false };
+      }
+    }
+
+    try {
+      const jsonStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      return JSON.parse(jsonStr.match(/\{[\s\S]*\}/)?.[0] || jsonStr);
+    } catch (err) {
+      log.warn('Failed to parse classifier response', { error: err.message });
+      return { isQuestion: false };
+    }
+  }
+
+  /**
+   * Stream an answer to an interview question using the full transcript as context.
+   * Yields { token, provider } objects.
+   */
+  async *answerInterviewQuestion(questionText, transcriptContext = '') {
+    const template = this.readPromptFromFile('interview-answer');
+    const systemPrompt = template.replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)');
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: questionText },
     ];
     yield* this.callAIWithFallbackStream(messages, {
       temperature: 0.7,

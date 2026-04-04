@@ -93,6 +93,9 @@ class DataHandler extends EventEmitter {
     socket.on('interviewer_speech', (data) => this.handleInterviewerSpeech(socket, data));
     socket.on('answer_question', (data) => this.handleAnswerQuestion(socket, data));
     socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
+    socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
+    socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
+    socket.on('get_settings', () => this.handleGetSettings(socket));
   }
 
   handleDisconnect(socket, reason) {
@@ -582,6 +585,53 @@ class DataHandler extends EventEmitter {
     } catch (err) {
       log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
     }
+  }
+
+  // ==================== Settings ====================
+
+  async handleSetSttModel(socket, data) {
+    const { model } = data || {};
+    if (!model) return;
+    try {
+      const res = await fetch('http://localhost:8000/set-stt-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.emitToSocket(socket, 'settings_error', { error: body.detail || 'Failed to set STT model' });
+        return;
+      }
+      log.info('STT model changed', { model });
+      this.emitToSocket(socket, 'stt_model_updated', { model });
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to set STT model', { error: err.message });
+      this.emitToSocket(socket, 'settings_error', { error: 'Python transcriber unreachable' });
+    }
+  }
+
+  handleSetClassifier(socket, data) {
+    const { mode } = data || {};
+    if (!mode) return;
+    aiService.setClassifierMode(mode);
+    log.info('Classifier mode changed', { mode });
+    this.emitToSocket(socket, 'classifier_updated', { mode });
+  }
+
+  async handleGetSettings(socket) {
+    let sttModel = 'small';
+    try {
+      const res = await fetch('http://localhost:8000/settings');
+      if (res.ok) {
+        const body = await res.json();
+        sttModel = body.stt_model || 'small';
+      }
+    } catch (_) {
+      // transcriber may not be running; return defaults
+    }
+    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama';
+    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode });
   }
 }
 

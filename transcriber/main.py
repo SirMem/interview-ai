@@ -449,6 +449,49 @@ async def set_always_on_mode(body: dict):
     return {"status": "ok", "enabled": enabled}
 
 
+@app.post("/set-stt-model")
+async def set_stt_model(body: dict):
+    global transcriber, always_on_listener
+    model = body.get("model", "small")
+
+    valid_models = {"tiny", "base", "small", "medium", "large", "whisper-1"}
+    if model not in valid_models:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Must be one of: {', '.join(sorted(valid_models))}")
+
+    logger.info(f"Switching STT model to: {model}")
+
+    # Pause always-on listener while we swap the transcriber
+    listener_was_running = False
+    if always_on_listener and always_on_listener._running and not always_on_listener._paused:
+        always_on_listener.pause()
+        listener_was_running = True
+
+    try:
+        transcriber = Transcriber(model_size=model)
+        logger.info(f"STT model switched to: {model}")
+    except Exception as e:
+        logger.error(f"Failed to switch STT model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
+
+    # Resume or recreate the always-on listener with the new transcriber
+    if always_on_listener:
+        always_on_listener._transcriber = transcriber
+        if listener_was_running:
+            always_on_listener.resume()
+    elif listener_was_running:
+        always_on_listener = AlwaysOnListener(transcriber, socket_client)
+        always_on_listener.start()
+
+    return {"status": "ok", "model": model}
+
+
+@app.get("/settings")
+async def get_settings():
+    return {
+        "stt_model": transcriber.model_size if transcriber else "small",
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=API_HOST, port=API_PORT)

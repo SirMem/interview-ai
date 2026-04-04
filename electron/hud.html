@@ -320,6 +320,223 @@
 
     .action-btn.coding-btn:not(:disabled) { border-color: rgba(34, 197, 94, 0.45); }
     .action-btn.coding-btn:not(:disabled):hover { background: rgba(34, 197, 94, 0.15); color: #86efac; border-color: rgba(34, 197, 94, 0.7); }
+
+    .action-btn.listener-btn { border-color: rgba(234, 179, 8, 0.45); color: #94a3b8; }
+    .action-btn.listener-btn:hover { background: rgba(234, 179, 8, 0.12); color: #fde047; border-color: rgba(234, 179, 8, 0.7); }
+    .action-btn.listener-btn.listener-active { background: rgba(234, 179, 8, 0.2); color: #facc15; border-color: rgba(234, 179, 8, 0.85); box-shadow: 0 0 8px rgba(234, 179, 8, 0.25); }
+
+    .interview-queue {
+      flex-shrink: 0;
+      margin-bottom: 8px;
+    }
+
+    .queue-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #475569;
+      margin-bottom: 5px;
+    }
+
+    .queue-mode-badge {
+      color: #22c55e;
+      font-size: 9px;
+      letter-spacing: 1px;
+    }
+
+    .question-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .q-card {
+      background: rgba(30, 40, 60, 0.65);
+      border: 1px solid rgba(99, 130, 180, 0.25);
+      border-radius: 7px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      animation: slideIn 0.2s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .q-card[data-state="answering"],
+    .q-card[data-state="done"] {
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+
+    .q-card-text {
+      font-size: 11px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .ask-ai-btn {
+      align-self: flex-end;
+      padding: 3px 10px;
+      border-radius: 5px;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      background: rgba(34, 197, 94, 0.08);
+      color: #86efac;
+      font-size: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    .ask-ai-btn:hover { background: rgba(34, 197, 94, 0.2); }
+    .ask-ai-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .q-card-answer {
+      font-size: 11px;
+      color: #e2e8f0;
+      line-height: 1.6;
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+      padding-top: 6px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+
+    .q-card-answer::-webkit-scrollbar { width: 4px; }
+    .q-card-answer::-webkit-scrollbar-track { background: transparent; }
+    .q-card-answer::-webkit-scrollbar-thumb { background: #475569; border-radius: 2px; }
+
+    /* ── Gear button ──────────────────────────────────────────────── */
+    .gear-btn {
+      -webkit-app-region: no-drag;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #475569;
+      font-size: 14px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color 0.12s, background 0.12s;
+      flex-shrink: 0;
+    }
+    .gear-btn:hover { color: #94a3b8; background: rgba(148, 163, 184, 0.08); }
+    .gear-btn.gear-active { color: #facc15; }
+
+    /* ── Settings panel ───────────────────────────────────────────── */
+    .settings-panel {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 50;
+      background: rgba(16, 18, 26, 0.98);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 0 0 10px 10px;
+      padding: 12px 14px 10px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      animation: settingsSlideIn 0.15s ease-out;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .settings-panel.open { display: flex; }
+
+    @keyframes settingsSlideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .settings-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #475569;
+      margin-bottom: 2px;
+    }
+
+    .settings-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .settings-label {
+      font-size: 10px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 600;
+    }
+
+    .settings-select {
+      width: 100%;
+      padding: 5px 8px;
+      background: rgba(30, 32, 44, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      color: #cbd5e1;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 24px;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+    .settings-select:hover { border-color: rgba(148, 163, 184, 0.4); }
+    .settings-select:focus { border-color: rgba(99, 130, 180, 0.6); }
+
+    .settings-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .settings-apply-btn {
+      padding: 4px 12px;
+      border-radius: 5px;
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      background: rgba(34, 197, 94, 0.1);
+      color: #86efac;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .settings-apply-btn:hover { background: rgba(34, 197, 94, 0.22); }
+
+    .settings-close-btn {
+      padding: 4px 9px;
+      border-radius: 5px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: transparent;
+      color: #64748b;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      cursor: pointer;
+      transition: color 0.12s, border-color 0.12s;
+    }
+    .settings-close-btn:hover { color: #94a3b8; border-color: rgba(148, 163, 184, 0.35); }
+
+    .settings-status {
+      font-size: 10px;
+      color: #22c55e;
+      text-align: right;
+      height: 12px;
+      transition: opacity 0.3s;
+    }
   </style>
 </head>
 <body>
@@ -330,10 +547,46 @@
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Connecting...</span>
         <span class="clock" id="clock">--:--:--</span>
+        <button class="gear-btn" id="btnGear" title="Settings">⚙</button>
       </div>
     </div>
 
-    <div class="content">
+    <div class="content" style="position:relative;">
+      <!-- Settings panel (overlays content when open) -->
+      <div class="settings-panel" id="settingsPanel">
+        <div class="settings-title">Settings</div>
+        <div class="settings-row">
+          <span class="settings-label">STT Model</span>
+          <select class="settings-select" id="selectSttModel">
+            <option value="tiny">tiny – local (MLX)</option>
+            <option value="base">base – local (MLX)</option>
+            <option value="small" selected>small – local (MLX)</option>
+            <option value="medium">medium – local (MLX)</option>
+            <option value="large">large – local (MLX)</option>
+            <option value="whisper-1">whisper-1 – OpenAI API</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <span class="settings-label">Classifier</span>
+          <select class="settings-select" id="selectClassifier">
+            <option value="ollama" selected>Local: llama3.2:1b</option>
+            <option value="ollama_3b">Local: llama3.2:3b</option>
+            <option value="remote">Remote: Grok</option>
+          </select>
+        </div>
+        <div class="settings-status" id="settingsStatus"></div>
+        <div class="settings-footer">
+          <button class="settings-close-btn" id="btnSettingsClose">✕ Close</button>
+          <button class="settings-apply-btn" id="btnSettingsApply">Apply</button>
+        </div>
+      </div>
+      <div id="interviewQueue" class="interview-queue" style="display:none">
+        <div class="queue-label">
+          <span>Detected Questions</span>
+          <span class="queue-mode-badge">LIVE</span>
+        </div>
+        <div id="questionCards" class="question-cards"></div>
+      </div>
       <div class="ai-response-label">AI Response</div>
       <div class="ai-response" id="aiResponse"></div>
     </div>
@@ -341,6 +594,7 @@
     <div class="action-bar">
       <span class="action-status" id="actionStatus"></span>
       <div class="action-buttons">
+        <button class="action-btn listener-btn" id="btnListener">Listener</button>
         <button class="action-btn debug-btn" id="btnDebug" disabled>Debug</button>
         <button class="action-btn theory-btn" id="btnTheory" disabled>Theory</button>
         <button class="action-btn coding-btn" id="btnCoding" disabled>Coding</button>
@@ -562,6 +816,182 @@
       setButtons(false);
       socket.emit('use_prompt', { promptType: 'coding', messageId: currentMessageId, screenshotRequired: false });
     });
+
+    // ── Listener toggle ──────────────────────────────────────────────────────
+    const btnListener = document.getElementById('btnListener');
+    let listenerActive = false;
+
+    btnListener.addEventListener('click', () => {
+      listenerActive = !listenerActive;
+      btnListener.classList.toggle('listener-active', listenerActive);
+      btnListener.textContent = listenerActive ? '● Listen' : 'Listener';
+      socket.emit('toggle_always_on_mode', { enabled: listenerActive });
+    });
+
+    // ── Interview question queue ─────────────────────────────────────────────
+    const questionCardsEl = document.getElementById('questionCards');
+    const interviewQueue = document.getElementById('interviewQueue');
+    const questionCardMap = {}; // questionId -> DOM element
+    const MAX_QUEUE = 3;
+
+    function addQuestionCard(questionId, questionText) {
+      // Enforce FIFO max-3: remove oldest if at capacity
+      while (questionCardsEl.children.length >= MAX_QUEUE) {
+        const oldest = questionCardsEl.firstElementChild;
+        if (oldest) {
+          delete questionCardMap[oldest.dataset.questionId];
+          questionCardsEl.removeChild(oldest);
+        }
+      }
+      const card = buildCard(questionId, questionText);
+      questionCardMap[questionId] = card;
+      questionCardsEl.appendChild(card);
+      interviewQueue.style.display = '';
+    }
+
+    function buildCard(questionId, questionText) {
+      const card = document.createElement('div');
+      card.className = 'q-card';
+      card.dataset.questionId = questionId;
+      card.dataset.state = 'idle';
+
+      const textEl = document.createElement('div');
+      textEl.className = 'q-card-text';
+      textEl.textContent = questionText;
+
+      const btn = document.createElement('button');
+      btn.className = 'ask-ai-btn';
+      btn.textContent = 'Ask AI';
+      btn.addEventListener('click', () => {
+        if (card.dataset.state !== 'idle') return;
+        card.dataset.state = 'answering';
+        btn.disabled = true;
+        answerEl.style.display = '';
+        socket.emit('answer_question', { questionId });
+      });
+
+      const answerEl = document.createElement('div');
+      answerEl.className = 'q-card-answer';
+      answerEl.style.display = 'none';
+      answerEl.dataset.raw = '';
+
+      card.appendChild(textEl);
+      card.appendChild(btn);
+      card.appendChild(answerEl);
+      return card;
+    }
+
+    function mergeQuestionCard(questionId, newText) {
+      const card = questionCardMap[questionId];
+      if (card) {
+        card.querySelector('.q-card-text').textContent = newText;
+      }
+    }
+
+    socket.on('interviewer_question', (data) => {
+      addQuestionCard(data.questionId, data.questionText);
+    });
+
+    socket.on('merge_question', (data) => {
+      mergeQuestionCard(data.questionId, data.questionText);
+    });
+
+    socket.on('question_answer_token', (data) => {
+      const card = questionCardMap[data.questionId];
+      if (!card) return;
+      const answerEl = card.querySelector('.q-card-answer');
+      answerEl.dataset.raw = (answerEl.dataset.raw || '') + data.token;
+      answerEl.innerHTML = renderMarkdown(answerEl.dataset.raw);
+      answerEl.scrollTop = answerEl.scrollHeight;
+    });
+
+    socket.on('question_answer_complete', (data) => {
+      const card = questionCardMap[data.questionId];
+      if (card) card.dataset.state = 'done';
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Settings panel ───────────────────────────────────────────────────────
+    const btnGear = document.getElementById('btnGear');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const selectSttModel = document.getElementById('selectSttModel');
+    const selectClassifier = document.getElementById('selectClassifier');
+    const settingsStatus = document.getElementById('settingsStatus');
+    const btnSettingsApply = document.getElementById('btnSettingsApply');
+    const btnSettingsClose = document.getElementById('btnSettingsClose');
+
+    let settingsOpen = false;
+
+    function openSettings() {
+      settingsOpen = true;
+      settingsPanel.classList.add('open');
+      btnGear.classList.add('gear-active');
+      settingsStatus.textContent = '';
+      socket.emit('get_settings');
+    }
+
+    function closeSettings() {
+      settingsOpen = false;
+      settingsPanel.classList.remove('open');
+      btnGear.classList.remove('gear-active');
+    }
+
+    btnGear.addEventListener('click', () => {
+      settingsOpen ? closeSettings() : openSettings();
+    });
+
+    btnSettingsClose.addEventListener('click', closeSettings);
+
+    btnSettingsApply.addEventListener('click', () => {
+      const sttModel = selectSttModel.value;
+      const classifierRaw = selectClassifier.value;
+      // ollama_3b maps to mode 'ollama' but with model hint embedded in value
+      const classifierMode = classifierRaw === 'remote' ? 'remote' : 'ollama';
+
+      btnSettingsApply.disabled = true;
+      settingsStatus.style.color = '#64748b';
+      settingsStatus.textContent = 'Applying…';
+
+      let pending = 2;
+      function onDone() {
+        pending--;
+        if (pending === 0) {
+          btnSettingsApply.disabled = false;
+          settingsStatus.style.color = '#22c55e';
+          settingsStatus.textContent = 'Saved';
+          setTimeout(() => { settingsStatus.textContent = ''; }, 2000);
+        }
+      }
+
+      socket.emit('set_stt_model', { model: sttModel });
+      socket.emit('set_classifier', { mode: classifierMode });
+
+      // resolve both via acknowledgement or timeout
+      const timer = setTimeout(() => { onDone(); onDone(); }, 3000);
+
+      const onStt = () => { clearTimeout(timer); onDone(); socket.off('stt_model_updated', onStt); };
+      const onCls = () => { clearTimeout(timer); onDone(); socket.off('classifier_updated', onCls); };
+      socket.once('stt_model_updated', onStt);
+      socket.once('classifier_updated', onCls);
+    });
+
+    socket.on('settings_state', (data) => {
+      if (data.sttModel) {
+        const opt = selectSttModel.querySelector(`option[value="${data.sttModel}"]`);
+        if (opt) opt.selected = true;
+      }
+      if (data.classifierMode) {
+        const opt = selectClassifier.querySelector(`option[value="${data.classifierMode}"]`);
+        if (opt) opt.selected = true;
+      }
+    });
+
+    socket.on('settings_error', (data) => {
+      settingsStatus.style.color = '#f87171';
+      settingsStatus.textContent = data.error || 'Error';
+      btnSettingsApply.disabled = false;
+    });
+    // ─────────────────────────────────────────────────────────────────────────
 
     function initDrag() {
       const dragRegions = document.querySelectorAll('.drag-region, .ai-response-label');
