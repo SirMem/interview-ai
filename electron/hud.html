@@ -675,7 +675,7 @@
 
     function addQuestionCard(questionId, questionText) {
       while (questionCardsEl.children.length >= MAX_QUEUE) {
-        const oldest = questionCardsEl.firstElementChild;
+        const oldest = questionCardsEl.lastElementChild;
         if (oldest) {
           delete questionCardMap[oldest.dataset.questionId];
           questionCardsEl.removeChild(oldest);
@@ -683,7 +683,7 @@
       }
       const card = buildCard(questionId, questionText);
       questionCardMap[questionId] = card;
-      questionCardsEl.appendChild(card);
+      questionCardsEl.prepend(card);
       interviewQueue.style.display = '';
     }
 
