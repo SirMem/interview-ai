@@ -20,7 +20,8 @@ from audio_recorder import AudioRecorder
 from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED
+from always_on_listener import AlwaysOnListener
+from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED
 
 # Configure logging
 logging.basicConfig(
@@ -88,7 +89,7 @@ def append_transcription_to_json(text: str):
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcriber, socket_client, keyboard_handler
+    global transcriber, socket_client, keyboard_handler, always_on_listener
     global _json_writer_thread, _json_writer_running, _transcription_executor
 
     logger.info("Initializing STT system components...")
@@ -135,6 +136,17 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("Keyboard handler disabled in configuration")
 
+        if ALWAYS_ON_ENABLED:
+            try:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                always_on_listener.start()
+                logger.info("Always-on listener started (interviewer speech detection mode)")
+            except Exception as e:
+                logger.warning(f"Could not start always-on listener: {e}")
+                always_on_listener = None
+        else:
+            logger.info("Always-on listener disabled (set ALWAYS_ON_ENABLED=true to enable)")
+
         logger.info("STT system ready")
 
     except Exception as e:
@@ -147,6 +159,9 @@ async def lifespan(app: FastAPI):
     global recorder, is_recording, _audio_buffer
 
     logger.info("Shutting down STT system...")
+
+    if always_on_listener:
+        always_on_listener.stop()
 
     if keyboard_handler:
         keyboard_handler.stop()
@@ -179,6 +194,7 @@ transcriber: Optional[Transcriber] = None
 socket_client: Optional[SocketClient] = None
 recording_thread: Optional[threading.Thread] = None
 keyboard_handler: Optional[KeyboardHandler] = None
+always_on_listener: Optional[AlwaysOnListener] = None
 _transcription_executor: Optional[ThreadPoolExecutor] = None
 
 is_recording: bool = False
@@ -410,6 +426,27 @@ async def health_check():
         "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
     }
+
+
+@app.post("/always-on-mode")
+async def set_always_on_mode(body: dict):
+    global always_on_listener
+    enabled = body.get("enabled", True)
+    if enabled:
+        if always_on_listener is None:
+            try:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                always_on_listener.start()
+                logger.info("Always-on listener started on-demand")
+            except Exception as e:
+                logger.error(f"Failed to start always-on listener: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to start listener: {str(e)}")
+        else:
+            always_on_listener.resume()
+    else:
+        if always_on_listener:
+            always_on_listener.pause()
+    return {"status": "ok", "enabled": enabled}
 
 
 if __name__ == "__main__":

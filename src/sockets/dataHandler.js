@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import logger from '../utils/logger.js';
 import aiService from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
+import InterviewTranscriptBuffer from './InterviewTranscriptBuffer.js';
 
 const log = logger('DataHandler');
 
@@ -38,6 +39,7 @@ class DataHandler extends EventEmitter {
     this.selectedPrompts = new Map();
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
+    this.transcriptBuffer = new InterviewTranscriptBuffer();
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();
@@ -88,6 +90,9 @@ class DataHandler extends EventEmitter {
     socket.on('use_prompt', (data) => this.handleUsePrompt(socket, data));
     socket.on('transcription', (data) => this.handleTranscription(socket, data));
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
+    socket.on('interviewer_speech', (data) => this.handleInterviewerSpeech(socket, data));
+    socket.on('answer_question', (data) => this.handleAnswerQuestion(socket, data));
+    socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
   }
 
   handleDisconnect(socket, reason) {
@@ -497,6 +502,86 @@ class DataHandler extends EventEmitter {
       error: errorMessage,
       message: `Error during ${stage} processing`,
     });
+  }
+
+  // ==================== Always-On Interview Listener ====================
+
+  async handleInterviewerSpeech(socket, data) {
+    const { text } = data || {};
+    if (!text || typeof text !== 'string' || !text.trim()) return;
+
+    this.transcriptBuffer.addUtterance(text.trim());
+    const lastQ = this.transcriptBuffer.getLastQuestion();
+
+    let result;
+    try {
+      result = await aiService.classifyInterviewerUtterance(text.trim(), lastQ?.questionText ?? '');
+    } catch (err) {
+      log.warn('Question classification failed', { error: err.message });
+      return;
+    }
+
+    if (!result.isQuestion || result.confidence < 0.75) return;
+
+    if (result.mergeWithPrevious && lastQ) {
+      this.transcriptBuffer.mergeQuestion(lastQ.questionId, result.questionText);
+      this.namespace.emit('merge_question', {
+        questionId: lastQ.questionId,
+        questionText: result.questionText,
+      });
+      log.info('Question merged', { questionId: lastQ.questionId });
+    } else {
+      const questionId = `q-${Date.now()}`;
+      this.transcriptBuffer.addQuestion(questionId, result.questionText);
+      this.namespace.emit('interviewer_question', {
+        questionId,
+        questionText: result.questionText,
+      });
+      log.info('New question detected', { questionId, questionText: result.questionText });
+    }
+  }
+
+  async handleAnswerQuestion(socket, data) {
+    const { questionId } = data || {};
+    if (!questionId) return;
+
+    const questions = this.transcriptBuffer.getQuestions();
+    const entry = questions.find((q) => q.questionId === questionId);
+    if (!entry) {
+      log.warn('Question not found in buffer', { questionId });
+      return;
+    }
+
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+
+    this.namespace.emit('question_answer_started', { questionId });
+
+    try {
+      let fullResponse = '';
+      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
+        fullResponse += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('Question answered', { questionId, responseLength: fullResponse.length });
+    } catch (err) {
+      log.error('Error answering question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
+  }
+
+  async handleToggleAlwaysOn(socket, data) {
+    const { enabled } = data || {};
+    try {
+      await fetch('http://localhost:8000/always-on-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !!enabled }),
+      });
+      log.info('Always-on mode toggled', { enabled });
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
+    }
   }
 }
 

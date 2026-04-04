@@ -45,7 +45,7 @@ class Transcriber:
         self.vad = None
         try:
             import webrtcvad
-            self.vad = webrtcvad.Vad(2)
+            self.vad = webrtcvad.Vad(3)
             logger.info("VAD (Voice Activity Detection) initialized")
         except ImportError:
             logger.warning("webrtcvad not installed. VAD will use energy-based fallback.")
@@ -89,7 +89,7 @@ class Transcriber:
                         speech_frames += 1
                     total_frames += 1
                 if total_frames > 0:
-                    return (speech_frames / total_frames) >= 0.3
+                    return (speech_frames / total_frames) >= 0.5
                 return False
             except Exception:
                 pass  # Fall through to energy-based check
