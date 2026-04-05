@@ -499,19 +499,38 @@ async def set_vad_config(body: dict):
     if not body:
         raise HTTPException(status_code=400, detail="Empty config body")
 
+    # Handle engine switch
+    new_engine = body.get('engine')
+    if new_engine and transcriber and transcriber.vad.engine_name != new_engine:
+        from vad import create_vad
+        old_engine = transcriber.vad.engine_name
+        # Pause listener during swap
+        if always_on_listener:
+            always_on_listener.pause()
+        transcriber.vad = create_vad(new_engine, body)
+        if always_on_listener:
+            always_on_listener.resume()
+        logger.info(f"VAD engine switched: {old_engine} -> {new_engine}")
+        log_writer.log('vad_engine_switched', from_engine=old_engine, to_engine=new_engine, config=body)
+
     # Update the always-on listener (which also updates the transcriber's VAD params)
     if always_on_listener:
         always_on_listener.update_config(body)
     elif transcriber:
         # If listener isn't running, still update the transcriber's VAD params directly
-        if 'energy_gate_threshold' in body:
-            transcriber._ENERGY_GATE_THRESHOLD = float(body['energy_gate_threshold'])
-        if 'speech_frame_ratio' in body:
-            transcriber._speech_frame_ratio = float(body['speech_frame_ratio'])
+        transcriber.vad.update_config(body)
 
     logger.info(f"VAD config updated: {body}")
     log_writer.log('vad_config_updated', config=body)
-    return {"status": "ok", "config": body}
+    return {"status": "ok", "engine": transcriber.vad.engine_name if transcriber else None, "config": body}
+
+
+@app.get("/vad-metrics")
+async def get_vad_metrics():
+    """Return rolling VAD metrics summary (5-minute window)."""
+    if always_on_listener:
+        return always_on_listener.metrics.get_summary()
+    return {"error": "Always-on listener not running"}
 
 
 @app.get("/settings")
