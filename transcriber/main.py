@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing STT system components...")
 
-    # Start the shared JSON log writer (writes to logs/app.json)
+    # Start the shared JSON log writer (writes to logs/app.jsonl)
     log_writer.start()
 
     try:
