@@ -18,7 +18,9 @@ from config import (
     ALWAYS_ON_SILENCE_THRESHOLD,
     ALWAYS_ON_MIN_SPEECH_DURATION,
     ALWAYS_ON_MAX_UTTERANCE_DURATION,
+    VAD_MIN_WORD_COUNT,
 )
+import log_writer
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ class AlwaysOnListener:
         self._speech_buffer = []         # list of np.ndarray chunks
         self._speech_samples = 0         # total samples accumulated
         self._silent_frames = 0          # consecutive silent 100ms frames
+
+        # Min word count for post-transcription filtering
+        self._min_word_count = VAD_MIN_WORD_COUNT
 
         # Derived thresholds
         self._silence_frames_threshold = int(ALWAYS_ON_SILENCE_THRESHOLD / _BLOCK_DURATION)
@@ -71,6 +76,11 @@ class AlwaysOnListener:
             f"(silence_threshold={ALWAYS_ON_SILENCE_THRESHOLD}s, "
             f"min_speech={ALWAYS_ON_MIN_SPEECH_DURATION}s)"
         )
+        log_writer.log('always_on_started',
+                       silence_threshold=ALWAYS_ON_SILENCE_THRESHOLD,
+                       min_speech=ALWAYS_ON_MIN_SPEECH_DURATION,
+                       max_utterance=ALWAYS_ON_MAX_UTTERANCE_DURATION,
+                       min_word_count=self._min_word_count)
 
     def stop(self):
         self._running = False
@@ -91,6 +101,23 @@ class AlwaysOnListener:
     def resume(self):
         self._paused = False
         logger.info("AlwaysOnListener resumed")
+
+    def update_config(self, config: dict):
+        """Update VAD thresholds at runtime from a config dict."""
+        if 'energy_gate_threshold' in config:
+            self._transcriber._ENERGY_GATE_THRESHOLD = float(config['energy_gate_threshold'])
+        if 'speech_frame_ratio' in config:
+            self._transcriber._speech_frame_ratio = float(config['speech_frame_ratio'])
+        if 'silence_threshold' in config:
+            self._silence_frames_threshold = int(float(config['silence_threshold']) / _BLOCK_DURATION)
+        if 'min_speech_duration' in config:
+            self._min_speech_samples = int(float(config['min_speech_duration']) * SAMPLE_RATE)
+        if 'max_utterance_duration' in config:
+            self._max_speech_samples = int(float(config['max_utterance_duration']) * SAMPLE_RATE)
+        if 'min_word_count' in config:
+            self._min_word_count = int(config['min_word_count'])
+        logger.info(f"VAD config updated: {config}")
+        log_writer.log('vad_config_applied', config=config)
 
     # ------------------------------------------------------------------
     # Audio callback (runs in audio thread — must be fast)
@@ -151,23 +178,56 @@ class AlwaysOnListener:
         self._silent_frames = 0
 
     # Known Whisper hallucinations on silence/noise
-    _HALLUCINATIONS = {"you", "yeah", "hmm", "uh", "um", "hm", "oh", "ah", "okay", "ok", "bye"}
+    _HALLUCINATIONS = {
+        "you", "yeah", "hmm", "uh", "um", "hm", "oh", "ah", "okay", "ok", "bye",
+        "thank you", "thanks", "thank you for watching", "thanks for watching",
+        "thank you for listening", "thanks for listening",
+        "please subscribe", "like and subscribe",
+        "subtitles by", "subtitles made by",
+        "the end", "the end.", "...",
+        "so", "and", "but", "right", "yes", "no", "hey", "hi", "hello",
+        "good", "good bye", "goodbye", "see you", "see you next time",
+    }
+
+    @staticmethod
+    def _is_gibberish(text: str) -> bool:
+        """Detect repetitive/gibberish output that Whisper produces on noise."""
+        words = text.strip().split()
+        if len(words) < 4:
+            return False
+        # Check if the same word repeats too much (e.g., "the the the the")
+        from collections import Counter
+        counts = Counter(w.lower() for w in words)
+        most_common_count = counts.most_common(1)[0][1]
+        if most_common_count / len(words) >= 0.6:
+            return True
+        # Check for repeated phrases (e.g., "thank you thank you thank you")
+        bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words) - 1)]
+        if bigrams:
+            bigram_counts = Counter(bigrams)
+            if bigram_counts.most_common(1)[0][1] >= 3:
+                return True
+        return False
 
     def _transcribe_and_emit(self, audio: np.ndarray):
         try:
             text = self._transcriber.transcribe_chunk(audio, SAMPLE_RATE)
             if not text or not text.strip():
                 return
-            # Drop single-word outputs and known hallucinations
+            # Drop short outputs and known hallucinations
             words = text.strip().split()
-            if len(words) < 2:
+            if len(words) < self._min_word_count:
                 logger.debug(f"Skipping short/hallucinated output: {text!r}")
                 return
-            if text.strip().lower() in self._HALLUCINATIONS:
+            if text.strip().lower().rstrip('.!?,') in self._HALLUCINATIONS:
                 logger.debug(f"Skipping hallucination: {text!r}")
+                return
+            if self._is_gibberish(text):
+                logger.debug(f"Skipping gibberish/repetitive output: {text!r}")
                 return
             logger.info(f"🎙️ Interviewer: {text}")
             print(f"🎙️ Interviewer: {text}")
+            log_writer.log('interviewer_speech', text=text)
             if self._socket_client and self._socket_client.is_connected():
                 self._socket_client.send_interviewer_speech(text)
         except Exception as e:

@@ -315,6 +315,82 @@
     </div>
   </div>
 
+  <!-- ── Voice Activity Detection ───────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Voice Activity Detection (VAD)</span>
+    </div>
+    <div class="section-body">
+      <p class="hint">Controls how the always-on listener detects and filters speech from background noise. Lower values = more sensitive, higher values = stricter filtering.</p>
+
+      <div class="field">
+        <label>Energy Gate Threshold</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Sensitive</span>
+          <input type="range" id="vadEnergyGate" min="0.005" max="0.1" step="0.005" value="0.02">
+          <span style="font-size:11px;color:var(--muted)">Strict</span>
+          <span class="slider-val" id="vadEnergyGateVal">0.02</span>
+        </div>
+        <span class="hint">Pre-filter: audio chunks quieter than this RMS level are instantly discarded before any speech analysis. Eliminates fan hum, mic self-noise, and quiet background sounds. Raise this if you get false triggers in a quiet room.</span>
+      </div>
+
+      <div class="field">
+        <label>Speech Frame Ratio</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Loose</span>
+          <input type="range" id="vadSpeechRatio" min="0.3" max="0.95" step="0.05" value="0.7">
+          <span style="font-size:11px;color:var(--muted)">Strict</span>
+          <span class="slider-val" id="vadSpeechRatioVal">0.70</span>
+        </div>
+        <span class="hint">What percentage of 30ms frames in a 100ms chunk must be classified as speech by WebRTC VAD. At 0.7, 70% of frames need to contain speech. Higher values mean more of the chunk must be actual speech — reduces false positives from keyboard clicks or coughs.</span>
+      </div>
+
+      <div class="field">
+        <label>Min Speech Duration (seconds)</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Short</span>
+          <input type="range" id="vadMinSpeech" min="0.25" max="3.0" step="0.25" value="0.75">
+          <span style="font-size:11px;color:var(--muted)">Long</span>
+          <span class="slider-val" id="vadMinSpeechVal">0.75</span>
+        </div>
+        <span class="hint">Minimum duration of detected speech before it's sent to Whisper for transcription. Anything shorter is discarded as noise. Prevents short bursts (door slam, cough) from triggering transcription.</span>
+      </div>
+
+      <div class="field">
+        <label>Silence Threshold (seconds)</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Quick</span>
+          <input type="range" id="vadSilenceThreshold" min="0.5" max="3.0" step="0.25" value="1.0">
+          <span style="font-size:11px;color:var(--muted)">Patient</span>
+          <span class="slider-val" id="vadSilenceVal">1.00</span>
+        </div>
+        <span class="hint">How many seconds of silence after speech before the utterance is considered complete. Lower = faster response but may split sentences. Higher = waits longer for the speaker to continue, better for slow speakers or pauses mid-thought.</span>
+      </div>
+
+      <div class="field">
+        <label>Max Utterance Duration (seconds)</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Short</span>
+          <input type="range" id="vadMaxUtterance" min="10" max="60" step="5" value="30">
+          <span style="font-size:11px;color:var(--muted)">Long</span>
+          <span class="slider-val" id="vadMaxUtteranceVal">30</span>
+        </div>
+        <span class="hint">Force-flush the audio buffer after this many seconds of continuous speech, even if the speaker hasn't paused. Prevents unbounded memory usage during long monologues. The flushed audio is transcribed and a new buffer starts.</span>
+      </div>
+
+      <div class="field">
+        <label>Min Word Count</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">1</span>
+          <input type="range" id="vadMinWordCount" min="1" max="6" step="1" value="3">
+          <span style="font-size:11px;color:var(--muted)">6</span>
+          <span class="slider-val" id="vadMinWordCountVal">3</span>
+        </div>
+        <span class="hint">After Whisper transcribes the audio, discard results with fewer words than this. Filters out hallucinated short phrases like "Thank you" or "Bye" that Whisper produces from noise. Increase if you still see gibberish one-liners.</span>
+      </div>
+    </div>
+  </div>
+
   <!-- ── HUD Appearance ────────────────────────────────────────── -->
   <div class="section">
     <div class="section-header">
@@ -548,6 +624,57 @@ opacitySlider.addEventListener('input', e => {
 
 updateSliderTrack(0);
 
+// ── VAD sliders ──────────────────────────────────────────────────────────────
+const vadSliders = {
+  energyGate:      { el: document.getElementById('vadEnergyGate'),      val: document.getElementById('vadEnergyGateVal'),    fmt: v => parseFloat(v).toFixed(3) },
+  speechRatio:     { el: document.getElementById('vadSpeechRatio'),     val: document.getElementById('vadSpeechRatioVal'),   fmt: v => parseFloat(v).toFixed(2) },
+  minSpeech:       { el: document.getElementById('vadMinSpeech'),       val: document.getElementById('vadMinSpeechVal'),     fmt: v => parseFloat(v).toFixed(2) },
+  silenceThreshold:{ el: document.getElementById('vadSilenceThreshold'),val: document.getElementById('vadSilenceVal'),       fmt: v => parseFloat(v).toFixed(2) },
+  maxUtterance:    { el: document.getElementById('vadMaxUtterance'),    val: document.getElementById('vadMaxUtteranceVal'),  fmt: v => parseInt(v).toString() },
+  minWordCount:    { el: document.getElementById('vadMinWordCount'),    val: document.getElementById('vadMinWordCountVal'),  fmt: v => parseInt(v).toString() },
+};
+
+function updateVadSliderTrack(slider, value) {
+  const min = parseFloat(slider.min), max = parseFloat(slider.max);
+  const pct = ((value - min) / (max - min)) * 100;
+  slider.style.setProperty('--pct', pct.toFixed(1) + '%');
+}
+
+Object.values(vadSliders).forEach(s => {
+  s.el.addEventListener('input', () => {
+    s.val.textContent = s.fmt(s.el.value);
+    updateVadSliderTrack(s.el, parseFloat(s.el.value));
+  });
+  // Init track fill
+  updateVadSliderTrack(s.el, parseFloat(s.el.value));
+});
+
+function getVadConfig() {
+  return {
+    energy_gate_threshold:  parseFloat(vadSliders.energyGate.el.value),
+    speech_frame_ratio:     parseFloat(vadSliders.speechRatio.el.value),
+    min_speech_duration:    parseFloat(vadSliders.minSpeech.el.value),
+    silence_threshold:      parseFloat(vadSliders.silenceThreshold.el.value),
+    max_utterance_duration: parseFloat(vadSliders.maxUtterance.el.value),
+    min_word_count:         parseInt(vadSliders.minWordCount.el.value),
+  };
+}
+
+function setVadConfig(vad) {
+  if (!vad) return;
+  if (vad.energy_gate_threshold  != null) vadSliders.energyGate.el.value      = vad.energy_gate_threshold;
+  if (vad.speech_frame_ratio     != null) vadSliders.speechRatio.el.value     = vad.speech_frame_ratio;
+  if (vad.min_speech_duration    != null) vadSliders.minSpeech.el.value       = vad.min_speech_duration;
+  if (vad.silence_threshold      != null) vadSliders.silenceThreshold.el.value = vad.silence_threshold;
+  if (vad.max_utterance_duration != null) vadSliders.maxUtterance.el.value    = vad.max_utterance_duration;
+  if (vad.min_word_count         != null) vadSliders.minWordCount.el.value    = vad.min_word_count;
+  // Update display values and track fills
+  Object.values(vadSliders).forEach(s => {
+    s.val.textContent = s.fmt(s.el.value);
+    updateVadSliderTrack(s.el, parseFloat(s.el.value));
+  });
+}
+
 // ── Load config ───────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
@@ -583,6 +710,9 @@ async function loadConfig() {
     opacitySlider.value = op;
     updateSliderTrack(op);
 
+    // VAD config
+    setVadConfig(data.vad);
+
     updateSttApiWarn();
   } catch (err) {
     showStatus('Failed to load: ' + err.message, 'err');
@@ -603,6 +733,7 @@ document.getElementById('btnSave').addEventListener('click', async () => {
   const answerMode     = answerSelect.value;
   const ollamaModel    = ollamaModelInput.value.trim() || 'llama3.2:1b';
   const hudOpacity     = parseInt(opacitySlider.value);
+  const vadConfig      = getVadConfig();
 
   try {
     const res = await fetch('/api/config/full', {
@@ -615,6 +746,7 @@ document.getElementById('btnSave').addEventListener('click', async () => {
         answer_mode:     answerMode,
         ollama_model:    ollamaModel,
         hud_opacity:     hudOpacity,
+        vad:             vadConfig,
       }),
     });
     const data = await res.json();
@@ -625,6 +757,7 @@ document.getElementById('btnSave').addEventListener('click', async () => {
     socket.emit('set_classifier',  { mode: classifierMode });
     socket.emit('set_answer_mode', { mode: answerMode });
     socket.emit('set_hud_opacity', { value: hudOpacity });
+    socket.emit('set_vad_config',  vadConfig);
 
     // Clear new-key inputs
     providers.forEach(p => { p.newKey = ''; if (p.hasKey || p.newKey) p.hasKey = true; });

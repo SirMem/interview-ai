@@ -8,7 +8,7 @@ import numpy as np
 import threading
 import wave
 from typing import Optional
-from config import WHISPER_MODEL, LANGUAGE, SAMPLE_RATE
+from config import WHISPER_MODEL, LANGUAGE, SAMPLE_RATE, VAD_ENERGY_GATE_THRESHOLD, VAD_SPEECH_FRAME_RATIO
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,7 @@ class Transcriber:
                 raise
 
         self.vad = None
+        self._speech_frame_ratio = VAD_SPEECH_FRAME_RATIO
         try:
             import webrtcvad
             self.vad = webrtcvad.Vad(3)
@@ -98,7 +99,15 @@ class Transcriber:
             return None
         return audio
 
+    # Minimum RMS energy to even consider running VAD (energy gate)
+    _ENERGY_GATE_THRESHOLD = VAD_ENERGY_GATE_THRESHOLD
+
     def _has_voice_activity(self, audio: np.ndarray, sample_rate: int) -> bool:
+        # Energy gate: skip VAD entirely if the chunk is too quiet
+        rms_energy = np.sqrt(np.mean(audio ** 2))
+        if rms_energy < self._ENERGY_GATE_THRESHOLD:
+            return False
+
         if self.vad is not None:
             try:
                 audio_int16 = (audio * 32767).astype(np.int16)
@@ -112,12 +121,11 @@ class Transcriber:
                         speech_frames += 1
                     total_frames += 1
                 if total_frames > 0:
-                    return (speech_frames / total_frames) >= 0.5
+                    return (speech_frames / total_frames) >= self._speech_frame_ratio
                 return False
             except Exception:
                 pass  # Fall through to energy-based check
 
-        rms_energy = np.sqrt(np.mean(audio ** 2))
         return rms_energy > 0.01
 
     # ------------------------------------------------------------------

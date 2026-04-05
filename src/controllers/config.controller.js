@@ -138,6 +138,14 @@ class ConfigController {
         answer_mode:     config.answer_mode      || 'auto',
         ollama_model:    config.keys?.ollama_model || config.ollama_model || 'llama3.2:1b',
         hud_opacity:     config.hud_opacity      ?? 15,
+        vad: {
+          energy_gate_threshold:    config.vad?.energy_gate_threshold    ?? 0.02,
+          speech_frame_ratio:       config.vad?.speech_frame_ratio       ?? 0.7,
+          min_speech_duration:      config.vad?.min_speech_duration      ?? 0.75,
+          silence_threshold:        config.vad?.silence_threshold        ?? 1.0,
+          max_utterance_duration:   config.vad?.max_utterance_duration   ?? 30.0,
+          min_word_count:           config.vad?.min_word_count           ?? 3,
+        },
       });
     } catch (err) {
       log.error('Error reading full config', err);
@@ -149,7 +157,7 @@ class ConfigController {
 
   saveFullConfig(req, res) {
     try {
-      const { providers, stt_model, classifier_mode, answer_mode, ollama_model, hud_opacity } = req.body;
+      const { providers, stt_model, classifier_mode, answer_mode, ollama_model, hud_opacity, vad } = req.body;
 
       const configPath = this.getConfigFilePath();
       let existingConfig = { keys: {}, order: [], enabled: [] };
@@ -190,6 +198,14 @@ class ConfigController {
         answer_mode:      answer_mode      || existingConfig.answer_mode      || 'auto',
         ollama_model:     ollama_model     || existingConfig.ollama_model     || 'llama3.2:1b',
         hud_opacity:      hud_opacity      ?? existingConfig.hud_opacity      ?? 15,
+        vad: {
+          energy_gate_threshold:  vad?.energy_gate_threshold  ?? existingConfig.vad?.energy_gate_threshold  ?? 0.02,
+          speech_frame_ratio:     vad?.speech_frame_ratio     ?? existingConfig.vad?.speech_frame_ratio     ?? 0.7,
+          min_speech_duration:    vad?.min_speech_duration     ?? existingConfig.vad?.min_speech_duration    ?? 0.75,
+          silence_threshold:      vad?.silence_threshold       ?? existingConfig.vad?.silence_threshold      ?? 1.0,
+          max_utterance_duration: vad?.max_utterance_duration  ?? existingConfig.vad?.max_utterance_duration ?? 30.0,
+          min_word_count:         vad?.min_word_count          ?? existingConfig.vad?.min_word_count         ?? 3,
+        },
       };
 
       fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');

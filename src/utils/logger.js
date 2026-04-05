@@ -1,7 +1,10 @@
 /**
  * Production-level logger utility
- * Provides structured logging with appropriate log levels
+ * Provides structured logging with appropriate log levels.
+ * Every log call also writes to logs/app.json via file-logger.
  */
+import { logEvent } from './file-logger.js';
+
 const LOG_LEVELS = {
   ERROR: 0,
   WARN: 1,
@@ -32,12 +35,20 @@ class Logger {
     return `${prefix} ${message}`;
   }
 
+  _writeToJson(level, message, data = null) {
+    const fields = { module: this.module };
+    if (data) fields.data = data;
+    logEvent(message, level, fields);
+  }
+
   error(message, error = null) {
     if (this._shouldLog('ERROR')) {
       if (error) {
         console.error(this._formatMessage('ERROR', message), error);
+        this._writeToJson('ERROR', message, { error: error.message || String(error), stack: error.stack });
       } else {
         console.error(this._formatMessage('ERROR', message));
+        this._writeToJson('ERROR', message);
       }
     }
   }
@@ -45,18 +56,21 @@ class Logger {
   warn(message, data = null) {
     if (this._shouldLog('WARN')) {
       console.warn(this._formatMessage('WARN', message, data));
+      this._writeToJson('WARN', message, data);
     }
   }
 
   info(message, data = null) {
     if (this._shouldLog('INFO')) {
       console.log(this._formatMessage('INFO', message, data));
+      this._writeToJson('INFO', message, data);
     }
   }
 
   debug(message, data = null) {
     if (this._shouldLog('DEBUG')) {
       console.log(this._formatMessage('DEBUG', message, data));
+      this._writeToJson('DEBUG', message, data);
     }
   }
 }

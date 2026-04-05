@@ -14,6 +14,7 @@
  */
 import { EventEmitter } from 'events';
 import logger from '../utils/logger.js';
+import { logEvent } from '../utils/file-logger.js';
 import aiService from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
 import InterviewTranscriptBuffer from './InterviewTranscriptBuffer.js';
@@ -98,6 +99,7 @@ class DataHandler extends EventEmitter {
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
     socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
+    socket.on('set_vad_config', (data) => this.handleSetVadConfig(socket, data));
   }
 
   handleDisconnect(socket, reason) {
@@ -550,6 +552,7 @@ class DataHandler extends EventEmitter {
         questionText: result.questionText,
       });
       log.info('New question detected', { questionId, questionText: result.questionText });
+      logEvent('question_detected', 'INFO', { module: 'DataHandler', questionId, questionText: result.questionText, confidence: result.confidence });
     }
 
     // Auto-answer immediately without waiting for user button press
@@ -572,6 +575,7 @@ class DataHandler extends EventEmitter {
       }
       this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
       log.info('Question auto-answered', { questionId, responseLength: fullResponse.length });
+      logEvent('question_auto_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
     } catch (err) {
       log.error('Error auto-answering question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
@@ -615,6 +619,7 @@ class DataHandler extends EventEmitter {
         body: JSON.stringify({ enabled: !!enabled }),
       });
       log.info('Always-on mode toggled', { enabled });
+      logEvent('always_on_toggled', 'INFO', { module: 'DataHandler', enabled });
     } catch (err) {
       log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
     }
@@ -637,6 +642,7 @@ class DataHandler extends EventEmitter {
         return;
       }
       log.info('STT model changed', { model });
+      logEvent('stt_model_changed', 'INFO', { module: 'DataHandler', model });
       this.emitToSocket(socket, 'stt_model_updated', { model });
     } catch (err) {
       log.warn('Could not reach Python transcriber to set STT model', { error: err.message });
@@ -649,6 +655,7 @@ class DataHandler extends EventEmitter {
     if (!mode) return;
     aiService.setClassifierMode(mode);
     log.info('Classifier mode changed', { mode });
+    logEvent('classifier_mode_changed', 'INFO', { module: 'DataHandler', mode });
     this.emitToSocket(socket, 'classifier_updated', { mode });
   }
 
@@ -657,6 +664,7 @@ class DataHandler extends EventEmitter {
     if (!mode) return;
     aiService.setAnswerMode(mode);
     log.info('Answer mode changed', { mode });
+    logEvent('answer_mode_changed', 'INFO', { module: 'DataHandler', mode });
     this.emitToSocket(socket, 'answer_mode_updated', { mode });
   }
 
@@ -678,11 +686,34 @@ class DataHandler extends EventEmitter {
     this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
   }
 
+  async handleSetVadConfig(socket, data) {
+    if (!data || typeof data !== 'object') return;
+    try {
+      const res = await fetch('http://localhost:8000/set-vad-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.emitToSocket(socket, 'settings_error', { error: body.detail || 'Failed to update VAD config' });
+        return;
+      }
+      log.info('VAD config updated', data);
+      logEvent('vad_config_changed', 'INFO', { module: 'DataHandler', config: data });
+      this.emitToSocket(socket, 'vad_config_updated', data);
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to set VAD config', { error: err.message });
+      this.emitToSocket(socket, 'settings_error', { error: 'Python transcriber unreachable' });
+    }
+  }
+
   handleSetHudOpacity(data) {
     const { value } = data || {};
     if (value === undefined || value === null) return;
     const clamped = Math.max(0, Math.min(100, parseInt(value) || 0));
     log.info('HUD opacity changed', { value: clamped });
+    logEvent('hud_opacity_changed', 'INFO', { module: 'DataHandler', value: clamped });
     // Broadcast to all clients (HUD will pick this up)
     if (this.namespace) {
       this.namespace.emit('hud_opacity_updated', { value: clamped });

@@ -2,7 +2,7 @@
 Async structured NDJSON file writer for the transcriber service.
 
 Non-blocking: log() enqueues entries; a daemon thread flushes to disk.
-Appends to logs/transcriber.ndjson — never truncates, safe across restarts.
+Writes to logs/app.json — the shared structured log with the Node server.
 """
 import json
 import os
@@ -11,7 +11,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 _LOG_FILE = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), '..', 'logs', 'transcriber.ndjson')
+    os.path.join(os.path.dirname(__file__), '..', 'logs', 'app.json')
 )
 _queue: deque = deque()
 _running = False

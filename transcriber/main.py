@@ -21,6 +21,7 @@ from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
+import log_writer
 from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED
 
 # Configure logging
@@ -94,9 +95,13 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing STT system components...")
 
+    # Start the shared JSON log writer (writes to logs/app.json)
+    log_writer.start()
+
     try:
         transcriber = Transcriber()
         logger.info("Transcriber initialized")
+        log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
 
         # MLX is protected by an internal lock in transcriber.py — one worker
         # handles preprocessing concurrently while the other waits for the GPU.
@@ -181,6 +186,8 @@ async def lifespan(app: FastAPI):
     if socket_client:
         socket_client.disconnect()
 
+    log_writer.log('transcriber_shutdown')
+    log_writer.stop()
     logger.info("STT system shut down")
 
 
@@ -469,6 +476,7 @@ async def set_stt_model(body: dict):
     try:
         transcriber = Transcriber(model_size=model)
         logger.info(f"STT model switched to: {model}")
+        log_writer.log('stt_model_switched', model=model)
     except Exception as e:
         logger.error(f"Failed to switch STT model: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
@@ -483,6 +491,27 @@ async def set_stt_model(body: dict):
         always_on_listener.start()
 
     return {"status": "ok", "model": model}
+
+
+@app.post("/set-vad-config")
+async def set_vad_config(body: dict):
+    global always_on_listener, transcriber
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty config body")
+
+    # Update the always-on listener (which also updates the transcriber's VAD params)
+    if always_on_listener:
+        always_on_listener.update_config(body)
+    elif transcriber:
+        # If listener isn't running, still update the transcriber's VAD params directly
+        if 'energy_gate_threshold' in body:
+            transcriber._ENERGY_GATE_THRESHOLD = float(body['energy_gate_threshold'])
+        if 'speech_frame_ratio' in body:
+            transcriber._speech_frame_ratio = float(body['speech_frame_ratio'])
+
+    logger.info(f"VAD config updated: {body}")
+    log_writer.log('vad_config_updated', config=body)
+    return {"status": "ok", "config": body}
 
 
 @app.get("/settings")
