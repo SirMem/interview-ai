@@ -65,17 +65,15 @@ class SocketClient:
         print(f"\n🤖 AI Processing Started: {message}\n")
 
     def _on_ai_token(self, data):
-        """Handle streaming token event — print without newline for live output."""
+        """Handle streaming token — print live."""
         token = data.get('token', '') if isinstance(data, dict) else str(data)
         if token:
             print(token, end='', flush=True)
 
     def _on_ai_processing_complete(self, data):
         if isinstance(data, dict):
-            response = data.get('response', '')
             message = data.get('message', 'AI processing completed')
         else:
-            response = str(data)
             message = 'AI processing completed'
 
         logger.info(f"✅ AI Processing Complete: {message}")
@@ -190,6 +188,19 @@ class SocketClient:
             logger.info("Sent process_transcription event")
         except Exception as e:
             logger.error(f"Error sending process_transcription: {e}")
+
+    def send_interviewer_speech(self, text: str):
+        """Send a detected interviewer utterance to the server for question classification."""
+        if not self.connected:
+            logger.warning("Not connected — skipping interviewer speech")
+            return
+        if not text or not text.strip():
+            return
+        try:
+            self.sio.emit('interviewer_speech', {'text': text.strip(), 'timestamp': time.time()}, namespace=self.endpoint)
+            logger.debug(f"Sent interviewer speech: {text[:50]}…")
+        except Exception as e:
+            logger.error(f"Error sending interviewer speech: {e}")
 
     def is_connected(self) -> bool:
         return self.connected

@@ -2,14 +2,12 @@
   "keys": {
     "openai": "your-openai-api-key-here",
     "grok": "your-groq-api-key-here",
-    "gemini": "your-gemini-api-key-here"
+    "gemini": "your-gemini-api-key-here",
+    "ollama_model": "llama3.2:1b"
   },
   "order": ["openai", "grok", "gemini"],
-  "enabled": ["openai", "grok", "gemini"]
+  "enabled": ["openai", "grok", "gemini"],
+  "classifier_mode": "ollama:llama3.2:1b",
+  "answer_mode": "auto",
+  "stt_model": "small"
 }
-
-
-
-
-
-

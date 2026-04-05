@@ -14,8 +14,10 @@
  */
 import { EventEmitter } from 'events';
 import logger from '../utils/logger.js';
+import { logEvent } from '../utils/file-logger.js';
 import aiService from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
+import InterviewTranscriptBuffer from './InterviewTranscriptBuffer.js';
 
 const log = logger('DataHandler');
 
@@ -38,6 +40,7 @@ class DataHandler extends EventEmitter {
     this.selectedPrompts = new Map();
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
+    this.transcriptBuffer = new InterviewTranscriptBuffer();
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();
@@ -88,6 +91,15 @@ class DataHandler extends EventEmitter {
     socket.on('use_prompt', (data) => this.handleUsePrompt(socket, data));
     socket.on('transcription', (data) => this.handleTranscription(socket, data));
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
+    socket.on('interviewer_speech', (data) => this.handleInterviewerSpeech(socket, data));
+    socket.on('answer_question', (data) => this.handleAnswerQuestion(socket, data));
+    socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
+    socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
+    socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
+    socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
+    socket.on('get_settings', () => this.handleGetSettings(socket));
+    socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
+    socket.on('set_vad_config', (data) => this.handleSetVadConfig(socket, data));
   }
 
   handleDisconnect(socket, reason) {
@@ -497,6 +509,215 @@ class DataHandler extends EventEmitter {
       error: errorMessage,
       message: `Error during ${stage} processing`,
     });
+  }
+
+  // ==================== Always-On Interview Listener ====================
+
+  async handleInterviewerSpeech(socket, data) {
+    const { text } = data || {};
+    if (!text || typeof text !== 'string' || !text.trim()) return;
+
+    this.transcriptBuffer.addUtterance(text.trim());
+    const lastQ = this.transcriptBuffer.getLastQuestion();
+
+    let result;
+    try {
+      result = await aiService.classifyInterviewerUtterance(text.trim(), lastQ?.questionText ?? '');
+    } catch (err) {
+      log.warn('Question classification failed', { error: err.message });
+      return;
+    }
+
+    if (!result.isQuestion || result.confidence < 0.75) return;
+
+    let questionId;
+
+    if (result.mergeWithPrevious && lastQ) {
+      this.transcriptBuffer.mergeQuestion(lastQ.questionId, result.questionText);
+      this.namespace.emit('merge_question', {
+        questionId: lastQ.questionId,
+        questionText: result.questionText,
+      });
+      log.info('Question merged', { questionId: lastQ.questionId });
+      // Re-answer the merged question with updated text
+      questionId = lastQ.questionId;
+      // Update the stored question text before auto-answering
+      const entry = this.transcriptBuffer.getQuestions().find(q => q.questionId === questionId);
+      if (entry) entry.questionText = result.questionText;
+    } else {
+      questionId = `q-${Date.now()}`;
+      this.transcriptBuffer.addQuestion(questionId, result.questionText);
+      this.namespace.emit('interviewer_question', {
+        questionId,
+        questionText: result.questionText,
+      });
+      log.info('New question detected', { questionId, questionText: result.questionText });
+      logEvent('question_detected', 'INFO', { module: 'DataHandler', questionId, questionText: result.questionText, confidence: result.confidence });
+    }
+
+    // Auto-answer immediately without waiting for user button press
+    this._autoAnswerQuestion(questionId);
+  }
+
+  async _autoAnswerQuestion(questionId) {
+    const questions = this.transcriptBuffer.getQuestions();
+    const entry = questions.find((q) => q.questionId === questionId);
+    if (!entry) return;
+
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    this.namespace.emit('question_answer_started', { questionId });
+
+    try {
+      let fullResponse = '';
+      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
+        fullResponse += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('Question auto-answered', { questionId, responseLength: fullResponse.length });
+      logEvent('question_auto_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
+    } catch (err) {
+      log.error('Error auto-answering question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
+  }
+
+  async handleAnswerQuestion(socket, data) {
+    const { questionId } = data || {};
+    if (!questionId) return;
+
+    const questions = this.transcriptBuffer.getQuestions();
+    const entry = questions.find((q) => q.questionId === questionId);
+    if (!entry) {
+      log.warn('Question not found in buffer', { questionId });
+      return;
+    }
+
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    this.namespace.emit('question_answer_started', { questionId });
+
+    try {
+      let fullResponse = '';
+      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
+        fullResponse += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('Question answered', { questionId, responseLength: fullResponse.length });
+    } catch (err) {
+      log.error('Error answering question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
+  }
+
+  async handleToggleAlwaysOn(socket, data) {
+    const { enabled } = data || {};
+    try {
+      await fetch('http://localhost:8000/always-on-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !!enabled }),
+      });
+      log.info('Always-on mode toggled', { enabled });
+      logEvent('always_on_toggled', 'INFO', { module: 'DataHandler', enabled });
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
+    }
+  }
+
+  // ==================== Settings ====================
+
+  async handleSetSttModel(socket, data) {
+    const { model } = data || {};
+    if (!model) return;
+    try {
+      const res = await fetch('http://localhost:8000/set-stt-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.emitToSocket(socket, 'settings_error', { error: body.detail || 'Failed to set STT model' });
+        return;
+      }
+      log.info('STT model changed', { model });
+      logEvent('stt_model_changed', 'INFO', { module: 'DataHandler', model });
+      this.emitToSocket(socket, 'stt_model_updated', { model });
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to set STT model', { error: err.message });
+      this.emitToSocket(socket, 'settings_error', { error: 'Python transcriber unreachable' });
+    }
+  }
+
+  handleSetClassifier(socket, data) {
+    const { mode } = data || {};
+    if (!mode) return;
+    aiService.setClassifierMode(mode);
+    log.info('Classifier mode changed', { mode });
+    logEvent('classifier_mode_changed', 'INFO', { module: 'DataHandler', mode });
+    this.emitToSocket(socket, 'classifier_updated', { mode });
+  }
+
+  handleSetAnswerMode(socket, data) {
+    const { mode } = data || {};
+    if (!mode) return;
+    aiService.setAnswerMode(mode);
+    log.info('Answer mode changed', { mode });
+    logEvent('answer_mode_changed', 'INFO', { module: 'DataHandler', mode });
+    this.emitToSocket(socket, 'answer_mode_updated', { mode });
+  }
+
+  async handleGetSettings(socket) {
+    let sttModel = 'small';
+    try {
+      const res = await fetch('http://localhost:8000/settings');
+      if (res.ok) {
+        const body = await res.json();
+        sttModel = body.stt_model || 'small';
+      }
+    } catch (_) {
+      // transcriber may not be running; return defaults
+    }
+    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama:llama3.2:1b';
+    const answerMode = aiService._answerMode || aiService.config?.answer_mode || 'auto';
+    const enabledProviders = aiService.config?.enabled || aiService.config?.order || [];
+    const ollamaModels = ['llama3.2:1b', 'llama3.2:3b'];
+    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
+  }
+
+  async handleSetVadConfig(socket, data) {
+    if (!data || typeof data !== 'object') return;
+    try {
+      const res = await fetch('http://localhost:8000/set-vad-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        this.emitToSocket(socket, 'settings_error', { error: body.detail || 'Failed to update VAD config' });
+        return;
+      }
+      log.info('VAD config updated', data);
+      logEvent('vad_config_changed', 'INFO', { module: 'DataHandler', config: data });
+      this.emitToSocket(socket, 'vad_config_updated', data);
+    } catch (err) {
+      log.warn('Could not reach Python transcriber to set VAD config', { error: err.message });
+      this.emitToSocket(socket, 'settings_error', { error: 'Python transcriber unreachable' });
+    }
+  }
+
+  handleSetHudOpacity(data) {
+    const { value } = data || {};
+    if (value === undefined || value === null) return;
+    const clamped = Math.max(0, Math.min(100, parseInt(value) || 0));
+    log.info('HUD opacity changed', { value: clamped });
+    logEvent('hud_opacity_changed', 'INFO', { module: 'DataHandler', value: clamped });
+    // Broadcast to all clients (HUD will pick this up)
+    if (this.namespace) {
+      this.namespace.emit('hud_opacity_updated', { value: clamped });
+    }
   }
 }
 

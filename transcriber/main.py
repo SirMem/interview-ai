@@ -20,7 +20,9 @@ from audio_recorder import AudioRecorder
 from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED
+from always_on_listener import AlwaysOnListener
+import log_writer
+from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED
 
 # Configure logging
 logging.basicConfig(
@@ -88,14 +90,18 @@ def append_transcription_to_json(text: str):
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcriber, socket_client, keyboard_handler
+    global transcriber, socket_client, keyboard_handler, always_on_listener
     global _json_writer_thread, _json_writer_running, _transcription_executor
 
     logger.info("Initializing STT system components...")
 
+    # Start the shared JSON log writer (writes to logs/app.json)
+    log_writer.start()
+
     try:
         transcriber = Transcriber()
         logger.info("Transcriber initialized")
+        log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
 
         # MLX is protected by an internal lock in transcriber.py — one worker
         # handles preprocessing concurrently while the other waits for the GPU.
@@ -135,6 +141,17 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("Keyboard handler disabled in configuration")
 
+        if ALWAYS_ON_ENABLED:
+            try:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                always_on_listener.start()
+                logger.info("Always-on listener started (interviewer speech detection mode)")
+            except Exception as e:
+                logger.warning(f"Could not start always-on listener: {e}")
+                always_on_listener = None
+        else:
+            logger.info("Always-on listener disabled (set ALWAYS_ON_ENABLED=true to enable)")
+
         logger.info("STT system ready")
 
     except Exception as e:
@@ -147,6 +164,9 @@ async def lifespan(app: FastAPI):
     global recorder, is_recording, _audio_buffer
 
     logger.info("Shutting down STT system...")
+
+    if always_on_listener:
+        always_on_listener.stop()
 
     if keyboard_handler:
         keyboard_handler.stop()
@@ -166,6 +186,8 @@ async def lifespan(app: FastAPI):
     if socket_client:
         socket_client.disconnect()
 
+    log_writer.log('transcriber_shutdown')
+    log_writer.stop()
     logger.info("STT system shut down")
 
 
@@ -179,6 +201,7 @@ transcriber: Optional[Transcriber] = None
 socket_client: Optional[SocketClient] = None
 recording_thread: Optional[threading.Thread] = None
 keyboard_handler: Optional[KeyboardHandler] = None
+always_on_listener: Optional[AlwaysOnListener] = None
 _transcription_executor: Optional[ThreadPoolExecutor] = None
 
 is_recording: bool = False
@@ -409,6 +432,92 @@ async def health_check():
         "status": "healthy",
         "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
+    }
+
+
+@app.post("/always-on-mode")
+async def set_always_on_mode(body: dict):
+    global always_on_listener
+    enabled = body.get("enabled", True)
+    if enabled:
+        if always_on_listener is None:
+            try:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                always_on_listener.start()
+                logger.info("Always-on listener started on-demand")
+            except Exception as e:
+                logger.error(f"Failed to start always-on listener: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to start listener: {str(e)}")
+        else:
+            always_on_listener.resume()
+    else:
+        if always_on_listener:
+            always_on_listener.pause()
+    return {"status": "ok", "enabled": enabled}
+
+
+@app.post("/set-stt-model")
+async def set_stt_model(body: dict):
+    global transcriber, always_on_listener
+    model = body.get("model", "small")
+
+    valid_models = {"tiny", "base", "small", "medium", "large", "whisper-1"}
+    if model not in valid_models:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Must be one of: {', '.join(sorted(valid_models))}")
+
+    logger.info(f"Switching STT model to: {model}")
+
+    # Pause always-on listener while we swap the transcriber
+    listener_was_running = False
+    if always_on_listener and always_on_listener._running and not always_on_listener._paused:
+        always_on_listener.pause()
+        listener_was_running = True
+
+    try:
+        transcriber = Transcriber(model_size=model)
+        logger.info(f"STT model switched to: {model}")
+        log_writer.log('stt_model_switched', model=model)
+    except Exception as e:
+        logger.error(f"Failed to switch STT model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
+
+    # Resume or recreate the always-on listener with the new transcriber
+    if always_on_listener:
+        always_on_listener._transcriber = transcriber
+        if listener_was_running:
+            always_on_listener.resume()
+    elif listener_was_running:
+        always_on_listener = AlwaysOnListener(transcriber, socket_client)
+        always_on_listener.start()
+
+    return {"status": "ok", "model": model}
+
+
+@app.post("/set-vad-config")
+async def set_vad_config(body: dict):
+    global always_on_listener, transcriber
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty config body")
+
+    # Update the always-on listener (which also updates the transcriber's VAD params)
+    if always_on_listener:
+        always_on_listener.update_config(body)
+    elif transcriber:
+        # If listener isn't running, still update the transcriber's VAD params directly
+        if 'energy_gate_threshold' in body:
+            transcriber._ENERGY_GATE_THRESHOLD = float(body['energy_gate_threshold'])
+        if 'speech_frame_ratio' in body:
+            transcriber._speech_frame_ratio = float(body['speech_frame_ratio'])
+
+    logger.info(f"VAD config updated: {body}")
+    log_writer.log('vad_config_updated', config=body)
+    return {"status": "ok", "config": body}
+
+
+@app.get("/settings")
+async def get_settings():
+    return {
+        "stt_model": transcriber.model_size if transcriber else "small",
     }
 
 

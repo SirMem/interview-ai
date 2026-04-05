@@ -37,9 +37,9 @@ function createOverlayWindow() {
   overlayWindow = new BrowserWindow({
     parent: undefined,
     width: 380,
-    height: 460,
+    height: 600,
     transparent: false,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#12121a',
     frame: false,
     hasShadow: true,
     thickFrame: false,
@@ -92,6 +92,14 @@ function createOverlayWindow() {
 
   ipcMain.on('hud-drag-end', () => {
     dragState = null;
+  });
+
+  ipcMain.on('hud-set-opacity', (_e, value) => {
+    if (!overlayWindow) return;
+    // value: 0 = fully opaque, 100 = fully transparent
+    // clamp to 0.1 minimum so the window stays visible/clickable
+    const opacity = Math.max(0.1, 1 - Math.max(0, Math.min(100, value)) / 100);
+    overlayWindow.setOpacity(opacity);
   });
 
   overlayWindow.loadFile(path.join(__dirname, 'hud.html'), {

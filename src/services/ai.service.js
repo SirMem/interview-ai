@@ -10,12 +10,7 @@ dotenv.config();
 
 const log = logger('AIService');
 
-const CONFIG_FILE_PATH = path.join(
-  process.cwd(),
-  'backend',
-  'config',
-  'api-keys.json',
-);
+const CONFIG_FILE_PATH = path.join(process.cwd(), 'config', 'api-keys.json');
 
 const PROMPT_FILE_MAP = {
   system: 'system-prompt.txt',
@@ -24,6 +19,8 @@ const PROMPT_FILE_MAP = {
   debug: 'debug-prompt.txt',
   coding: 'coding-prompt.txt',
   theory: 'theory-prompt.txt',
+  'interview-classifier': 'interview-classifier-prompt.txt',
+  'interview-answer': 'interview-answer-prompt.txt',
 };
 
 class AIService {
@@ -555,6 +552,192 @@ Question: ${question}`;
       temperature: 0.7,
       max_tokens: 2048,
     });
+  }
+
+  // ==================== Interview Listener ====================
+
+  /**
+   * Classify using a local Ollama model (OpenAI-compatible API).
+   * modelOverride — specific model string (e.g. 'llama3.2:3b'); falls back to config.
+   * Throws if Ollama is unreachable.
+   */
+  async _callOllamaClassifier(messages, modelOverride) {
+    const model = modelOverride || this.config?.keys?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({
+      apiKey: 'ollama',
+      baseURL: 'http://localhost:11434/v1',
+    });
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: 0,
+      max_tokens: 256,
+      response_format: { type: 'json_object' },
+    });
+    return completion.choices[0]?.message?.content || '';
+  }
+
+  /**
+   * Stream tokens from a local Ollama model.
+   * Yields raw token strings (no provider wrapping).
+   */
+  async *_streamOllama(messages, options = {}) {
+    const model = options.model || this.config?.keys?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
+    const stream = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: options.temperature || 0.7,
+      max_tokens: options.max_tokens || 2048,
+      stream: true,
+    });
+    for await (const chunk of stream) {
+      const token = chunk.choices[0]?.delta?.content || '';
+      if (token) yield token;
+    }
+  }
+
+  /**
+   * Classifier mode — format: '<type>[:<model>]'
+   *   'ollama'              → local Ollama, use configured ollama_model
+   *   'ollama:llama3.2:1b'  → local Ollama, use llama3.2:1b specifically
+   *   'ollama:llama3.2:3b'  → local Ollama, use llama3.2:3b specifically
+   *   'remote'              → first available remote provider (fallback chain)
+   *   'remote:grok'         → Grok specifically
+   *   'remote:openai'       → OpenAI specifically
+   *   'remote:gemini'       → Gemini specifically
+   */
+  setClassifierMode(mode) {
+    this._classifierMode = mode;
+    log.info(`Classifier mode set to: ${mode}`);
+  }
+
+  /**
+   * Answer mode — which provider to use when streaming question answers.
+   *   'auto'    → fallback chain through enabled providers (default)
+   *   'ollama'  → local Ollama
+   *   'openai'  → OpenAI only
+   *   'grok'    → Grok only
+   *   'gemini'  → Gemini only
+   */
+  setAnswerMode(mode) {
+    this._answerMode = mode;
+    log.info(`Answer mode set to: ${mode}`);
+  }
+
+  /**
+   * Classify an interviewer utterance as a question (or follow-up).
+   * Routes based on _classifierMode; falls back gracefully.
+   * Returns { isQuestion, questionText, mergeWithPrevious, confidence }
+   */
+  async classifyInterviewerUtterance(text, previousQuestionText = '') {
+    const template = this.readPromptFromFile('interview-classifier');
+    const systemPrompt = template
+      .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
+      .replace('{UTTERANCE}', text);
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: text },
+    ];
+
+    let raw = '';
+    const mode = this._classifierMode || this.config?.classifier_mode || 'ollama';
+    const colonIdx = mode.indexOf(':');
+    const modeType = colonIdx === -1 ? mode : mode.slice(0, colonIdx);
+    const modeModel = colonIdx === -1 ? '' : mode.slice(colonIdx + 1); // e.g. 'llama3.2:1b' or 'grok'
+
+    if (modeType === 'ollama') {
+      const ollamaModel = modeModel || this.config?.keys?.ollama_model || 'llama3.2:1b';
+      try {
+        raw = await this._callOllamaClassifier(messages, ollamaModel);
+        log.debug('Ollama classifier used', { model: ollamaModel });
+      } catch (err) {
+        log.warn('Ollama unavailable, falling back to remote classifier', { error: err.message });
+        try {
+          const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 256 });
+          raw = result?.message?.content || '';
+        } catch (err2) {
+          log.warn('Remote classifier also failed', { error: err2.message });
+          return { isQuestion: false };
+        }
+      }
+    } else {
+      // remote or remote:<provider>
+      const remoteProvider = modeModel; // e.g. 'grok', 'openai', 'gemini', or ''
+      try {
+        if (remoteProvider && ['openai', 'grok', 'gemini'].includes(remoteProvider)) {
+          const opts = { temperature: 0, max_tokens: 256 };
+          let response;
+          switch (remoteProvider) {
+            case 'openai': response = await this.callOpenAI(messages, opts); break;
+            case 'grok':   response = await this.callGrok(messages, opts); break;
+            case 'gemini': response = await this.callGemini(messages, opts); break;
+          }
+          raw = response || '';
+          log.debug(`Remote classifier used: ${remoteProvider}`);
+        } else {
+          const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 256 });
+          raw = result?.message?.content || '';
+        }
+      } catch (err) {
+        log.warn('Remote classifier failed', { error: err.message });
+        return { isQuestion: false };
+      }
+    }
+
+    try {
+      const jsonStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      return JSON.parse(jsonStr.match(/\{[\s\S]*\}/)?.[0] || jsonStr);
+    } catch (err) {
+      log.warn('Failed to parse classifier response', { error: err.message });
+      return { isQuestion: false };
+    }
+  }
+
+  /**
+   * Stream an answer to an interview question using the full transcript as context.
+   * Routes based on _answerMode; falls back to provider chain if needed.
+   * Yields { token, provider } objects.
+   */
+  async *answerInterviewQuestion(questionText, transcriptContext = '') {
+    const template = this.readPromptFromFile('interview-answer');
+    const systemPrompt = template.replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)');
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: questionText },
+    ];
+
+    const answerMode = this._answerMode || this.config?.answer_mode || 'auto';
+
+    if (answerMode === 'ollama') {
+      try {
+        for await (const token of this._streamOllama(messages, { temperature: 0.7, max_tokens: 2048 })) {
+          yield { token, provider: 'ollama' };
+        }
+        return;
+      } catch (err) {
+        log.warn('Ollama answer streaming failed, falling back to remote', { error: err.message });
+      }
+    } else if (['openai', 'grok', 'gemini'].includes(answerMode)) {
+      try {
+        const opts = { temperature: 0.7, max_tokens: 2048 };
+        let gen;
+        switch (answerMode) {
+          case 'openai': gen = this.streamOpenAI(messages, opts); break;
+          case 'grok':   gen = this.streamGrok(messages, opts); break;
+          case 'gemini': gen = this.streamGemini(messages, opts); break;
+        }
+        for await (const token of gen) {
+          if (token) yield { token, provider: answerMode };
+        }
+        return;
+      } catch (err) {
+        log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message });
+      }
+    }
+
+    // 'auto' or fallback
+    yield* this.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 });
   }
 }
 

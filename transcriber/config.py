@@ -15,7 +15,7 @@ CHANNELS: int = 1  # Mono audio
 BLOCK_SIZE: int = int(SAMPLE_RATE * CHUNK_DURATION)  # Samples per chunk
 
 # Whisper Model Configuration (MLX Whisper - optimized for Apple Silicon)
-WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "base")  # base, small, medium, large
+WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # base, small, medium, large
 LANGUAGE: Optional[str] = os.getenv("LANGUAGE", "en")  # None for auto-detect
 VAD_FILTER: bool = True  # Voice Activity Detection filter (handled by Whisper internally)
 # Note: MLX automatically uses Apple Silicon GPU, no device selection needed
@@ -61,3 +61,29 @@ TRANSCRIPTIONS_JSON_FILE: str = os.getenv("TRANSCRIPTIONS_JSON_FILE", "transcrip
 # Keyboard Configuration
 KEYBOARD_ENABLED: bool = os.getenv("KEYBOARD_ENABLED", "true").lower() == "true"
 RECORD_KEY: str = os.getenv("RECORD_KEY", "cmd+shift+x")  # Key for push-to-record
+
+# ── Load VAD defaults from config/api-keys.json (if present) ──────────────
+def _load_vad_config() -> dict:
+    """Read VAD settings from the shared config file."""
+    import json
+    import pathlib
+    try:
+        cfg_path = pathlib.Path(__file__).parent.parent / "config" / "api-keys.json"
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        return cfg.get("vad", {})
+    except Exception:
+        return {}
+
+_vad_cfg = _load_vad_config()
+
+# Always-On Listener Configuration (continuous interviewer speech detection)
+ALWAYS_ON_ENABLED: bool = os.getenv("ALWAYS_ON_ENABLED", "false").lower() == "true"
+ALWAYS_ON_SILENCE_THRESHOLD: float = float(os.getenv("ALWAYS_ON_SILENCE_THRESHOLD", str(_vad_cfg.get("silence_threshold", 1.0))))
+ALWAYS_ON_MIN_SPEECH_DURATION: float = float(os.getenv("ALWAYS_ON_MIN_SPEECH_DURATION", str(_vad_cfg.get("min_speech_duration", 0.75))))
+ALWAYS_ON_MAX_UTTERANCE_DURATION: float = float(os.getenv("ALWAYS_ON_MAX_UTTERANCE_DURATION", str(_vad_cfg.get("max_utterance_duration", 30.0))))
+
+# VAD tuning parameters (read from config, overridable via env)
+VAD_ENERGY_GATE_THRESHOLD: float = float(os.getenv("VAD_ENERGY_GATE_THRESHOLD", str(_vad_cfg.get("energy_gate_threshold", 0.02))))
+VAD_SPEECH_FRAME_RATIO: float = float(os.getenv("VAD_SPEECH_FRAME_RATIO", str(_vad_cfg.get("speech_frame_ratio", 0.7))))
+VAD_MIN_WORD_COUNT: int = int(os.getenv("VAD_MIN_WORD_COUNT", str(_vad_cfg.get("min_word_count", 3))))

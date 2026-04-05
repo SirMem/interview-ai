@@ -1,88 +1,105 @@
-# SolveWatchAi
+# SolveWatch AI
 
-An AI-powered desktop assistant that monitors your screen, extracts text via OCR, and delivers real-time AI-generated solutions during coding interviews and technical assessments.
-
----
-
-## Features
-
-### Screenshot Monitoring
-Continuously monitors your screen and captures screenshots on mouse click. Extracted text is sent to AI automatically.
-
-**Usage:** Start the server — monitoring begins immediately. Click anywhere on screen to trigger a capture.
-
-### Multi-Provider AI with Fallback
-Supports OpenAI, Groq, and Google Gemini. If one provider fails or is rate-limited, it automatically falls back to the next.
-
-**Usage:** Configure providers and fallback order in `backend/config/api-keys.json`. Set API keys in `.env`.
-
-### Prompt Types
-Context-aware prompts for different scenarios:
-- `coding` — Solve coding problems
-- `debug` — Debug code with optional screenshot context
-- `theory` — Explain theoretical concepts
-- `transcription` — Answer interview questions from audio (default)
-
-**Usage:** Pass `promptType` in API requests or transcription events.
-
-### Electron Overlay HUD
-A floating, always-on-top desktop overlay for accessing the assistant without leaving your current window.
-
-**Usage:** Run `npm run hud` to launch. Toggle visibility with `Cmd+Shift+H`.
-
-### Real-time Audio Transcription
-Optional Python service that records audio, converts speech to text, and sends transcribed questions to the backend for AI answers.
-
-**Usage:** Run the Python transcriber in `/transcriber`. It connects to the Node backend via WebSocket automatically.
-
-### Context Mode
-Uses previous AI responses as context for follow-up questions.
-
-**Usage:** Toggle via `POST /api/context-state` with `{ "enabled": true }`.
-
-### WebSocket Live Updates
-Real-time status events pushed to connected clients (OCR started, AI processing, response ready).
-
-**Usage:** Connect to `ws://localhost:4000` and listen for events on the `data-updates` channel.
+AI-powered overlay for live technical interviews — transcribes interviewer speech, classifies questions, and streams concise answers automatically.
 
 ---
 
-## Setup
+## Prerequisites
 
-**1. Configure API keys**
+- macOS (Apple Silicon recommended for on-device STT)
+- API key for at least one AI provider: OpenAI, Groq, or Gemini
+
+---
+
+## First-time setup
+
 ```bash
-cp .env.example .env                                    # Add your OpenAI / Groq / Gemini keys
-cp api-keys.json.example backend/config/api-keys.json   # Set provider order and fallback
+./start.sh --setup
 ```
 
-**2. Install dependencies**
-```bash
-npm install
+This single command installs everything:
+
+| Step | What it does |
+|------|-------------|
+| Homebrew | Installs if missing |
+| Node.js | Via Homebrew |
+| Python 3 | Via Homebrew |
+| Ollama | Via Homebrew → pulls `llama3.2:1b` (~1.3 GB, free local question classifier) |
+| npm packages | `npm install` |
+| Python venv | Creates `transcriber/venv` and installs all pip deps (`mlx-whisper`, `openai`, `webrtcvad`, etc.) |
+
+> **`--setup-only`** — install everything but don't start services.
+
+---
+
+## Configure API keys
+
+After setup, open the settings page in your browser:
+
+```
+http://localhost:4000/settings
 ```
 
-**3. Start everything**
+Or edit `config/api-keys.json` directly. You need at least one key for AI answers:
+
+| Provider | Where to get a key |
+|----------|-------------------|
+| OpenAI | platform.openai.com/api-keys |
+| Groq (free tier) | console.groq.com/keys |
+| Gemini | aistudio.google.com/app/apikey |
+
+---
+
+## Run
+
 ```bash
-./start.sh              # Starts Node backend + Python transcriber + Electron HUD
-./start.sh small        # Optional: specify Whisper model (tiny | base | small | medium | large)
+./start.sh
 ```
 
-This single script starts all three services, waits for the backend to be ready, streams live logs from each service, and shuts everything down cleanly on `Ctrl+C`.
+Starts three services:
 
-**Logs** are written to `logs/node.log`, `logs/transcriber.log`, and `logs/electron.log`.
+| Service | Port | Logs |
+|---------|------|------|
+| Node.js backend | 4000 | `logs/node.log` |
+| Python transcriber | 8000 | `logs/transcriber.log` |
+| Electron HUD | — | `logs/electron.log` |
 
-**Alternatively, start services individually:**
-```bash
-npm start               # Node backend only (port 4000)
-npm run hud             # Electron overlay only
-cd transcriber && python main.py  # Python transcriber only
-```
+Stop everything: **Ctrl+C** (also stops Ollama if this script started it).
+
+---
+
+## Usage
+
+1. **Toggle HUD overlay:** `Cmd+Shift+H`
+2. Click **Listener** in the HUD to enable the always-on microphone
+3. Interviewer speaks → audio is transcribed → question is classified → answer streams automatically in the HUD card
+4. Newest questions appear at the **top** of the queue
+
+### Settings page (`http://localhost:4000/settings`)
+
+| Setting | Options |
+|---------|---------|
+| STT model | Local MLX Whisper (tiny / base / small / medium / large) or OpenAI Whisper API |
+| Question classifier | Local Ollama (free, unlimited) or any remote provider |
+| Answer provider | Auto fallback chain, Ollama local, or a specific remote provider |
+| HUD opacity | 0 = fully opaque → 90 = near-invisible (live preview) |
+
+---
+
+## STT model behaviour
+
+MLX Whisper models are downloaded from HuggingFace **on first use**, not during setup.
+
+- Selecting `small` (default) — already cached after first run
+- Selecting `large` — silently downloads ~1.5 GB on the first transcription attempt; the HUD will be quiet during the download
+- Watch `logs/transcriber.log` for download progress
 
 ---
 
 ## Stack
 
-- **Backend:** Node.js, Express, Socket.IO, Tesseract.js
+- **Backend:** Node.js · Express · Socket.IO
 - **Desktop:** Electron
-- **AI Providers:** OpenAI, Groq, Google Gemini
-- **Transcription:** Python, FastAPI
-- **Image Processing:** Sharp
+- **Transcription:** Python · FastAPI · MLX Whisper (on-device) · OpenAI Whisper API
+- **Question classifier:** Ollama (`llama3.2:1b` default) · OpenAI / Groq / Gemini fallback
+- **AI answers:** OpenAI · Groq · Gemini (configurable, with automatic fallback)
