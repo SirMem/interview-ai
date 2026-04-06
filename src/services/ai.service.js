@@ -599,6 +599,32 @@ Question: ${question}`;
   }
 
   /**
+   * Summarize a single Q&A pair into a concise one-line summary via Ollama.
+   * Returns the summary string, or throws on failure.
+   */
+  async summarizeQAPair(question, answer) {
+    const model = this.config?.keys?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
+    const messages = [
+      {
+        role: 'system',
+        content: 'Summarize this interview Q&A into one concise line (max 40 words). Include the topic and key points covered. No bullet points, no preamble — just the summary line.',
+      },
+      {
+        role: 'user',
+        content: `Q: ${question}\nA: ${answer}`,
+      },
+    ];
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: 0,
+      max_tokens: 100,
+    });
+    return completion.choices[0]?.message?.content || '';
+  }
+
+  /**
    * Classifier mode — format: '<type>[:<model>]'
    *   'ollama'              → local Ollama, use configured ollama_model
    *   'ollama:llama3.2:1b'  → local Ollama, use llama3.2:1b specifically
@@ -752,11 +778,12 @@ Question: ${question}`;
    *
    * For non-questions, yields a single header with isQuestion=false and returns.
    */
-  async *classifyAndAnswerInterviewQuestion(text, previousQuestionText = '', transcriptContext = '') {
+  async *classifyAndAnswerInterviewQuestion(text, previousQuestionText = '', transcriptContext = '', memoryContext = '') {
     const template = this.readPromptFromFile('interview-combined');
     const systemPrompt = template
       .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
       .replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)')
+      .replace('{MEMORY_CONTEXT}', memoryContext || '(no conversation history yet)')
       .replace('{UTTERANCE}', text);
 
     const messages = [

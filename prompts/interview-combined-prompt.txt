@@ -2,6 +2,7 @@ You are analyzing a live interview transcript AND helping the candidate if a que
 
 Previous question (may be empty): {PREVIOUS_QUESTION}
 Interview conversation context: {TRANSCRIPT_CONTEXT}
+Conversation history (summaries of prior Q&A): {MEMORY_CONTEXT}
 Latest utterance: {UTTERANCE}
 
 STEP 1 — Classify the utterance:

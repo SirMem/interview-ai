@@ -41,6 +41,7 @@ class DataHandler extends EventEmitter {
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
     this.transcriptBuffer = new InterviewTranscriptBuffer();
+    this.transcriptBuffer.setSummarizeFn((q, a) => aiService.summarizeQAPair(q, a));
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();
@@ -519,8 +520,10 @@ class DataHandler extends EventEmitter {
     this.transcriptBuffer.addUtterance(text.trim());
     const lastQ = this.transcriptBuffer.getLastQuestion();
     const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    const memoryContext = this.transcriptBuffer.getMemoryContext();
 
     let questionId = null;
+    let questionText = '';
     let fullResponse = '';
 
     try {
@@ -528,9 +531,12 @@ class DataHandler extends EventEmitter {
         text.trim(),
         lastQ?.questionText ?? '',
         transcriptContext,
+        memoryContext,
       )) {
         if (chunk.type === 'header') {
           if (!chunk.isQuestion) return;
+
+          questionText = chunk.questionText;
 
           if (chunk.mergeWithPrevious && lastQ) {
             questionId = lastQ.questionId;
@@ -558,6 +564,11 @@ class DataHandler extends EventEmitter {
         this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
         log.info('Question answered', { questionId, responseLength: fullResponse.length });
         logEvent('question_auto_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
+
+        // Store Q&A in conversation memory (triggers async summarization)
+        if (questionText && fullResponse) {
+          this.transcriptBuffer.addQAPair(questionText, fullResponse);
+        }
       }
     } catch (err) {
       log.warn('Combined classify+answer failed', { error: err.message });
