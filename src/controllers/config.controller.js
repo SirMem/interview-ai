@@ -134,9 +134,7 @@ class ConfigController {
         success: true,
         providers,
         stt_model:       config.stt_model       || 'small',
-        classifier_mode: config.classifier_mode  || 'ollama:llama3.2:1b',
         answer_mode:     config.answer_mode      || 'auto',
-        ollama_model:    config.keys?.ollama_model || config.ollama_model || 'llama3.2:1b',
         hud_opacity:     config.hud_opacity      ?? 15,
         vad: {
           engine:                        config.vad?.engine                        ?? 'webrtc',
@@ -161,7 +159,7 @@ class ConfigController {
 
   saveFullConfig(req, res) {
     try {
-      const { providers, stt_model, classifier_mode, answer_mode, ollama_model, hud_opacity, vad } = req.body;
+      const { providers, stt_model, answer_mode, hud_opacity, vad } = req.body;
 
       const configPath = this.getConfigFilePath();
       let existingConfig = { keys: {}, order: [], enabled: [] };
@@ -190,17 +188,12 @@ class ConfigController {
         return res.status(400).json({ success: false, error: 'At least one provider must be enabled' });
       }
 
-      // Store ollama_model in keys for backwards compat with ai.service.js
-      if (ollama_model) mergedKeys.ollama_model = ollama_model;
-
       const configToSave = {
         keys:             mergedKeys,
         order:            order.length ? order : existingConfig.order,
         enabled:          enabledProviders.length ? enabledProviders : existingConfig.enabled,
         stt_model:        stt_model        || existingConfig.stt_model       || 'small',
-        classifier_mode:  classifier_mode  || existingConfig.classifier_mode  || 'ollama:llama3.2:1b',
         answer_mode:      answer_mode      || existingConfig.answer_mode      || 'auto',
-        ollama_model:     ollama_model     || existingConfig.ollama_model     || 'llama3.2:1b',
         hud_opacity:      hud_opacity      ?? existingConfig.hud_opacity      ?? 15,
         vad: {
           engine:                        vad?.engine                        ?? existingConfig.vad?.engine                        ?? 'webrtc',
@@ -217,7 +210,7 @@ class ConfigController {
       };
 
       fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
-      log.info('Full config saved', { providers: order, stt_model, classifier_mode, answer_mode });
+      log.info('Full config saved', { providers: order, stt_model, answer_mode });
 
       res.json({ success: true, message: 'Settings saved successfully' });
     } catch (err) {

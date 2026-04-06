@@ -21,6 +21,7 @@ const PROMPT_FILE_MAP = {
   theory: 'theory-prompt.txt',
   'interview-classifier': 'interview-classifier-prompt.txt',
   'interview-answer': 'interview-answer-prompt.txt',
+  'interview-combined': 'interview-combined-prompt.txt',
 };
 
 class AIService {
@@ -607,6 +608,7 @@ Question: ${question}`;
    *   'remote:openai'       → OpenAI specifically
    *   'remote:gemini'       → Gemini specifically
    */
+  /** @deprecated No longer used — classification is now part of the combined call. */
   setClassifierMode(mode) {
     this._classifierMode = mode;
     log.info(`Classifier mode set to: ${mode}`);
@@ -738,6 +740,153 @@ Question: ${question}`;
 
     // 'auto' or fallback
     yield* this.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 });
+  }
+
+  /**
+   * Single-call classify + answer for interview utterances.
+   * Streams a structured response: header metadata first, then answer tokens.
+   *
+   * Yields objects of two types:
+   *   { type: 'header', isQuestion: bool, questionText: string, mergeWithPrevious: bool }
+   *   { type: 'token', token: string, provider: string }
+   *
+   * For non-questions, yields a single header with isQuestion=false and returns.
+   */
+  async *classifyAndAnswerInterviewQuestion(text, previousQuestionText = '', transcriptContext = '') {
+    const template = this.readPromptFromFile('interview-combined');
+    const systemPrompt = template
+      .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
+      .replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)')
+      .replace('{UTTERANCE}', text);
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: text },
+    ];
+
+    const answerMode = this._answerMode || this.config?.answer_mode || 'auto';
+
+    // Pick the right streaming source based on answer mode
+    let tokenSource;
+    let providerName = answerMode;
+
+    if (answerMode === 'ollama') {
+      try {
+        tokenSource = this._streamOllama(messages, { temperature: 0.7, max_tokens: 2048 });
+      } catch (err) {
+        log.warn('Ollama unavailable for combined call, falling back', { error: err.message });
+        tokenSource = null;
+      }
+    } else if (['openai', 'grok', 'gemini'].includes(answerMode)) {
+      try {
+        const opts = { temperature: 0.7, max_tokens: 2048 };
+        switch (answerMode) {
+          case 'openai': tokenSource = this.streamOpenAI(messages, opts); break;
+          case 'grok':   tokenSource = this.streamGrok(messages, opts); break;
+          case 'gemini': tokenSource = this.streamGemini(messages, opts); break;
+        }
+      } catch (err) {
+        log.warn(`${answerMode} unavailable for combined call, falling back`, { error: err.message });
+        tokenSource = null;
+      }
+    }
+
+    // Fallback: use the provider chain
+    if (!tokenSource) {
+      providerName = 'auto';
+      tokenSource = (async function* (self) {
+        for await (const { token, provider } of self.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 })) {
+          providerName = provider;
+          yield token;
+        }
+      })(this);
+    }
+
+    // ── Stream header parser (state machine) ──
+    const STATE_DETECTING = 0;
+    const STATE_QUESTION_TEXT = 1;
+    const STATE_MERGE_LINE = 2;
+    const STATE_AWAIT_DELIMITER = 3;
+    const STATE_STREAMING = 4;
+
+    let state = STATE_DETECTING;
+    let buffer = '';
+    let questionText = '';
+    let mergeWithPrevious = false;
+    let tokenCount = 0;
+    let headerEmitted = false;
+
+    for await (const token of tokenSource) {
+      tokenCount++;
+
+      // Safety: if we haven't found a valid header in 50 tokens, treat as non-question
+      if (!headerEmitted && tokenCount > 50) {
+        log.warn('Combined call: no valid header after 50 tokens, treating as non-question');
+        yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
+        return;
+      }
+
+      if (state === STATE_STREAMING) {
+        yield { type: 'token', token, provider: providerName };
+        continue;
+      }
+
+      // Accumulate into buffer for header parsing
+      buffer += token;
+
+      if (state === STATE_DETECTING) {
+        if (buffer.includes('[NOT_A_QUESTION]')) {
+          yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
+          return;
+        }
+        if (buffer.includes('[QUESTION]')) {
+          // Remove everything up to and including [QUESTION] + optional newline
+          buffer = buffer.split('[QUESTION]').slice(1).join('[QUESTION]').replace(/^\n/, '');
+          state = STATE_QUESTION_TEXT;
+        }
+      }
+
+      if (state === STATE_QUESTION_TEXT) {
+        const nlIdx = buffer.indexOf('\n');
+        if (nlIdx !== -1) {
+          questionText = buffer.substring(0, nlIdx).trim();
+          buffer = buffer.substring(nlIdx + 1);
+          state = STATE_MERGE_LINE;
+        }
+      }
+
+      if (state === STATE_MERGE_LINE) {
+        if (buffer.includes('[MERGE:true]')) {
+          mergeWithPrevious = true;
+          buffer = buffer.split('[MERGE:true]').slice(1).join('').replace(/^\n/, '');
+          state = STATE_AWAIT_DELIMITER;
+        } else if (buffer.includes('[MERGE:false]')) {
+          mergeWithPrevious = false;
+          buffer = buffer.split('[MERGE:false]').slice(1).join('').replace(/^\n/, '');
+          state = STATE_AWAIT_DELIMITER;
+        }
+      }
+
+      if (state === STATE_AWAIT_DELIMITER) {
+        if (buffer.includes('---')) {
+          headerEmitted = true;
+          yield { type: 'header', isQuestion: true, questionText, mergeWithPrevious };
+
+          // Emit any leftover text after the delimiter as the first answer token
+          const afterDelimiter = buffer.split('---').slice(1).join('---').replace(/^\n/, '');
+          if (afterDelimiter) {
+            yield { type: 'token', token: afterDelimiter, provider: providerName };
+          }
+          state = STATE_STREAMING;
+        }
+      }
+    }
+
+    // Stream ended without emitting a header — treat as non-question
+    if (!headerEmitted) {
+      log.warn('Combined call: stream ended without complete header');
+      yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
+    }
   }
 }
 

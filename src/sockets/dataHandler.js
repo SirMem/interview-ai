@@ -95,7 +95,6 @@ class DataHandler extends EventEmitter {
     socket.on('answer_question', (data) => this.handleAnswerQuestion(socket, data));
     socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
-    socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
     socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
@@ -519,44 +518,53 @@ class DataHandler extends EventEmitter {
 
     this.transcriptBuffer.addUtterance(text.trim());
     const lastQ = this.transcriptBuffer.getLastQuestion();
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
 
-    let result;
+    let questionId = null;
+    let fullResponse = '';
+
     try {
-      result = await aiService.classifyInterviewerUtterance(text.trim(), lastQ?.questionText ?? '');
+      for await (const chunk of aiService.classifyAndAnswerInterviewQuestion(
+        text.trim(),
+        lastQ?.questionText ?? '',
+        transcriptContext,
+      )) {
+        if (chunk.type === 'header') {
+          if (!chunk.isQuestion) return;
+
+          if (chunk.mergeWithPrevious && lastQ) {
+            questionId = lastQ.questionId;
+            this.transcriptBuffer.mergeQuestion(questionId, chunk.questionText);
+            const entry = this.transcriptBuffer.getQuestions().find(q => q.questionId === questionId);
+            if (entry) entry.questionText = chunk.questionText;
+            this.namespace.emit('merge_question', { questionId, questionText: chunk.questionText });
+            log.info('Question merged', { questionId });
+          } else {
+            questionId = `q-${Date.now()}`;
+            this.transcriptBuffer.addQuestion(questionId, chunk.questionText);
+            this.namespace.emit('interviewer_question', { questionId, questionText: chunk.questionText });
+            log.info('New question detected', { questionId, questionText: chunk.questionText });
+            logEvent('question_detected', 'INFO', { module: 'DataHandler', questionId, questionText: chunk.questionText });
+          }
+          this.namespace.emit('question_answer_started', { questionId });
+
+        } else if (chunk.type === 'token') {
+          fullResponse += chunk.token;
+          this.namespace.emit('question_answer_token', { token: chunk.token, questionId });
+        }
+      }
+
+      if (questionId) {
+        this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+        log.info('Question answered', { questionId, responseLength: fullResponse.length });
+        logEvent('question_auto_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
+      }
     } catch (err) {
-      log.warn('Question classification failed', { error: err.message });
-      return;
+      log.warn('Combined classify+answer failed', { error: err.message });
+      if (questionId) {
+        this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+      }
     }
-
-    if (!result.isQuestion || result.confidence < 0.75) return;
-
-    let questionId;
-
-    if (result.mergeWithPrevious && lastQ) {
-      this.transcriptBuffer.mergeQuestion(lastQ.questionId, result.questionText);
-      this.namespace.emit('merge_question', {
-        questionId: lastQ.questionId,
-        questionText: result.questionText,
-      });
-      log.info('Question merged', { questionId: lastQ.questionId });
-      // Re-answer the merged question with updated text
-      questionId = lastQ.questionId;
-      // Update the stored question text before auto-answering
-      const entry = this.transcriptBuffer.getQuestions().find(q => q.questionId === questionId);
-      if (entry) entry.questionText = result.questionText;
-    } else {
-      questionId = `q-${Date.now()}`;
-      this.transcriptBuffer.addQuestion(questionId, result.questionText);
-      this.namespace.emit('interviewer_question', {
-        questionId,
-        questionText: result.questionText,
-      });
-      log.info('New question detected', { questionId, questionText: result.questionText });
-      logEvent('question_detected', 'INFO', { module: 'DataHandler', questionId, questionText: result.questionText, confidence: result.confidence });
-    }
-
-    // Auto-answer immediately without waiting for user button press
-    this._autoAnswerQuestion(questionId);
   }
 
   async _autoAnswerQuestion(questionId) {
@@ -650,15 +658,6 @@ class DataHandler extends EventEmitter {
     }
   }
 
-  handleSetClassifier(socket, data) {
-    const { mode } = data || {};
-    if (!mode) return;
-    aiService.setClassifierMode(mode);
-    log.info('Classifier mode changed', { mode });
-    logEvent('classifier_mode_changed', 'INFO', { module: 'DataHandler', mode });
-    this.emitToSocket(socket, 'classifier_updated', { mode });
-  }
-
   handleSetAnswerMode(socket, data) {
     const { mode } = data || {};
     if (!mode) return;
@@ -679,11 +678,9 @@ class DataHandler extends EventEmitter {
     } catch (_) {
       // transcriber may not be running; return defaults
     }
-    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama:llama3.2:1b';
     const answerMode = aiService._answerMode || aiService.config?.answer_mode || 'auto';
     const enabledProviders = aiService.config?.enabled || aiService.config?.order || [];
-    const ollamaModels = ['llama3.2:1b', 'llama3.2:3b'];
-    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
+    this.emitToSocket(socket, 'settings_state', { sttModel, answerMode, enabledProviders });
   }
 
   async handleSetVadConfig(socket, data) {

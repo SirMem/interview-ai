@@ -293,23 +293,11 @@
 
       <hr style="border:none;border-top:1px solid var(--border)">
 
-      <!-- Question Classifier -->
+      <!-- AI Model -->
       <div class="field">
-        <label>Question Classifier</label>
-        <select id="classifierSelect"></select>
-        <!-- shown when an ollama local option is chosen -->
-        <div id="ollamaModelRow" style="display:none;margin-top:6px">
-          <input type="text" id="ollamaModelInput" placeholder="e.g. llama3.2:1b" value="llama3.2:1b">
-          <span class="hint" style="margin-top:4px">Ollama model to use for classification. Run <code>ollama pull llama3.2:1b</code> to download.</span>
-        </div>
-        <span class="hint" style="margin-top:4px">Model that decides if detected speech is a question. Local Ollama is free and unlimited.</span>
-      </div>
-
-      <!-- Answer From -->
-      <div class="field">
-        <label>Answer From</label>
+        <label>AI Model</label>
         <select id="answerSelect"></select>
-        <span class="hint">Model that generates answers when a question is detected.</span>
+        <span class="hint">AI model used to detect and answer interview questions.</span>
       </div>
 
     </div>
@@ -596,45 +584,18 @@ function setSttModelValue(model) {
 }
 
 // ── Model dropdowns ───────────────────────────────────────────────────────────
-const classifierSelect = document.getElementById('classifierSelect');
-const answerSelect     = document.getElementById('answerSelect');
-const ollamaModelRow   = document.getElementById('ollamaModelRow');
-const ollamaModelInput = document.getElementById('ollamaModelInput');
+const answerSelect = document.getElementById('answerSelect');
 
 function rebuildModelDropdowns() {
-  const ollamaModel  = ollamaModelInput.value.trim() || 'llama3.2:1b';
   const enabledProvs = providers.filter(p => p.enabled);
-
-  const prevC = classifierSelect.value;
   const prevA = answerSelect.value;
 
-  // ── Classifier ──
-  classifierSelect.innerHTML = '';
-  // Local Ollama option (uses the configured model)
-  addOpt(classifierSelect, `ollama:${ollamaModel}`, `Local: ${ollamaModel}  (Ollama)`);
-  // Remote providers
-  enabledProvs.forEach(p => addOpt(classifierSelect, `remote:${p.id}`, `Remote: ${providerLabel(p.id)}`));
-  restoreSelect(classifierSelect, prevC);
-
-  // ── Answer From ──
   answerSelect.innerHTML = '';
   addOpt(answerSelect, 'auto',   'Auto (fallback chain)');
-  addOpt(answerSelect, 'ollama', `Local: Ollama  (${ollamaModel})`);
+  addOpt(answerSelect, 'ollama', 'Local: Ollama');
   enabledProvs.forEach(p => addOpt(answerSelect, p.id, `Remote: ${providerLabel(p.id)}`));
   restoreSelect(answerSelect, prevA);
-
-  // Show/hide ollama model input depending on classifier choice
-  syncOllamaRow();
 }
-
-function syncOllamaRow() {
-  const isLocal = classifierSelect.value?.startsWith('ollama:');
-  ollamaModelRow.style.display = isLocal ? '' : 'none';
-}
-
-classifierSelect.addEventListener('change', syncOllamaRow);
-
-ollamaModelInput.addEventListener('input', rebuildModelDropdowns);
 
 function addOpt(sel, val, txt) {
   const o = document.createElement('option');
@@ -756,18 +717,13 @@ async function loadConfig() {
         providers.push({ id, hasKey: false, enabled: false, newKey: '', isCustom: false });
     }
 
-    // Ollama model
-    ollamaModelInput.value = data.ollama_model || 'llama3.2:1b';
-
     // Build dropdowns first
     renderProviders();
     rebuildModelDropdowns();
 
     // Restore selections
     setSttModelValue(data.stt_model || 'small');
-    restoreSelect(classifierSelect, data.classifier_mode || `ollama:${data.ollama_model || 'llama3.2:1b'}`);
-    restoreSelect(answerSelect,     data.answer_mode     || 'auto');
-    syncOllamaRow();
+    restoreSelect(answerSelect, data.answer_mode || 'auto');
 
     // Opacity
     const op = data.hud_opacity ?? 0;
@@ -792,12 +748,10 @@ document.getElementById('btnSave').addEventListener('click', async () => {
   saveBtn.disabled = true;
   showStatus('Saving…', '');
 
-  const sttModel       = getSttModelValue();
-  const classifierMode = classifierSelect.value;
-  const answerMode     = answerSelect.value;
-  const ollamaModel    = ollamaModelInput.value.trim() || 'llama3.2:1b';
-  const hudOpacity     = parseInt(opacitySlider.value);
-  const vadConfig      = getVadConfig();
+  const sttModel   = getSttModelValue();
+  const answerMode = answerSelect.value;
+  const hudOpacity = parseInt(opacitySlider.value);
+  const vadConfig  = getVadConfig();
 
   try {
     const res = await fetch('/api/config/full', {
@@ -805,12 +759,10 @@ document.getElementById('btnSave').addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         providers: providers.map(p => ({ id: p.id, key: p.newKey || '', enabled: p.enabled })),
-        stt_model:       sttModel,
-        classifier_mode: classifierMode,
-        answer_mode:     answerMode,
-        ollama_model:    ollamaModel,
-        hud_opacity:     hudOpacity,
-        vad:             vadConfig,
+        stt_model:   sttModel,
+        answer_mode: answerMode,
+        hud_opacity: hudOpacity,
+        vad:         vadConfig,
       }),
     });
     const data = await res.json();
@@ -818,7 +770,6 @@ document.getElementById('btnSave').addEventListener('click', async () => {
 
     // Apply live via socket
     socket.emit('set_stt_model',   { model: sttModel });
-    socket.emit('set_classifier',  { mode: classifierMode });
     socket.emit('set_answer_mode', { mode: answerMode });
     socket.emit('set_hud_opacity', { value: hudOpacity });
     socket.emit('set_vad_config',  vadConfig);
