@@ -324,6 +324,15 @@
       <p class="hint">Controls how the always-on listener detects and filters speech from background noise. Lower values = more sensitive, higher values = stricter filtering.</p>
 
       <div class="field">
+        <label>VAD Engine</label>
+        <select id="vadEngine">
+          <option value="webrtc">WebRTC (Classic / GMM)</option>
+          <option value="silero">Silero (DNN / Neural)</option>
+        </select>
+        <span class="hint">WebRTC is lightweight and fast. Silero uses a neural network for higher accuracy and outputs a confidence score (0-1) instead of binary speech/no-speech.</span>
+      </div>
+
+      <div class="field">
         <label>Energy Gate Threshold</label>
         <div class="slider-row">
           <span style="font-size:11px;color:var(--muted)">Sensitive</span>
@@ -334,7 +343,7 @@
         <span class="hint">Pre-filter: audio chunks quieter than this RMS level are instantly discarded before any speech analysis. Eliminates fan hum, mic self-noise, and quiet background sounds. Raise this if you get false triggers in a quiet room.</span>
       </div>
 
-      <div class="field">
+      <div class="field" id="fieldSpeechRatio" data-engine="webrtc">
         <label>Speech Frame Ratio</label>
         <div class="slider-row">
           <span style="font-size:11px;color:var(--muted)">Loose</span>
@@ -343,6 +352,39 @@
           <span class="slider-val" id="vadSpeechRatioVal">0.70</span>
         </div>
         <span class="hint">What percentage of 30ms frames in a 100ms chunk must be classified as speech by WebRTC VAD. At 0.7, 70% of frames need to contain speech. Higher values mean more of the chunk must be actual speech — reduces false positives from keyboard clicks or coughs.</span>
+      </div>
+
+      <div class="field" id="fieldSileroThreshold" data-engine="silero" style="display:none">
+        <label>Speech Confidence Threshold</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">Sensitive</span>
+          <input type="range" id="vadSileroThreshold" min="0.1" max="0.95" step="0.05" value="0.5">
+          <span style="font-size:11px;color:var(--muted)">Strict</span>
+          <span class="slider-val" id="vadSileroThresholdVal">0.50</span>
+        </div>
+        <span class="hint">Silero model confidence threshold (0-1). Lower = more sensitive to faint speech, higher = stricter filtering. 0.5 is a balanced default.</span>
+      </div>
+
+      <div class="field" id="fieldSileroMinSpeech" data-engine="silero" style="display:none">
+        <label>Min Speech Duration (ms)</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">50</span>
+          <input type="range" id="vadSileroMinSpeechMs" min="50" max="500" step="50" value="250">
+          <span style="font-size:11px;color:var(--muted)">500</span>
+          <span class="slider-val" id="vadSileroMinSpeechMsVal">250</span>
+        </div>
+        <span class="hint">Minimum speech segment duration (in milliseconds) before Silero considers it real speech.</span>
+      </div>
+
+      <div class="field" id="fieldSileroMinSilence" data-engine="silero" style="display:none">
+        <label>Min Silence Duration (ms)</label>
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--muted)">50</span>
+          <input type="range" id="vadSileroMinSilenceMs" min="50" max="500" step="50" value="100">
+          <span style="font-size:11px;color:var(--muted)">500</span>
+          <span class="slider-val" id="vadSileroMinSilenceMsVal">100</span>
+        </div>
+        <span class="hint">Minimum silence duration (in milliseconds) to end a speech segment in Silero's internal state.</span>
       </div>
 
       <div class="field">
@@ -625,6 +667,7 @@ opacitySlider.addEventListener('input', e => {
 updateSliderTrack(0);
 
 // ── VAD sliders ──────────────────────────────────────────────────────────────
+const vadEngineSelect = document.getElementById('vadEngine');
 const vadSliders = {
   energyGate:      { el: document.getElementById('vadEnergyGate'),      val: document.getElementById('vadEnergyGateVal'),    fmt: v => parseFloat(v).toFixed(3) },
   speechRatio:     { el: document.getElementById('vadSpeechRatio'),     val: document.getElementById('vadSpeechRatioVal'),   fmt: v => parseFloat(v).toFixed(2) },
@@ -632,7 +675,20 @@ const vadSliders = {
   silenceThreshold:{ el: document.getElementById('vadSilenceThreshold'),val: document.getElementById('vadSilenceVal'),       fmt: v => parseFloat(v).toFixed(2) },
   maxUtterance:    { el: document.getElementById('vadMaxUtterance'),    val: document.getElementById('vadMaxUtteranceVal'),  fmt: v => parseInt(v).toString() },
   minWordCount:    { el: document.getElementById('vadMinWordCount'),    val: document.getElementById('vadMinWordCountVal'),  fmt: v => parseInt(v).toString() },
+  sileroThreshold: { el: document.getElementById('vadSileroThreshold'), val: document.getElementById('vadSileroThresholdVal'),fmt: v => parseFloat(v).toFixed(2) },
+  sileroMinSpeechMs:{ el: document.getElementById('vadSileroMinSpeechMs'), val: document.getElementById('vadSileroMinSpeechMsVal'), fmt: v => parseInt(v).toString() },
+  sileroMinSilenceMs:{ el: document.getElementById('vadSileroMinSilenceMs'), val: document.getElementById('vadSileroMinSilenceMsVal'), fmt: v => parseInt(v).toString() },
 };
+
+// Toggle engine-specific fields
+function updateVadEngineFields() {
+  const engine = vadEngineSelect.value;
+  document.querySelectorAll('[data-engine]').forEach(el => {
+    el.style.display = el.dataset.engine === engine ? '' : 'none';
+  });
+}
+vadEngineSelect.addEventListener('change', updateVadEngineFields);
+updateVadEngineFields();
 
 function updateVadSliderTrack(slider, value) {
   const min = parseFloat(slider.min), max = parseFloat(slider.max);
@@ -651,23 +707,31 @@ Object.values(vadSliders).forEach(s => {
 
 function getVadConfig() {
   return {
-    energy_gate_threshold:  parseFloat(vadSliders.energyGate.el.value),
-    speech_frame_ratio:     parseFloat(vadSliders.speechRatio.el.value),
-    min_speech_duration:    parseFloat(vadSliders.minSpeech.el.value),
-    silence_threshold:      parseFloat(vadSliders.silenceThreshold.el.value),
-    max_utterance_duration: parseFloat(vadSliders.maxUtterance.el.value),
-    min_word_count:         parseInt(vadSliders.minWordCount.el.value),
+    engine:                        vadEngineSelect.value,
+    energy_gate_threshold:         parseFloat(vadSliders.energyGate.el.value),
+    speech_frame_ratio:            parseFloat(vadSliders.speechRatio.el.value),
+    min_speech_duration:           parseFloat(vadSliders.minSpeech.el.value),
+    silence_threshold:             parseFloat(vadSliders.silenceThreshold.el.value),
+    max_utterance_duration:        parseFloat(vadSliders.maxUtterance.el.value),
+    min_word_count:                parseInt(vadSliders.minWordCount.el.value),
+    silero_threshold:              parseFloat(vadSliders.sileroThreshold.el.value),
+    silero_min_speech_duration_ms: parseInt(vadSliders.sileroMinSpeechMs.el.value),
+    silero_min_silence_duration_ms:parseInt(vadSliders.sileroMinSilenceMs.el.value),
   };
 }
 
 function setVadConfig(vad) {
   if (!vad) return;
-  if (vad.energy_gate_threshold  != null) vadSliders.energyGate.el.value      = vad.energy_gate_threshold;
-  if (vad.speech_frame_ratio     != null) vadSliders.speechRatio.el.value     = vad.speech_frame_ratio;
-  if (vad.min_speech_duration    != null) vadSliders.minSpeech.el.value       = vad.min_speech_duration;
+  if (vad.engine) { vadEngineSelect.value = vad.engine; updateVadEngineFields(); }
+  if (vad.energy_gate_threshold  != null) vadSliders.energyGate.el.value       = vad.energy_gate_threshold;
+  if (vad.speech_frame_ratio     != null) vadSliders.speechRatio.el.value      = vad.speech_frame_ratio;
+  if (vad.min_speech_duration    != null) vadSliders.minSpeech.el.value        = vad.min_speech_duration;
   if (vad.silence_threshold      != null) vadSliders.silenceThreshold.el.value = vad.silence_threshold;
-  if (vad.max_utterance_duration != null) vadSliders.maxUtterance.el.value    = vad.max_utterance_duration;
-  if (vad.min_word_count         != null) vadSliders.minWordCount.el.value    = vad.min_word_count;
+  if (vad.max_utterance_duration != null) vadSliders.maxUtterance.el.value     = vad.max_utterance_duration;
+  if (vad.min_word_count         != null) vadSliders.minWordCount.el.value     = vad.min_word_count;
+  if (vad.silero_threshold       != null) vadSliders.sileroThreshold.el.value  = vad.silero_threshold;
+  if (vad.silero_min_speech_duration_ms != null) vadSliders.sileroMinSpeechMs.el.value  = vad.silero_min_speech_duration_ms;
+  if (vad.silero_min_silence_duration_ms != null) vadSliders.sileroMinSilenceMs.el.value = vad.silero_min_silence_duration_ms;
   // Update display values and track fills
   Object.values(vadSliders).forEach(s => {
     s.val.textContent = s.fmt(s.el.value);

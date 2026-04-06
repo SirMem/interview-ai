@@ -262,15 +262,15 @@ fi
 
 # ── Log file setup ────────────────────────────────────────────────────────────
 # Two log files:
-#   logs/app.json         — structured NDJSON (all Node actions, settings, VAD, models)
+#   logs/app.jsonl        — structured NDJSON (all Node actions, settings, VAD, models)
 #   logs/transcriber.log  — Python transcriber text log
 mkdir -p "$SCRIPT_DIR/logs"
-APP_JSON_LOG="$SCRIPT_DIR/logs/app.json"
+APP_JSON_LOG="$SCRIPT_DIR/logs/app.jsonl"
 PYTHON_LOG="$SCRIPT_DIR/logs/transcriber.log"
 
 if $NEW_LOGS; then
   log "Clearing all logs (--newlogs)..."
-  rm -f "$SCRIPT_DIR/logs/"*.json "$SCRIPT_DIR/logs/"*.log "$SCRIPT_DIR/logs/"*.ndjson
+  rm -f "$SCRIPT_DIR/logs/"*.json "$SCRIPT_DIR/logs/"*.jsonl "$SCRIPT_DIR/logs/"*.log "$SCRIPT_DIR/logs/"*.ndjson
   ok "Logs cleared."
 fi
 
@@ -294,7 +294,7 @@ wait_for_port() {
 }
 
 # ── 1. Node.js backend ────────────────────────────────────────────────────────
-# Node logs go to logs/app.json (structured). Console output goes to /dev/null.
+# Node logs go to logs/app.jsonl (structured). Console output goes to /dev/null.
 log "Starting Node.js backend (port $NODE_PORT)..."
 node src/server.js >/dev/null 2>&1 &
 NODE_PID=$!
@@ -341,7 +341,7 @@ echo -e "  Transcriber  → PID $PYTHON_PID"
 echo -e "  Electron HUD → PID $ELECTRON_PID"
 echo -e ""
 echo -e "  ${BOLD}Log files:${RESET}"
-echo -e "  Structured JSON  → ${DIM}logs/app.json${RESET}"
+echo -e "  Structured JSON  → ${DIM}logs/app.jsonl${RESET}"
 echo -e "  Transcriber text → ${DIM}logs/transcriber.log${RESET}"
 echo -e ""
 echo -e "  ${BOLD}Quick links:${RESET}"

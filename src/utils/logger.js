@@ -1,7 +1,7 @@
 /**
  * Production-level logger utility
  * Provides structured logging with appropriate log levels.
- * Every log call also writes to logs/app.json via file-logger.
+ * Every log call also writes to logs/app.jsonl via file-logger.
  */
 import { logEvent } from './file-logger.js';
 

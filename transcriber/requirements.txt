@@ -10,7 +10,8 @@ sounddevice>=0.4.6
 numpy>=1.24.0
 librosa>=0.10.0  # For audio resampling
 soundfile>=0.12.0  # For saving audio to WAV files
-webrtcvad>=2.0.10  # Voice Activity Detection
+webrtcvad>=2.0.10  # Voice Activity Detection (WebRTC engine)
+onnxruntime>=1.16.0  # Silero VAD inference (DNN engine)
 
 # Speech-to-text (MLX Whisper - optimized for Apple Silicon)
 # Note: MLX requires Apple Silicon (M1/M2/M3) Mac

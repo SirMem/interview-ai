@@ -1,5 +1,5 @@
 /**
- * Centralised structured NDJSON logger — logs/app.json
+ * Centralised structured NDJSON logger — logs/app.jsonl
  *
  * Every important action (settings change, VAD config, model swap, question
  * detected, AI response, errors) gets a single JSON line here so the whole
@@ -13,7 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_FILE = path.join(__dirname, '..', '..', 'logs', 'app.json');
+const LOG_FILE = path.join(__dirname, '..', '..', 'logs', 'app.jsonl');
 
 // Ensure logs/ directory exists at module load (sync once, at startup)
 fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
