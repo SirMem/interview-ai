@@ -434,7 +434,7 @@
     <div class="action-bar">
       <span class="action-status" id="actionStatus"></span>
       <div class="action-buttons">
-        <button class="action-btn listener-btn" id="btnListener">Listener</button>
+        <button class="action-btn listener-btn" id="btnListener">Listen</button>
         <button class="action-btn debug-btn" id="btnDebug" disabled>Debug</button>
         <button class="action-btn theory-btn" id="btnTheory" disabled>Theory</button>
         <button class="action-btn coding-btn" id="btnCoding" disabled>Coding</button>
@@ -660,10 +660,20 @@
     const btnListener = document.getElementById('btnListener');
     let listenerActive = false;
 
+    function syncListenerButton(active) {
+      listenerActive = active;
+      btnListener.classList.toggle('listener-active', listenerActive);
+      btnListener.textContent = listenerActive ? '● Listening' : 'Listen';
+    }
+
+    // Sync button state when server tells us the current always-on status
+    socket.on('always_on_state', (data) => {
+      syncListenerButton(!!data.enabled);
+    });
+
     btnListener.addEventListener('click', () => {
       listenerActive = !listenerActive;
-      btnListener.classList.toggle('listener-active', listenerActive);
-      btnListener.textContent = listenerActive ? '● Listen' : 'Listener';
+      syncListenerButton(listenerActive);
       socket.emit('toggle_always_on_mode', { enabled: listenerActive });
     });
 

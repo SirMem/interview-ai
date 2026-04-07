@@ -41,7 +41,10 @@ class DataHandler extends EventEmitter {
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
     this.transcriptBuffer = new InterviewTranscriptBuffer();
-    this.transcriptBuffer.setSummarizeFn((q, a) => aiService.summarizeQAPair(q, a));
+    this.transcriptBuffer.setSummarizeFn(
+      (q, a) => aiService.summarizeQAPair(q, a),
+      (entries) => aiService.summarizeMerge(entries),
+    );
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();
@@ -86,6 +89,9 @@ class DataHandler extends EventEmitter {
       connectedAt: new Date().toISOString(),
       timestamp: Date.now(),
     });
+
+    // Push current always-on listener state to newly connected client
+    this._pushAlwaysOnState(socket);
 
     socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
     socket.on('error', (error) => this.handleError(socket, error));
@@ -629,6 +635,20 @@ class DataHandler extends EventEmitter {
     }
   }
 
+  async _pushAlwaysOnState(socket) {
+    try {
+      const res = await fetch('http://localhost:8000/health');
+      if (res.ok) {
+        const body = await res.json();
+        const enabled = !!body.always_on_active;
+        log.info('Pushing always-on state to client', { enabled });
+        this.emitToSocket(socket, 'always_on_state', { enabled });
+      }
+    } catch (_) {
+      // transcriber not up yet — default to off
+    }
+  }
+
   async handleToggleAlwaysOn(socket, data) {
     const { enabled } = data || {};
     try {
@@ -639,8 +659,12 @@ class DataHandler extends EventEmitter {
       });
       log.info('Always-on mode toggled', { enabled });
       logEvent('always_on_toggled', 'INFO', { module: 'DataHandler', enabled });
+      // Confirm the actual state back to the client
+      this.emitToSocket(socket, 'always_on_state', { enabled: !!enabled });
     } catch (err) {
       log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
+      // Revert button state on failure
+      this.emitToSocket(socket, 'always_on_state', { enabled: !enabled });
     }
   }
 

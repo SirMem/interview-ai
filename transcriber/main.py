@@ -432,6 +432,9 @@ async def health_check():
         "status": "healthy",
         "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
+        "always_on_active": (always_on_listener is not None
+                             and always_on_listener._running
+                             and not always_on_listener._paused),
     }
 
 

@@ -220,6 +220,14 @@ fi
 #  RUNTIME SECTION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ── Load .env ─────────────────────────────────────────────────────────────────
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -o allexport
+  # shellcheck disable=SC1090
+  source "$SCRIPT_DIR/.env"
+  set +o allexport
+fi
+
 # ── Preflight ─────────────────────────────────────────────────────────────────
 command -v node    >/dev/null 2>&1 || die "node not found. Run: ./start.sh --setup"
 command -v npm     >/dev/null 2>&1 || die "npm not found.  Run: ./start.sh --setup"
@@ -317,7 +325,7 @@ else
 fi
 
 log "Starting Python transcriber (STT model: $WHISPER_MODEL)..."
-WHISPER_MODEL="$WHISPER_MODEL" "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
+WHISPER_MODEL="$WHISPER_MODEL" AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
   >"$PYTHON_LOG" 2>&1 &
 PYTHON_PID=$!
 PIDS+=("$PYTHON_PID")

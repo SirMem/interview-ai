@@ -625,6 +625,38 @@ Question: ${question}`;
   }
 
   /**
+   * Merge multiple memory entries (mix of raw Q&A pairs and prior merged
+   * summaries) into a single rolling summary via Ollama. Used to compress
+   * the oldest 3 entries when conversation memory overflows.
+   * Returns the merged summary string, or throws on failure.
+   */
+  async summarizeMerge(entries) {
+    const model = this.config?.keys?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
+
+    const formatted = entries.map((e, i) => {
+      if (e.type === 'merged') return `[${i + 1}] Prior summary: ${e.text}`;
+      if (e.summary) return `[${i + 1}] ${e.summary}`;
+      return `[${i + 1}] Q: ${e.q}\n    A: ${e.a}`;
+    }).join('\n');
+
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are compressing interview conversation history. Merge the following entries into a single concise summary (max 120 words) that preserves topics, key facts, and the chronological flow. No bullet points, no preamble — just the merged summary paragraph.',
+      },
+      { role: 'user', content: formatted },
+    ];
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: 0,
+      max_tokens: 250,
+    });
+    return completion.choices[0]?.message?.content || '';
+  }
+
+  /**
    * Classifier mode — format: '<type>[:<model>]'
    *   'ollama'              → local Ollama, use configured ollama_model
    *   'ollama:llama3.2:1b'  → local Ollama, use llama3.2:1b specifically

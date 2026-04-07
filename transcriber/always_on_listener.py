@@ -11,7 +11,6 @@ import logging
 import random
 import threading
 import time
-from collections import deque
 import numpy as np
 import sounddevice as sd
 from concurrent.futures import ThreadPoolExecutor
@@ -63,10 +62,6 @@ class AlwaysOnListener:
         self._silence_frames_threshold = int(ALWAYS_ON_SILENCE_THRESHOLD / _BLOCK_DURATION)
         self._min_speech_samples = int(ALWAYS_ON_MIN_SPEECH_DURATION * SAMPLE_RATE)
         self._max_speech_samples = int(ALWAYS_ON_MAX_UTTERANCE_DURATION * SAMPLE_RATE)
-
-        # Rolling probability window for smoothing (5 chunks = 500ms)
-        self._prob_window_size = 5
-        self._prob_window: deque = deque(maxlen=self._prob_window_size)
 
         # Metrics
         self.metrics = VADMetrics()
@@ -149,13 +144,7 @@ class AlwaysOnListener:
         prob = vad.speech_probability(chunk, SAMPLE_RATE)
         latency_ms = (time.perf_counter() - t0) * 1000
 
-        # Smoothing: for Silero, use rolling average to reduce single-frame false triggers
-        if vad.engine_name == 'silero':
-            self._prob_window.append(prob)
-            smoothed_prob = sum(self._prob_window) / len(self._prob_window)
-            is_speech = smoothed_prob >= self._get_threshold()
-        else:
-            is_speech = prob >= self._get_threshold()
+        is_speech = prob >= self._get_threshold()
 
         rms_energy = float(np.sqrt(np.mean(chunk ** 2)))
 
@@ -239,7 +228,6 @@ class AlwaysOnListener:
         self._speech_samples = 0
         self._silent_frames = 0
         self._force_flushed = False
-        self._prob_window.clear()
         # Reset VAD internal state (important for Silero's RNN)
         self._transcriber.vad.reset_state()
 
