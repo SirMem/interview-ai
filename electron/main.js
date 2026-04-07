@@ -10,6 +10,7 @@ const SOCKET_URL = process.env.SOCKET_URL || 'http://localhost:4000';
 let overlayWindow = null;
 let dragState = null;
 const HOTKEY = 'CommandOrControl+Shift+H';
+const LISTEN_HOTKEY = 'CommandOrControl+Shift+X';
 
 function positionOverlayOnDisplayUnderCursor(win) {
   const cursorPoint = screen.getCursorScreenPoint();
@@ -125,6 +126,13 @@ app.whenReady().then(() => {
   const registered = globalShortcut.register(HOTKEY, toggleOverlay);
   if (!registered) {
     console.warn(`Failed to register hotkey ${HOTKEY}`);
+  }
+
+  const listenRegistered = globalShortcut.register(LISTEN_HOTKEY, () => {
+    overlayWindow?.webContents.send('toggle-listen');
+  });
+  if (!listenRegistered) {
+    console.warn(`Failed to register listen hotkey ${LISTEN_HOTKEY}`);
   }
 });
 

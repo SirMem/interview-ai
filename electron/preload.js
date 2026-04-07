@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('hudAPI', {
   endDrag: () => ipcRenderer.send('hud-drag-end'),
   // value: 0 (opaque) → 100 (transparent)
   setOpacity: (value) => ipcRenderer.send('hud-set-opacity', value),
+  // Register a callback for the toggle-listen IPC message (Cmd+Shift+X)
+  onToggleListen: (callback) => ipcRenderer.on('toggle-listen', callback),
 });

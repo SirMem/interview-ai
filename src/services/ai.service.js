@@ -19,9 +19,7 @@ const PROMPT_FILE_MAP = {
   debug: 'debug-prompt.txt',
   coding: 'coding-prompt.txt',
   theory: 'theory-prompt.txt',
-  'interview-classifier': 'interview-classifier-prompt.txt',
   'interview-answer': 'interview-answer-prompt.txt',
-  'interview-combined': 'interview-combined-prompt.txt',
 };
 
 class AIService {
@@ -657,22 +655,6 @@ Question: ${question}`;
   }
 
   /**
-   * Classifier mode — format: '<type>[:<model>]'
-   *   'ollama'              → local Ollama, use configured ollama_model
-   *   'ollama:llama3.2:1b'  → local Ollama, use llama3.2:1b specifically
-   *   'ollama:llama3.2:3b'  → local Ollama, use llama3.2:3b specifically
-   *   'remote'              → first available remote provider (fallback chain)
-   *   'remote:grok'         → Grok specifically
-   *   'remote:openai'       → OpenAI specifically
-   *   'remote:gemini'       → Gemini specifically
-   */
-  /** @deprecated No longer used — classification is now part of the combined call. */
-  setClassifierMode(mode) {
-    this._classifierMode = mode;
-    log.info(`Classifier mode set to: ${mode}`);
-  }
-
-  /**
    * Answer mode — which provider to use when streaming question answers.
    *   'auto'    → fallback chain through enabled providers (default)
    *   'ollama'  → local Ollama
@@ -686,82 +668,15 @@ Question: ${question}`;
   }
 
   /**
-   * Classify an interviewer utterance as a question (or follow-up).
-   * Routes based on _classifierMode; falls back gracefully.
-   * Returns { isQuestion, questionText, mergeWithPrevious, confidence }
-   */
-  async classifyInterviewerUtterance(text, previousQuestionText = '') {
-    const template = this.readPromptFromFile('interview-classifier');
-    const systemPrompt = template
-      .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
-      .replace('{UTTERANCE}', text);
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: text },
-    ];
-
-    let raw = '';
-    const mode = this._classifierMode || this.config?.classifier_mode || 'ollama';
-    const colonIdx = mode.indexOf(':');
-    const modeType = colonIdx === -1 ? mode : mode.slice(0, colonIdx);
-    const modeModel = colonIdx === -1 ? '' : mode.slice(colonIdx + 1); // e.g. 'llama3.2:1b' or 'grok'
-
-    if (modeType === 'ollama') {
-      const ollamaModel = modeModel || this.config?.keys?.ollama_model || 'llama3.2:1b';
-      try {
-        raw = await this._callOllamaClassifier(messages, ollamaModel);
-        log.debug('Ollama classifier used', { model: ollamaModel });
-      } catch (err) {
-        log.warn('Ollama unavailable, falling back to remote classifier', { error: err.message });
-        try {
-          const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 256 });
-          raw = result?.message?.content || '';
-        } catch (err2) {
-          log.warn('Remote classifier also failed', { error: err2.message });
-          return { isQuestion: false };
-        }
-      }
-    } else {
-      // remote or remote:<provider>
-      const remoteProvider = modeModel; // e.g. 'grok', 'openai', 'gemini', or ''
-      try {
-        if (remoteProvider && ['openai', 'grok', 'gemini'].includes(remoteProvider)) {
-          const opts = { temperature: 0, max_tokens: 256 };
-          let response;
-          switch (remoteProvider) {
-            case 'openai': response = await this.callOpenAI(messages, opts); break;
-            case 'grok':   response = await this.callGrok(messages, opts); break;
-            case 'gemini': response = await this.callGemini(messages, opts); break;
-          }
-          raw = response || '';
-          log.debug(`Remote classifier used: ${remoteProvider}`);
-        } else {
-          const result = await this.callAIWithFallback(messages, { temperature: 0, max_tokens: 256 });
-          raw = result?.message?.content || '';
-        }
-      } catch (err) {
-        log.warn('Remote classifier failed', { error: err.message });
-        return { isQuestion: false };
-      }
-    }
-
-    try {
-      const jsonStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      return JSON.parse(jsonStr.match(/\{[\s\S]*\}/)?.[0] || jsonStr);
-    } catch (err) {
-      log.warn('Failed to parse classifier response', { error: err.message });
-      return { isQuestion: false };
-    }
-  }
-
-  /**
-   * Stream an answer to an interview question using the full transcript as context.
+   * Stream an answer to an interview question using the full transcript and memory as context.
    * Routes based on _answerMode; falls back to provider chain if needed.
    * Yields { token, provider } objects.
    */
-  async *answerInterviewQuestion(questionText, transcriptContext = '') {
+  async *answerInterviewQuestion(questionText, transcriptContext = '', memoryContext = '') {
     const template = this.readPromptFromFile('interview-answer');
-    const systemPrompt = template.replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)');
+    const systemPrompt = template
+      .replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)')
+      .replace('{MEMORY_CONTEXT}', memoryContext ? `## Conversation History\n${memoryContext}` : '');
     const messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: questionText },
@@ -800,153 +715,6 @@ Question: ${question}`;
     yield* this.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 });
   }
 
-  /**
-   * Single-call classify + answer for interview utterances.
-   * Streams a structured response: header metadata first, then answer tokens.
-   *
-   * Yields objects of two types:
-   *   { type: 'header', isQuestion: bool, questionText: string, mergeWithPrevious: bool }
-   *   { type: 'token', token: string, provider: string }
-   *
-   * For non-questions, yields a single header with isQuestion=false and returns.
-   */
-  async *classifyAndAnswerInterviewQuestion(text, previousQuestionText = '', transcriptContext = '', memoryContext = '') {
-    const template = this.readPromptFromFile('interview-combined');
-    const systemPrompt = template
-      .replace('{PREVIOUS_QUESTION}', previousQuestionText || '(none)')
-      .replace('{TRANSCRIPT_CONTEXT}', transcriptContext || '(no context yet)')
-      .replace('{MEMORY_CONTEXT}', memoryContext || '(no conversation history yet)')
-      .replace('{UTTERANCE}', text);
-
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: text },
-    ];
-
-    const answerMode = this._answerMode || this.config?.answer_mode || 'auto';
-
-    // Pick the right streaming source based on answer mode
-    let tokenSource;
-    let providerName = answerMode;
-
-    if (answerMode === 'ollama') {
-      try {
-        tokenSource = this._streamOllama(messages, { temperature: 0.7, max_tokens: 2048 });
-      } catch (err) {
-        log.warn('Ollama unavailable for combined call, falling back', { error: err.message });
-        tokenSource = null;
-      }
-    } else if (['openai', 'grok', 'gemini'].includes(answerMode)) {
-      try {
-        const opts = { temperature: 0.7, max_tokens: 2048 };
-        switch (answerMode) {
-          case 'openai': tokenSource = this.streamOpenAI(messages, opts); break;
-          case 'grok':   tokenSource = this.streamGrok(messages, opts); break;
-          case 'gemini': tokenSource = this.streamGemini(messages, opts); break;
-        }
-      } catch (err) {
-        log.warn(`${answerMode} unavailable for combined call, falling back`, { error: err.message });
-        tokenSource = null;
-      }
-    }
-
-    // Fallback: use the provider chain
-    if (!tokenSource) {
-      providerName = 'auto';
-      tokenSource = (async function* (self) {
-        for await (const { token, provider } of self.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 })) {
-          providerName = provider;
-          yield token;
-        }
-      })(this);
-    }
-
-    // ── Stream header parser (state machine) ──
-    const STATE_DETECTING = 0;
-    const STATE_QUESTION_TEXT = 1;
-    const STATE_MERGE_LINE = 2;
-    const STATE_AWAIT_DELIMITER = 3;
-    const STATE_STREAMING = 4;
-
-    let state = STATE_DETECTING;
-    let buffer = '';
-    let questionText = '';
-    let mergeWithPrevious = false;
-    let tokenCount = 0;
-    let headerEmitted = false;
-
-    for await (const token of tokenSource) {
-      tokenCount++;
-
-      // Safety: if we haven't found a valid header in 50 tokens, treat as non-question
-      if (!headerEmitted && tokenCount > 50) {
-        log.warn('Combined call: no valid header after 50 tokens, treating as non-question');
-        yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
-        return;
-      }
-
-      if (state === STATE_STREAMING) {
-        yield { type: 'token', token, provider: providerName };
-        continue;
-      }
-
-      // Accumulate into buffer for header parsing
-      buffer += token;
-
-      if (state === STATE_DETECTING) {
-        if (buffer.includes('[NOT_A_QUESTION]')) {
-          yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
-          return;
-        }
-        if (buffer.includes('[QUESTION]')) {
-          // Remove everything up to and including [QUESTION] + optional newline
-          buffer = buffer.split('[QUESTION]').slice(1).join('[QUESTION]').replace(/^\n/, '');
-          state = STATE_QUESTION_TEXT;
-        }
-      }
-
-      if (state === STATE_QUESTION_TEXT) {
-        const nlIdx = buffer.indexOf('\n');
-        if (nlIdx !== -1) {
-          questionText = buffer.substring(0, nlIdx).trim();
-          buffer = buffer.substring(nlIdx + 1);
-          state = STATE_MERGE_LINE;
-        }
-      }
-
-      if (state === STATE_MERGE_LINE) {
-        if (buffer.includes('[MERGE:true]')) {
-          mergeWithPrevious = true;
-          buffer = buffer.split('[MERGE:true]').slice(1).join('').replace(/^\n/, '');
-          state = STATE_AWAIT_DELIMITER;
-        } else if (buffer.includes('[MERGE:false]')) {
-          mergeWithPrevious = false;
-          buffer = buffer.split('[MERGE:false]').slice(1).join('').replace(/^\n/, '');
-          state = STATE_AWAIT_DELIMITER;
-        }
-      }
-
-      if (state === STATE_AWAIT_DELIMITER) {
-        if (buffer.includes('---')) {
-          headerEmitted = true;
-          yield { type: 'header', isQuestion: true, questionText, mergeWithPrevious };
-
-          // Emit any leftover text after the delimiter as the first answer token
-          const afterDelimiter = buffer.split('---').slice(1).join('---').replace(/^\n/, '');
-          if (afterDelimiter) {
-            yield { type: 'token', token: afterDelimiter, provider: providerName };
-          }
-          state = STATE_STREAMING;
-        }
-      }
-    }
-
-    // Stream ended without emitting a header — treat as non-question
-    if (!headerEmitted) {
-      log.warn('Combined call: stream ended without complete header');
-      yield { type: 'header', isQuestion: false, questionText: '', mergeWithPrevious: false };
-    }
-  }
 }
 
 export default new AIService();

@@ -1,13 +1,12 @@
 import { logMemory } from '../utils/memory-logger.js';
 
 /**
- * Rolling buffer of interviewer utterances and detected question queue.
- * Maintains the last N utterances for AI context and a max-3 question queue.
+ * Rolling buffer of recent utterances and conversation memory for AI context.
+ * Maintains the last N utterances and a compressed Q&A history.
  */
 class InterviewTranscriptBuffer {
   constructor({ maxUtterances = 30, maxMemoryEntries = 5 } = {}) {
     this._utterances = []; // [{ id, text, timestamp }]
-    this._questions = [];  // [{ questionId, questionText, timestamp }] — max 3
     this.maxUtterances = maxUtterances;
 
     // Conversation memory: rolling window with forever-chain compression.
@@ -209,29 +208,6 @@ class InterviewTranscriptBuffer {
     return this._utterances.map((u) => u.text).join('\n');
   }
 
-  getLastQuestion() {
-    if (this._questions.length === 0) return null;
-    return this._questions[this._questions.length - 1];
-  }
-
-  addQuestion(questionId, questionText) {
-    if (this._questions.length >= 3) {
-      this._questions.shift();
-    }
-    this._questions.push({ questionId, questionText, timestamp: Date.now() });
-  }
-
-  mergeQuestion(questionId, newText) {
-    const entry = this._questions.find((q) => q.questionId === questionId);
-    if (entry) {
-      entry.questionText = newText;
-      entry.timestamp = Date.now();
-    }
-  }
-
-  getQuestions() {
-    return [...this._questions];
-  }
 }
 
 export default InterviewTranscriptBuffer;

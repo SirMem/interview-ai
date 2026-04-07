@@ -15,7 +15,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-NODE_PORT=4000
+NODE_PORT=$(python3 -c "
+import json
+try:
+  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
+  print(c.get('port', 4000))
+except: print(4000)
+" 2>/dev/null)
+NODE_PORT="${NODE_PORT:-4000}"
 PIDS=()
 OLLAMA_STARTED=false   # true only when this script launched ollama
 
@@ -220,13 +227,14 @@ fi
 #  RUNTIME SECTION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# ── Load .env ─────────────────────────────────────────────────────────────────
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-  set -o allexport
-  # shellcheck disable=SC1090
-  source "$SCRIPT_DIR/.env"
-  set +o allexport
-fi
+# ── Read audio device from config ─────────────────────────────────────────────
+AUDIO_INPUT_DEVICE=$(python3 -c "
+import json
+try:
+  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
+  print(c.get('audio_input_device', ''))
+except: print('')
+" 2>/dev/null)
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 command -v node    >/dev/null 2>&1 || die "node not found. Run: ./start.sh --setup"
