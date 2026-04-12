@@ -124,33 +124,40 @@ async def lifespan(app: FastAPI):
         _json_writer_thread.start()
         logger.info("JSON writer thread started (NDJSON mode)")
 
+        try:
+            always_on_listener = AlwaysOnListener(transcriber, socket_client)
+            logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
+        except Exception as e:
+            logger.warning(f"Could not initialize always-on listener: {e}")
+            always_on_listener = None
+
         if KEYBOARD_ENABLED:
             try:
-                def start_recording_keyboard():
-                    start_recording_internal(enable_realtime_chunks=True)
+                def toggle_always_on_keyboard():
+                    if always_on_listener is None:
+                        return
+                    if always_on_listener._running:
+                        always_on_listener.stop()
+                        log_writer.log('listen_stopped', source='keyboard')
+                        if socket_client and socket_client.is_connected():
+                            socket_client.send_listen_state(False)
+                    else:
+                        always_on_listener.start()
+                        log_writer.log('listen_started', source='keyboard')
+                        if socket_client and socket_client.is_connected():
+                            socket_client.send_listen_state(True)
 
                 keyboard_handler = KeyboardHandler(
-                    on_key_press=start_recording_keyboard,
-                    on_key_release=stop_recording_internal_sync,
+                    on_key_press=toggle_always_on_keyboard,
+                    on_key_release=lambda: None,
                 )
                 keyboard_handler.start()
-                logger.info("Keyboard handler started (real-time transcription mode)")
+                logger.info("Keyboard handler started (toggle always-on mode)")
             except Exception as e:
                 logger.warning(f"Could not start keyboard handler: {e}")
                 keyboard_handler = None
         else:
             logger.info("Keyboard handler disabled in configuration")
-
-        if ALWAYS_ON_ENABLED:
-            try:
-                always_on_listener = AlwaysOnListener(transcriber, socket_client)
-                always_on_listener.start()
-                logger.info("Always-on listener started (interviewer speech detection mode)")
-            except Exception as e:
-                logger.warning(f"Could not start always-on listener: {e}")
-                always_on_listener = None
-        else:
-            logger.info("Always-on listener disabled (set ALWAYS_ON_ENABLED=true to enable)")
 
         logger.info("STT system ready")
 
@@ -465,16 +472,20 @@ async def set_always_on_mode(body: dict):
         if always_on_listener is None:
             try:
                 always_on_listener = AlwaysOnListener(transcriber, socket_client)
+            except Exception as e:
+                logger.error(f"Failed to initialize always-on listener: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to initialize listener: {str(e)}")
+        if not always_on_listener._running:
+            try:
                 always_on_listener.start()
-                logger.info("Always-on listener started on-demand")
+                logger.info("Always-on listener started")
             except Exception as e:
                 logger.error(f"Failed to start always-on listener: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to start listener: {str(e)}")
-        else:
-            always_on_listener.resume()
     else:
-        if always_on_listener:
-            always_on_listener.pause()
+        if always_on_listener and always_on_listener._running:
+            always_on_listener.stop()
+            logger.info("Always-on listener stopped")
     return {"status": "ok", "enabled": enabled}
 
 

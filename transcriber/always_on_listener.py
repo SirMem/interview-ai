@@ -73,6 +73,9 @@ class AlwaysOnListener:
     def start(self):
         if self._running:
             return
+        # Recreate executor if it was shut down by a previous stop()
+        if self._executor._shutdown:
+            self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aol-transcribe")
         self._running = True
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
