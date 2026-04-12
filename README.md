@@ -76,6 +76,8 @@ Open `http://localhost:4000/settings` in your browser after starting the app. Th
 
 ### AI Providers
 
+![AI Providers settings](docs/images/settings-providers.png)
+
 The first thing you see when you open settings.
 
 - Keys are stored locally in `config/api-keys.json` on your machine — nothing is sent anywhere
@@ -103,6 +105,8 @@ Each provider card has:
 ---
 
 ### Interview Role
+
+![Settings details](docs/images/settings-details.png)
 
 Scroll down past the providers to reach this section.
 
