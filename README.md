@@ -70,56 +70,74 @@ Press `Ctrl+C` to stop everything.
 
 ## Settings page
 
-Open `http://localhost:4000/settings` in your browser after starting the app.
+Open `http://localhost:4000/settings` in your browser after starting the app. The page has two sections — AI Providers at the top, and everything else below when you scroll down.
+
+---
 
 ### AI Providers
 
-Add API keys for any combination of providers. Drag cards to set the **fallback chain order** — if the first provider fails, the next one is tried automatically.
+The first thing you see when you open settings.
+
+- Keys are stored locally in `config/api-keys.json` on your machine — nothing is sent anywhere
+- Leave a key field blank to keep the existing saved value
+- At least one provider must be enabled
+
+The **fallback chain** is shown at the top (e.g. `Groq → OpenAI → Gemini`) — if the first provider fails or rate-limits, the next one is tried automatically.
 
 | Provider | Where to get a key |
 |----------|--------------------|
 | OpenAI   | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| Groq | [console.groq.com/keys](https://console.groq.com/keys) |
+| Groq     | [console.groq.com/keys](https://console.groq.com/keys) |
 | Gemini   | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 | Claude   | [console.anthropic.com/settings/api-keys](https://console.anthropic.com/settings/api-keys) |
 
-For each provider you can:
-- **Enable/disable** with a toggle
-- **Select the model** (dropdown shows available models for that provider)
-- **Test the connection** before your interview
-- **Reorder** by dragging to change fallback priority
+Each provider card has:
+- **Toggle** — enable or disable the provider
+- **Key field** — masked; shows `🔑 key saved` when a key exists. Leave blank to keep the existing key.
+- **Show** — reveal the saved key
+- **Test** — verify the key works before your interview
+- **Model dropdown** — lists available models for that provider
+- **↻ button** — refresh the model list (useful after adding a new key)
+- **Drag handle** (`⠿`) — drag cards to reorder the fallback chain
+
+---
 
 ### Interview Role
 
-Enter your interview role (e.g. `Frontend Engineer`, `Android Developer`, `Platform Engineer`). When set, every AI answer is automatically tailored to use relevant frameworks, terminology, and patterns for that domain.
+Scroll down past the providers to reach this section.
 
-Leave blank for generic technical answers.
+Enter your role (e.g. `Frontend Engineer`, `Android Developer`, `Platform Engineer`). Every AI answer is automatically tailored to use relevant frameworks, tools, and terminology for that domain. Leave blank for generic technical answers.
+
+Click **View Active Prompts** to expand a preview of the exact prompt being sent to the AI, so you can see how your role is applied.
+
+---
 
 ### Screenshots
 
-Set the folder that SolveWatch watches for screenshots. When a new screenshot appears, the app runs OCR + AI analysis and shows the result in the HUD.
+Set the folder SolveWatch watches for new screenshots. When a new file appears, the app runs OCR + AI analysis and shows the result in the HUD.
 
-**Recommended macOS setup:**
+On macOS, `Cmd+Shift+3` saves to `~/Desktop` by default. To point it at a dedicated folder:
+1. `System Settings → Screenshots → Save to` → choose your folder
+2. Enter that same path in the Screenshots Folder field here
+3. `System Settings → Screenshots → uncheck "Show Floating Thumbnail"` to avoid distraction
 
-1. Change the screenshot save location to a dedicated folder:
-   `System Settings → Screenshots → Save to` → choose a folder (e.g. `~/Pictures/SolveWatch`)
-2. Set that same path in SolveWatch settings
-
-**Disable the floating thumbnail preview** (prevents distraction):
-`System Settings → Screenshots → uncheck "Show Floating Thumbnail"`
-
-**Disable the screenshot sound:**
-`System Settings → Sound → uncheck "Play sound for screenshot"`
+---
 
 ### Speech-to-Text
 
-Choose between:
-- **Local Whisper (MLX)** — runs on-device, no API key needed. Models from `tiny` (fastest) to `large` (most accurate). `small` is the recommended default.
-- **OpenAI Whisper API** — sends audio to OpenAI, requires an OpenAI API key
+Two modes, switchable via tabs:
+
+- **Local Whisper (MLX)** — runs fully on-device using Apple MLX, no API key required. Choose a model from the dropdown (`tiny` → `large`; `medium` is a good balance of speed and accuracy). Changing the model restarts the transcriber automatically.
+- **OpenAI Whisper API** — sends audio to OpenAI for transcription. Requires an OpenAI key configured in the AI Providers section above.
+
+---
 
 ### HUD Appearance
 
-Adjust the HUD window opacity from fully opaque (0%) to near-invisible (90%). Changes apply live.
+**Window Opacity** slider: drag from **Opaque (0%)** to **Transparent (90%)**. Changes apply live to the open HUD window — no save needed.
+
+> The HUD is invisible in screen sharing by default — only you can see it.
+> Shortcut keys: `⌘⇧H` toggle HUD · `⌘⇧X` push-to-talk
 
 ---
 

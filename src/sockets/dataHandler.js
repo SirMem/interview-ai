@@ -574,7 +574,7 @@ class DataHandler extends EventEmitter {
   }
 
   handleSetHudOpacity(data) {
-    const { value } = data || {};
+    const value = (typeof data === 'object' && data !== null) ? data.value : data;
     if (value === undefined || value === null) return;
     const clamped = Math.max(0, Math.min(100, parseInt(value) || 0));
     log.info('HUD opacity changed', { value: clamped });
