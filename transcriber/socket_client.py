@@ -202,6 +202,16 @@ class SocketClient:
         except Exception as e:
             logger.error(f"Error sending interviewer speech: {e}")
 
+    def send_listen_state(self, listening: bool):
+        """Notify Node.js that the always-on listener was toggled via keyboard."""
+        if not self.connected:
+            return
+        try:
+            self.sio.emit('listen_state_update', {'listening': listening}, namespace=self.endpoint)
+            logger.debug(f"Sent listen_state_update: {listening}")
+        except Exception as e:
+            logger.error(f"Error sending listen state: {e}")
+
     def is_connected(self) -> bool:
         return self.connected
 

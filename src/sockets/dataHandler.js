@@ -98,6 +98,7 @@ class DataHandler extends EventEmitter {
     socket.on('transcription', (data) => this.handleTranscription(socket, data));
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
     socket.on('toggle_listen_mode', (data) => this.handleToggleListenMode(socket, data));
+    socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -488,9 +489,12 @@ class DataHandler extends EventEmitter {
 
   async handleToggleListenMode(socket, data) {
     const { enabled } = data || {};
-    const url = enabled ? 'http://localhost:8000/start-recording' : 'http://localhost:8000/stop-recording';
     try {
-      await fetch(url, { method: 'POST' });
+      await fetch('http://localhost:8000/always-on-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !!enabled }),
+      });
       log.info('Listen mode toggled', { enabled });
       logEvent(enabled ? 'listen_started' : 'listen_stopped', 'INFO', { module: 'DataHandler' });
       this.namespace.emit('listen_state_changed', { listening: !!enabled });

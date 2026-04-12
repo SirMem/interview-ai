@@ -518,6 +518,7 @@
     let viewIndex   = -1;
     let isLocked    = false;
     let transcriptionMap = {}; // questionId → captured transcription string
+    let screenshotStatus = ''; // current screenshot pipeline status
 
     // ── Opacity ──────────────────────────────────────────────────────
     function applyOpacity(value) {
@@ -569,7 +570,10 @@
       const qa = viewIndex >= 0 ? allQAs[viewIndex] : null;
       const saved = qa ? (transcriptionMap[qa.questionId] || '') : '';
       if (isListening) return; // don't overwrite while live
-      if (saved) {
+      if (screenshotStatus) {
+        liveStrip.textContent = screenshotStatus;
+        liveStrip.className = 'live-strip active';
+      } else if (saved) {
         liveStrip.textContent = saved;
         liveStrip.className = 'live-strip persisted';
       } else {
@@ -753,23 +757,54 @@
       liveStrip.className = 'live-strip active';
     });
 
+    // Screenshot pipeline status
+    socket.on('screenshot_captured', () => {
+      screenshotStatus = 'Screenshot captured';
+      if (!isListening) updateLiveStrip();
+    });
+
+    socket.on('ocr_started', () => {
+      screenshotStatus = 'OCR in progress…';
+      if (!isListening) updateLiveStrip();
+    });
+
+    socket.on('ocr_complete', () => {
+      screenshotStatus = 'AI analyzing…';
+      if (!isListening) updateLiveStrip();
+    });
+
     // Screenshot flow
     socket.on('ai_processing_started', () => {
       setButtons(false);
+      screenshotStatus = 'AI analyzing…';
+      if (!isListening) updateLiveStrip();
       if (!actionStatus.textContent) setActionStatus('Processing…');
     });
 
     socket.on('ai_processing_complete', (data) => {
       clearInterval(countdownInterval);
+      screenshotStatus = '';
+      if (!isListening) updateLiveStrip();
       if (data.messageId) {
         currentMessageId = data.messageId;
         setButtons(true);
         setActionStatus('');
       }
+      if (data.response) {
+        const screenshotId = `screenshot-${Date.now()}`;
+        allQAs.push({ questionId: screenshotId, questionText: '📸 Screenshot Analysis', answer: data.response, done: true });
+        if (!isLocked) {
+          viewIndex = allQAs.length - 1;
+          renderCurrentQA();
+        }
+        renderNav();
+      }
     });
 
     socket.on('aiprocessing_error', (data) => {
       clearInterval(countdownInterval);
+      screenshotStatus = '';
+      if (!isListening) updateLiveStrip();
       setButtons(!!currentMessageId);
       setActionStatus('');
     });

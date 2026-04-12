@@ -141,7 +141,7 @@ Two modes, switchable via tabs:
 **Window Opacity** slider: drag from **Opaque (0%)** to **Transparent (90%)**. Changes apply live to the open HUD window — no save needed.
 
 > The HUD is invisible in screen sharing by default — only you can see it.
-> Shortcut keys: `⌘⇧H` toggle HUD · `⌘⇧X` push-to-talk
+> Shortcut keys: `⌘⇧H` toggle HUD · `⌘⇧X` toggle listening
 
 ---
 
@@ -150,7 +150,7 @@ Two modes, switchable via tabs:
 | Shortcut | Action |
 |----------|--------|
 | `⌘ Shift H` | Toggle HUD overlay on/off |
-| `⌘ Shift X` | Push-to-talk — hold to record, release to transcribe and get an AI answer |
+| `⌘ Shift X` | Toggle listening on/off — same as clicking the Listen button in the HUD |
 
 ---
 
