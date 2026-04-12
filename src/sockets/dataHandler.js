@@ -7,10 +7,12 @@
  *    - Screenshot captured → OCR extraction → AI processing with 'system' prompt
  *    - Generates messageId and stores question/answer
  *
- * 2. Transcription Flow:
- *    - Receives text_chunk events → Accumulates chunks → process_transcription event
- *    - AI processing with 'transcription' prompt (streamed token-by-token)
- *    - Generates messageId and stores question/answer
+ * 2. Manual Listen Flow (Cmd+Shift+X toggle):
+ *    - toggle_listen_mode → POST /start-recording to transcriber
+ *    - transcription chunks stream in, forwarded to HUD as transcription_chunk
+ *    - toggle_listen_mode off → POST /stop-recording → process_transcription fires
+ *    - answerInterviewQuestion() called directly (no classify step)
+ *    - Streams tokens to HUD via question_answer_token events
  */
 import { EventEmitter } from 'events';
 import logger from '../utils/logger.js';
@@ -41,6 +43,10 @@ class DataHandler extends EventEmitter {
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
     this.transcriptBuffer = new InterviewTranscriptBuffer();
+    this.transcriptBuffer.setSummarizeFn(
+      (q, a) => aiService.summarizeQAPair(q, a),
+      (entries) => aiService.summarizeMerge(entries),
+    );
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();
@@ -91,11 +97,8 @@ class DataHandler extends EventEmitter {
     socket.on('use_prompt', (data) => this.handleUsePrompt(socket, data));
     socket.on('transcription', (data) => this.handleTranscription(socket, data));
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
-    socket.on('interviewer_speech', (data) => this.handleInterviewerSpeech(socket, data));
-    socket.on('answer_question', (data) => this.handleAnswerQuestion(socket, data));
-    socket.on('toggle_always_on_mode', (data) => this.handleToggleAlwaysOn(socket, data));
+    socket.on('toggle_listen_mode', (data) => this.handleToggleListenMode(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
-    socket.on('set_classifier', (data) => this.handleSetClassifier(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
     socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
@@ -253,91 +256,61 @@ class DataHandler extends EventEmitter {
       chunkLength: textChunk.length,
       totalChunks: chunks.length,
     });
+    // Forward live chunk to HUD for the transcription strip
+    this.namespace.emit('transcription_chunk', { text: textChunk });
+    logEvent('transcription_chunk_received', 'DEBUG', { module: 'DataHandler', chunkLength: textChunk.length });
   }
 
   /**
-   * Processes accumulated transcription chunks using streaming AI.
-   * Emits ai_token events to the requesting socket during generation,
-   * then emits ai_processing_complete to the full namespace when done.
+   * Processes accumulated transcription chunks as an interview question.
+   * Called when the user stops recording (toggle_listen_mode off → Python fires process_transcription).
+   * Answers directly — no AI classification step.
    */
   async handleProcessTranscription(socket) {
     const chunks = this.transcriptionChunks.get(socket.id);
 
     if (!chunks || chunks.length === 0) {
       log.warn('No transcription chunks found for processing', { socketId: socket.id });
-      this.emitToSocket(socket, 'aiprocessing_error', {
-        error: 'No transcription data available',
-        message: 'Error during transcription processing',
-      });
       return;
     }
 
+    const fullTranscription = chunks.join(' ').trim();
+    this.transcriptionChunks.delete(socket.id);
+
+    if (!fullTranscription) return;
+
+    const questionId = `q-${Date.now()}`;
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    const memoryContext = this.transcriptBuffer.getMemoryContext();
+
+    this.transcriptBuffer.addUtterance(fullTranscription);
+
+    log.info('Processing manual transcription as interview question', {
+      socketId: socket.id,
+      questionId,
+      transcriptionLength: fullTranscription.length,
+    });
+
+    this.namespace.emit('interviewer_question', { questionId, questionText: fullTranscription });
+    this.namespace.emit('question_answer_started', { questionId });
+
+    let fullResponse = '';
     try {
-      const fullTranscription = chunks.join(' ');
-      const promptType = this.selectedPrompts.get(socket.id) || DEFAULT_PROMPT_TYPE;
-      const messageId = this.generateMessageId();
-
-      log.info('Processing transcription', {
-        socketId: socket.id,
-        chunkCount: chunks.length,
-        transcriptionLength: fullTranscription.length,
-        messageId,
-      });
-
-      this.emitAIStarted('transcription', fullTranscription, false);
-
-      const aiStartTime = Date.now();
-      let fullResponse = '';
-      let provider = 'unknown';
-
-      // Stream tokens to the requesting socket
-      for await (const { token, provider: p } of aiService.askGptTranscriptionStream(
-        fullTranscription,
-        promptType,
-      )) {
+      for await (const { token } of aiService.answerInterviewQuestion(fullTranscription, transcriptContext, memoryContext)) {
         fullResponse += token;
-        provider = p;
-        this.emitToSocket(socket, 'ai_token', { token, messageId });
+        this.namespace.emit('question_answer_token', { token, questionId });
       }
 
-      const aiDuration = Date.now() - aiStartTime;
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('Manual question answered', { questionId, responseLength: fullResponse.length });
+      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
 
-      this.storeMessageData(messageId, fullTranscription, fullResponse, promptType, socket.id);
-
-      const processedItem = {
-        filename: 'transcription',
-        timestamp: new Date().toLocaleString(),
-        extractedText:
-          fullTranscription.substring(0, 500) +
-          (fullTranscription.length > 500 ? '...' : ''),
-        gptResponse:
-          fullResponse.substring(0, 1000) +
-          (fullResponse.length > 1000 ? '...' : ''),
-        usedContext: false,
-        type: 'transcription',
-      };
-      imageProcessingService.addProcessedData(processedItem);
-      imageProcessingService.setLastResponse(fullResponse);
-
-      this.transcriptionChunks.delete(socket.id);
-
-      log.info('Transcription processing completed', {
-        socketId: socket.id,
-        messageId,
-        provider,
-        aiDuration: `${aiDuration}ms`,
-        responseLength: fullResponse.length,
-      });
-
-      this.emitAIComplete('transcription', fullResponse, provider, aiDuration, false, messageId);
+      if (fullTranscription && fullResponse) {
+        this.transcriptBuffer.addQAPair(fullTranscription, fullResponse);
+      }
     } catch (err) {
-      log.error('Error processing transcription', {
-        socketId: socket.id,
-        error: err.message,
-        stack: err.stack,
-      });
-      this.transcriptionChunks.delete(socket.id);
-      this.emitProcessingError('transcription', 'transcription', err);
+      log.error('Error answering manual question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
     }
   }
 
@@ -511,117 +484,20 @@ class DataHandler extends EventEmitter {
     });
   }
 
-  // ==================== Always-On Interview Listener ====================
+  // ==================== Manual Listen Mode ====================
 
-  async handleInterviewerSpeech(socket, data) {
-    const { text } = data || {};
-    if (!text || typeof text !== 'string' || !text.trim()) return;
-
-    this.transcriptBuffer.addUtterance(text.trim());
-    const lastQ = this.transcriptBuffer.getLastQuestion();
-
-    let result;
-    try {
-      result = await aiService.classifyInterviewerUtterance(text.trim(), lastQ?.questionText ?? '');
-    } catch (err) {
-      log.warn('Question classification failed', { error: err.message });
-      return;
-    }
-
-    if (!result.isQuestion || result.confidence < 0.75) return;
-
-    let questionId;
-
-    if (result.mergeWithPrevious && lastQ) {
-      this.transcriptBuffer.mergeQuestion(lastQ.questionId, result.questionText);
-      this.namespace.emit('merge_question', {
-        questionId: lastQ.questionId,
-        questionText: result.questionText,
-      });
-      log.info('Question merged', { questionId: lastQ.questionId });
-      // Re-answer the merged question with updated text
-      questionId = lastQ.questionId;
-      // Update the stored question text before auto-answering
-      const entry = this.transcriptBuffer.getQuestions().find(q => q.questionId === questionId);
-      if (entry) entry.questionText = result.questionText;
-    } else {
-      questionId = `q-${Date.now()}`;
-      this.transcriptBuffer.addQuestion(questionId, result.questionText);
-      this.namespace.emit('interviewer_question', {
-        questionId,
-        questionText: result.questionText,
-      });
-      log.info('New question detected', { questionId, questionText: result.questionText });
-      logEvent('question_detected', 'INFO', { module: 'DataHandler', questionId, questionText: result.questionText, confidence: result.confidence });
-    }
-
-    // Auto-answer immediately without waiting for user button press
-    this._autoAnswerQuestion(questionId);
-  }
-
-  async _autoAnswerQuestion(questionId) {
-    const questions = this.transcriptBuffer.getQuestions();
-    const entry = questions.find((q) => q.questionId === questionId);
-    if (!entry) return;
-
-    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
-    this.namespace.emit('question_answer_started', { questionId });
-
-    try {
-      let fullResponse = '';
-      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
-        fullResponse += token;
-        this.namespace.emit('question_answer_token', { token, questionId });
-      }
-      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
-      log.info('Question auto-answered', { questionId, responseLength: fullResponse.length });
-      logEvent('question_auto_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
-    } catch (err) {
-      log.error('Error auto-answering question', { questionId, error: err.message });
-      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
-    }
-  }
-
-  async handleAnswerQuestion(socket, data) {
-    const { questionId } = data || {};
-    if (!questionId) return;
-
-    const questions = this.transcriptBuffer.getQuestions();
-    const entry = questions.find((q) => q.questionId === questionId);
-    if (!entry) {
-      log.warn('Question not found in buffer', { questionId });
-      return;
-    }
-
-    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
-    this.namespace.emit('question_answer_started', { questionId });
-
-    try {
-      let fullResponse = '';
-      for await (const { token } of aiService.answerInterviewQuestion(entry.questionText, transcriptContext)) {
-        fullResponse += token;
-        this.namespace.emit('question_answer_token', { token, questionId });
-      }
-      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
-      log.info('Question answered', { questionId, responseLength: fullResponse.length });
-    } catch (err) {
-      log.error('Error answering question', { questionId, error: err.message });
-      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
-    }
-  }
-
-  async handleToggleAlwaysOn(socket, data) {
+  async handleToggleListenMode(socket, data) {
     const { enabled } = data || {};
+    const url = enabled ? 'http://localhost:8000/start-recording' : 'http://localhost:8000/stop-recording';
     try {
-      await fetch('http://localhost:8000/always-on-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !!enabled }),
-      });
-      log.info('Always-on mode toggled', { enabled });
-      logEvent('always_on_toggled', 'INFO', { module: 'DataHandler', enabled });
+      await fetch(url, { method: 'POST' });
+      log.info('Listen mode toggled', { enabled });
+      logEvent(enabled ? 'listen_started' : 'listen_stopped', 'INFO', { module: 'DataHandler' });
+      this.namespace.emit('listen_state_changed', { listening: !!enabled });
     } catch (err) {
-      log.warn('Could not reach Python transcriber to toggle always-on mode', { error: err.message });
+      log.warn('Could not reach Python transcriber to toggle listen mode', { error: err.message });
+      // Revert button state on failure
+      this.namespace.emit('listen_state_changed', { listening: !enabled });
     }
   }
 
@@ -650,15 +526,6 @@ class DataHandler extends EventEmitter {
     }
   }
 
-  handleSetClassifier(socket, data) {
-    const { mode } = data || {};
-    if (!mode) return;
-    aiService.setClassifierMode(mode);
-    log.info('Classifier mode changed', { mode });
-    logEvent('classifier_mode_changed', 'INFO', { module: 'DataHandler', mode });
-    this.emitToSocket(socket, 'classifier_updated', { mode });
-  }
-
   handleSetAnswerMode(socket, data) {
     const { mode } = data || {};
     if (!mode) return;
@@ -679,11 +546,9 @@ class DataHandler extends EventEmitter {
     } catch (_) {
       // transcriber may not be running; return defaults
     }
-    const classifierMode = aiService._classifierMode || aiService.config?.classifier_mode || 'ollama:llama3.2:1b';
     const answerMode = aiService._answerMode || aiService.config?.answer_mode || 'auto';
     const enabledProviders = aiService.config?.enabled || aiService.config?.order || [];
-    const ollamaModels = ['llama3.2:1b', 'llama3.2:3b'];
-    this.emitToSocket(socket, 'settings_state', { sttModel, classifierMode, answerMode, enabledProviders, ollamaModels });
+    this.emitToSocket(socket, 'settings_state', { sttModel, answerMode, enabledProviders });
   }
 
   async handleSetVadConfig(socket, data) {

@@ -1,5 +1,8 @@
 import http from 'http';
 import { Server } from 'socket.io';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import app from './app.js';
 import screenshotMonitorService from './services/screenshot-monitor.service.js';
 import DataHandler from './sockets/dataHandler.js';
@@ -8,6 +11,18 @@ import { CONFIG, getLocalIP } from './config/constants.js';
 import logger from './utils/logger.js';
 
 const log = logger('Server');
+
+// ── Clear logs on every startup ───────────────────────────────────────────────
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOGS_DIR = path.join(__dirname, '..', 'logs');
+const LOG_FILES_TO_CLEAR = ['app.jsonl', 'memory.jsonl', 'transcriber.log'];
+try {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  for (const filename of LOG_FILES_TO_CLEAR) {
+    const filepath = path.join(LOGS_DIR, filename);
+    try { fs.writeFileSync(filepath, ''); } catch {}
+  }
+} catch {}
 
 // Initialize services
 try {

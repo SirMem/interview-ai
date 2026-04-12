@@ -59,32 +59,32 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 TRANSCRIPTIONS_JSON_FILE: str = os.getenv("TRANSCRIPTIONS_JSON_FILE", "transcriptions.ndjson")
 
 # Keyboard Configuration
-KEYBOARD_ENABLED: bool = os.getenv("KEYBOARD_ENABLED", "true").lower() == "true"
+KEYBOARD_ENABLED: bool = os.getenv("KEYBOARD_ENABLED", "false").lower() == "true"
 RECORD_KEY: str = os.getenv("RECORD_KEY", "cmd+shift+x")  # Key for push-to-record
 
-# ── Load VAD defaults from config/api-keys.json (if present) ──────────────
-def _load_vad_config() -> dict:
-    """Read VAD settings from the shared config file."""
+# ── Load config from config/api-keys.json ─────────────────────────────────
+def _load_json_config() -> dict:
+    """Read settings from the shared config file."""
     import json
     import pathlib
     try:
         cfg_path = pathlib.Path(__file__).parent.parent / "config" / "api-keys.json"
         with open(cfg_path) as f:
-            cfg = json.load(f)
-        return cfg.get("vad", {})
+            return json.load(f)
     except Exception:
         return {}
 
-_vad_cfg = _load_vad_config()
+_app_cfg = _load_json_config()
+_vad_cfg = _app_cfg.get("vad", {})
 
 # Always-On Listener Configuration (continuous interviewer speech detection)
-ALWAYS_ON_ENABLED: bool = os.getenv("ALWAYS_ON_ENABLED", "false").lower() == "true"
+ALWAYS_ON_ENABLED: bool = _app_cfg.get("always_on_enabled", False)
 ALWAYS_ON_SILENCE_THRESHOLD: float = float(os.getenv("ALWAYS_ON_SILENCE_THRESHOLD", str(_vad_cfg.get("silence_threshold", 1.0))))
 ALWAYS_ON_MIN_SPEECH_DURATION: float = float(os.getenv("ALWAYS_ON_MIN_SPEECH_DURATION", str(_vad_cfg.get("min_speech_duration", 0.75))))
 ALWAYS_ON_MAX_UTTERANCE_DURATION: float = float(os.getenv("ALWAYS_ON_MAX_UTTERANCE_DURATION", str(_vad_cfg.get("max_utterance_duration", 30.0))))
 
-# VAD engine selection ("webrtc" or "silero")
-VAD_ENGINE: str = os.getenv("VAD_ENGINE", _vad_cfg.get("engine", "webrtc"))
+# VAD engine — always silero (the only supported engine)
+VAD_ENGINE: str = "silero"
 
 # VAD tuning parameters (read from config, overridable via env)
 VAD_ENERGY_GATE_THRESHOLD: float = float(os.getenv("VAD_ENERGY_GATE_THRESHOLD", str(_vad_cfg.get("energy_gate_threshold", 0.02))))

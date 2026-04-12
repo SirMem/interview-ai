@@ -345,12 +345,16 @@ def start_recording_internal(enable_realtime_chunks: bool = False):
 def stop_recording_internal_sync():
     """Stop recording, transcribe remaining audio, and signal the server.
 
-    The ``time.sleep()`` that previously preceded ``process_transcription``
-    has been removed — ``socket_client.send_transcription_chunk()`` is
-    synchronous (blocking until the message is sent), so no artificial delay
-    is needed.
+    Execution order that guarantees no chunks are lost:
+    1. Set is_recording=False and stop audio input.
+    2. Join the recording worker (loop exits, no more jobs submitted).
+    3. Drain the transcription executor (wait for in-flight Whisper jobs to
+       finish and send their chunks) — this is the key step that prevents the
+       race where the final chunk arrives after process_transcription.
+    4. Transcribe any audio still in the buffer after the executor drains.
+    5. Only then emit process_transcription.
     """
-    global recorder, recording_thread, is_recording, _audio_buffer
+    global recorder, recording_thread, is_recording, _audio_buffer, _transcription_executor
 
     if not is_recording:
         return
@@ -362,6 +366,15 @@ def stop_recording_internal_sync():
 
     if recording_thread and recording_thread.is_alive():
         recording_thread.join(timeout=2.0)
+
+    # Drain executor: wait for every in-flight transcription job to complete
+    # (and send its chunk) before we proceed.  Then recreate for next session.
+    if _transcription_executor:
+        _transcription_executor.shutdown(wait=True)
+        _transcription_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="transcribe",
+        )
 
     # Safely grab remaining buffer
     buffer_copy = []
@@ -397,9 +410,6 @@ def stop_recording_internal_sync():
     logger.info("Recording stopped")
 
 
-async def stop_recording_internal():
-    stop_recording_internal_sync()
-
 
 # ---------------------------------------------------------------------------
 # API endpoints
@@ -418,8 +428,17 @@ async def start_recording():
 
 @app.post("/stop-recording", response_model=StopRecordingResponse)
 async def stop_recording():
+    """Return immediately so the Node server can unblock the HUD state instantly.
+    The heavy work (executor drain, final Whisper call, process_transcription)
+    runs in a thread so it never blocks the event loop."""
+    if not is_recording:
+        return StopRecordingResponse(status="success", message="Not recording")
     try:
-        await stop_recording_internal()
+        # Run the blocking sync work in a thread — don't block the event loop.
+        # The total time to AI answer is unchanged; only listen_state_changed
+        # fires immediately instead of after all Whisper processing finishes.
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, stop_recording_internal_sync)
         return StopRecordingResponse(status="success", message="Recording stopped successfully")
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")
@@ -432,6 +451,9 @@ async def health_check():
         "status": "healthy",
         "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
+        "always_on_active": (always_on_listener is not None
+                             and always_on_listener._running
+                             and not always_on_listener._paused),
     }
 
 

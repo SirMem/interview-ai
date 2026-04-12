@@ -504,6 +504,10 @@ class ScreenshotMonitorService {
   }
 
   start() {
+    if (!CONFIG.SCREENSHOTS_PATH) {
+      log.warn('Screenshots path not configured — screenshot monitor disabled. Set "screenshots_path" in Settings.');
+      return;
+    }
     this.clearScreenshotsDirectory();
     this.setupDirectoryWatcher();
     log.info('Screenshot monitor started - watching for new screenshots only');

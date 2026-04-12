@@ -11,16 +11,16 @@
       --bg: #0f1117;
       --surface: #1a1d27;
       --surface2: #21253a;
-      --border: rgba(148, 163, 184, 0.15);
-      --border2: rgba(148, 163, 184, 0.25);
+      --border: rgba(148, 163, 184, 0.12);
+      --border2: rgba(148, 163, 184, 0.22);
       --text: #e2e8f0;
       --muted: #64748b;
       --accent: #3b82f6;
-      --accent-dim: rgba(59, 130, 246, 0.15);
+      --accent-dim: rgba(59, 130, 246, 0.12);
       --green: #22c55e;
       --green-dim: rgba(34, 197, 94, 0.12);
       --red: #ef4444;
-      --red-dim: rgba(239, 68, 68, 0.12);
+      --red-dim: rgba(239, 68, 68, 0.1);
       --yellow: #facc15;
       --orange: #f97316;
     }
@@ -34,9 +34,9 @@
       min-height: 100vh;
     }
 
-    .layout { max-width: 720px; margin: 0 auto; padding: 0 24px 80px; }
+    .layout { max-width: 740px; margin: 0 auto; padding: 0 24px 100px; }
 
-    /* ── Header ──────────────────────────────────── */
+    /* ── Header ─────────────────────────────────── */
     .header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 22px 0 18px;
@@ -52,7 +52,7 @@
       border-radius: 20px; padding: 3px 10px;
     }
     .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-    .conn-dot.ok  { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,0.5); }
+    .conn-dot.ok  { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,0.45); }
     .conn-dot.err { background: var(--red); }
 
     /* ── Section ─────────────────────────────────── */
@@ -60,7 +60,7 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
       overflow: hidden;
     }
     .section-header {
@@ -68,7 +68,7 @@
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
     }
-    .section-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .section-title { font-size: 13px; font-weight: 600; }
     .section-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
 
     /* ── Field ───────────────────────────────────── */
@@ -76,7 +76,7 @@
     label { font-size: 12px; font-weight: 500; color: #94a3b8; }
     .hint { font-size: 11px; color: var(--muted); }
 
-    input[type="text"], input[type="password"], select {
+    input[type="text"], input[type="password"], select, textarea {
       background: var(--surface2);
       border: 1px solid var(--border2);
       border-radius: 7px;
@@ -88,7 +88,7 @@
       transition: border-color 0.15s;
       width: 100%;
     }
-    input:focus, select:focus { border-color: rgba(59,130,246,0.55); }
+    input:focus, select:focus, textarea:focus { border-color: rgba(59,130,246,0.5); }
 
     select {
       cursor: pointer; appearance: none; -webkit-appearance: none;
@@ -98,56 +98,75 @@
       padding-right: 28px;
     }
 
-    /* ── STT mode toggle ─────────────────────────── */
-    .stt-tabs {
-      display: flex;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 3px;
-      gap: 3px;
-    }
-    .stt-tab {
-      flex: 1; padding: 7px 0;
-      text-align: center;
-      font-size: 12px; font-weight: 500;
-      color: var(--muted);
-      border-radius: 6px;
-      cursor: pointer;
-      border: none; background: none;
-      font-family: inherit;
-      transition: background 0.15s, color 0.15s;
-    }
-    .stt-tab.active {
-      background: var(--accent);
-      color: #fff;
-    }
+    textarea { resize: vertical; min-height: 100px; font-size: 12px; line-height: 1.6; }
 
-    /* ── Provider row ────────────────────────────── */
+    /* ── Provider Cards ──────────────────────────── */
     .provider-list { display: flex; flex-direction: column; gap: 8px; }
-    .provider-row {
-      display: grid;
-      grid-template-columns: 120px 1fr auto auto;
-      gap: 8px; align-items: center;
+
+    .provider-card {
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 9px 12px;
-      transition: border-color 0.15s;
+      border-radius: 10px;
+      overflow: hidden;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      cursor: grab;
+      user-select: none;
     }
-    .provider-row:hover { border-color: var(--border2); }
-    .provider-name { font-size: 12px; font-weight: 600; color: var(--text); }
-    .provider-name small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
-    .provider-name input { font-weight: 600; padding: 5px 8px; font-size: 12px; }
+    .provider-card.dragging {
+      opacity: 0.5;
+      cursor: grabbing;
+    }
+    .provider-card.drag-over {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+    .provider-card.enabled { border-color: rgba(59,130,246,0.25); }
+    .provider-card.has-error { border-color: rgba(239,68,68,0.35); }
 
-    .key-wrap { position: relative; }
-    .key-wrap input { padding-right: 58px; }
+    .card-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 14px;
+    }
+    .drag-handle {
+      color: var(--muted); font-size: 14px; cursor: grab; flex-shrink: 0;
+      opacity: 0.5;
+    }
+    .drag-handle:hover { opacity: 1; }
+
+    .order-badge {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--surface); border: 1px solid var(--border2);
+      font-size: 10px; font-weight: 700; color: var(--muted);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .provider-card.enabled .order-badge {
+      background: var(--accent-dim); border-color: rgba(59,130,246,0.3); color: #93c5fd;
+    }
+
+    .provider-info { flex: 1; min-width: 0; }
+    .provider-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .provider-sub { font-size: 11px; color: var(--muted); }
+
+    .card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    .provider-body {
+      padding: 0 14px 14px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+
+    .key-row { display: flex; gap: 6px; align-items: center; }
+    .key-wrap { position: relative; flex: 1; }
+    .key-wrap input { padding-right: 56px; }
     .key-toggle {
       position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
       background: none; border: none; color: var(--muted);
-      font-size: 11px; cursor: pointer; padding: 2px 4px;
+      font-size: 11px; cursor: pointer; padding: 2px 4px; font-family: inherit;
     }
     .key-toggle:hover { color: var(--text); }
+
+    .model-row { display: flex; gap: 6px; align-items: center; }
+    .model-row select { flex: 1; }
 
     /* ── Toggle switch ───────────────────────────── */
     .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
@@ -168,27 +187,40 @@
 
     /* ── Buttons ─────────────────────────────────── */
     .btn {
-      border: none; border-radius: 7px; font-size: 13px;
+      border: none; border-radius: 7px; font-size: 12px;
       font-family: inherit; font-weight: 500; cursor: pointer;
-      padding: 8px 16px; transition: opacity 0.15s, background 0.15s;
-      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 13px; transition: opacity 0.15s, background 0.15s;
+      display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
     }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary { background: var(--accent); color: #fff; font-size: 13px; padding: 8px 18px; }
     .btn-primary:not(:disabled):hover { opacity: 0.88; }
     .btn-secondary { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); }
     .btn-secondary:not(:disabled):hover { border-color: rgba(148,163,184,0.4); }
-    .btn-ghost { background: none; border: 1px solid var(--border2); color: var(--muted); padding: 5px 10px; font-size: 12px; }
-    .btn-ghost:hover { color: var(--text); }
-    .btn-danger { background: var(--red-dim); border: 1px solid rgba(239,68,68,0.25); color: #fca5a5; padding: 5px 10px; font-size: 12px; }
-    .btn-danger:hover { background: rgba(239,68,68,0.2); }
+    .btn-ghost { background: none; border: 1px solid var(--border2); color: var(--muted); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--border2); }
+    .btn-success { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); color: #86efac; }
+    .btn-fail { background: var(--red-dim); border: 1px solid rgba(239,68,68,0.25); color: #fca5a5; }
+
+    /* ── Fallback chain indicator ─────────────────── */
+    .fallback-chain {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 8px 12px;
+      background: rgba(59,130,246,0.06); border: 1px solid rgba(59,130,246,0.15);
+      border-radius: 7px; font-size: 11px; color: #93c5fd;
+    }
+    .chain-badge {
+      background: rgba(59,130,246,0.15); border-radius: 4px;
+      padding: 2px 7px; font-weight: 600;
+    }
+    .chain-arrow { color: var(--muted); }
 
     /* ── Opacity slider ──────────────────────────── */
     .slider-row { display: flex; align-items: center; gap: 10px; }
     input[type="range"] {
       flex: 1; -webkit-appearance: none; appearance: none;
       height: 4px; border-radius: 2px;
-      background: linear-gradient(to right, var(--accent) 0%, var(--accent) var(--pct, 15%), var(--surface2) var(--pct, 15%));
+      background: linear-gradient(to right, var(--accent) 0%, var(--accent) var(--pct, 0%), var(--surface2) var(--pct, 0%));
       outline: none; cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb {
@@ -196,42 +228,87 @@
       border-radius: 50%; background: var(--accent);
       cursor: pointer; box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
     }
-    .slider-val { min-width: 28px; text-align: right; font-size: 13px; font-weight: 600; color: var(--text); }
+    .slider-val { min-width: 28px; text-align: right; font-size: 13px; font-weight: 600; }
 
-    /* ── Warn / info banners ─────────────────────── */
+    /* ── STT tabs ────────────────────────────────── */
+    .stt-tabs {
+      display: flex; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 3px; gap: 3px;
+    }
+    .stt-tab {
+      flex: 1; padding: 7px 0; text-align: center;
+      font-size: 12px; font-weight: 500; color: var(--muted);
+      border-radius: 6px; cursor: pointer; border: none; background: none;
+      font-family: inherit; transition: background 0.15s, color 0.15s;
+    }
+    .stt-tab.active { background: var(--accent); color: #fff; }
+
+    /* ── Banners ─────────────────────────────────── */
     .banner {
       border-radius: 7px; padding: 9px 13px; font-size: 12px;
-      display: flex; align-items: flex-start; gap: 8px;
+      display: flex; align-items: flex-start; gap: 8px; line-height: 1.5;
     }
-    .banner-warn { background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.3); color: #fdba74; }
-    .banner-info { background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.2); color: #93c5fd; }
+    .banner-warn { background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.28); color: #fdba74; }
+    .banner-info { background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.18); color: #93c5fd; }
+    .banner-ok   { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); color: #86efac; }
+
+    /* ── Accordion (prompt preview) ──────────────── */
+    .accordion-btn {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; background: var(--surface2); border: 1px solid var(--border2);
+      border-radius: 7px; padding: 9px 13px; cursor: pointer;
+      font-size: 12px; font-weight: 500; color: #94a3b8; font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .accordion-btn:hover { border-color: rgba(148,163,184,0.4); color: var(--text); }
+    .accordion-arrow { transition: transform 0.2s; font-size: 10px; }
+    .accordion-body { display: none; margin-top: 8px; }
+    .accordion-body.open { display: block; }
+    .prompt-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+    .prompt-tab {
+      font-size: 11px; padding: 4px 10px; border-radius: 5px;
+      border: 1px solid var(--border2); background: none; color: var(--muted);
+      cursor: pointer; font-family: inherit;
+    }
+    .prompt-tab.active { background: var(--accent-dim); border-color: rgba(59,130,246,0.3); color: #93c5fd; }
 
     /* ── Save bar ────────────────────────────────── */
     .save-bar {
       position: fixed; bottom: 0; left: 0; right: 0;
       display: flex; align-items: center; justify-content: flex-end; gap: 10px;
       padding: 12px 28px;
-      background: rgba(15,17,23,0.95);
+      background: rgba(15,17,23,0.96);
       border-top: 1px solid var(--border);
       backdrop-filter: blur(12px);
       z-index: 100;
     }
-    .save-status { font-size: 12px; flex: 1; text-align: right; padding-right: 12px; }
+    .save-status { font-size: 12px; flex: 1; }
     .save-status.ok  { color: var(--green); }
     .save-status.err { color: var(--red); }
 
-    /* ── Two-col grid for model section ──────────── */
-    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    @media (max-width: 540px) { .two-col { grid-template-columns: 1fr; } }
+    /* ── Toast ───────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+      background: #1e293b; border: 1px solid var(--border2); border-radius: 8px;
+      padding: 10px 18px; font-size: 13px; color: var(--text);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.25s; z-index: 200; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+    .toast.ok  { border-color: rgba(34,197,94,0.35); color: #86efac; }
+    .toast.err { border-color: rgba(239,68,68,0.35); color: #fca5a5; }
 
     code { font-family: 'SF Mono', 'Monaco', monospace; font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; }
+    hr.sep { border: none; border-top: 1px solid var(--border); }
   </style>
 </head>
 <body>
 <div class="layout">
 
   <header class="header">
-    <div class="logo">SolveWatch <span>Settings</span></div>
+    <div class="logo">SolveWatch <span>AI</span></div>
     <div style="display:flex;align-items:center;gap:12px">
       <div class="conn-badge">
         <span class="conn-dot" id="connDot"></span>
@@ -244,42 +321,97 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">AI Providers</span>
-      <button class="btn btn-ghost" id="btnAddProvider">+ Add Provider</button>
+      <span style="font-size:11px;color:var(--muted)">Drag to reorder fallback chain</span>
     </div>
     <div class="section-body">
-      <p class="hint">API keys are stored in <code>config/api-keys.json</code>. Leave the key field blank to keep the existing value.</p>
+      <div class="banner banner-info" style="font-size:11px">
+        Keys are stored in <code>config/api-keys.json</code> on your machine. Leave a key field blank to keep the existing value. Enable at least one provider.
+      </div>
+
+      <!-- Fallback chain -->
+      <div id="fallbackChain" class="fallback-chain" style="display:none">
+        <span style="color:var(--muted);font-weight:500">Fallback chain:</span>
+        <span id="chainContent"></span>
+      </div>
+
       <div class="provider-list" id="providerList"></div>
     </div>
   </div>
 
-  <!-- ── Model Settings ───────────────────────────────────────── -->
+  <!-- ── Interview Role ────────────────────────────────────────── -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">Model Settings</span>
+      <span class="section-title">Interview Role</span>
     </div>
     <div class="section-body">
-
-      <!-- STT Model -->
       <div class="field">
-        <label>Speech-to-Text (STT)</label>
+        <label>Your Interview Role</label>
+        <input type="text" id="interviewRole" placeholder="e.g. Frontend Engineer, Android Developer, Platform Engineer…">
+        <span class="hint">When set, AI answers are tailored to your domain — using relevant frameworks, tools, and terminology. Leave blank for generic technical answers.</span>
+      </div>
+
+      <div>
+        <button class="accordion-btn" id="promptAccordionBtn">
+          <span>View Active Prompts</span>
+          <span class="accordion-arrow" id="promptArrow">▼</span>
+        </button>
+        <div class="accordion-body" id="promptAccordionBody">
+          <div class="prompt-tabs">
+            <button class="prompt-tab active" data-type="interview-answer">Answer Prompt</button>
+            <button class="prompt-tab" data-type="transcription">Transcription Prompt</button>
+          </div>
+          <textarea id="promptPreviewText" readonly rows="12" style="font-family:'SF Mono','Monaco',monospace;font-size:11px;line-height:1.6"></textarea>
+          <span class="hint" style="margin-top:4px">Read-only. Edit the <code>.txt</code> files in the <code>prompts/</code> folder to change the base prompts. Role context is injected automatically at the top.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Screenshots ───────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Screenshots</span>
+    </div>
+    <div class="section-body">
+      <div id="screenshotWarn" class="banner banner-warn" style="display:none">
+        ⚠ No screenshots folder configured — screenshot analysis is disabled. Set a path below to enable it.
+      </div>
+      <div class="field">
+        <label>Screenshots Folder</label>
+        <input type="text" id="screenshotsPath" placeholder="/Users/you/Pictures/Screenshots">
+        <span class="hint">
+          The folder where your screenshot tool saves files. SolveWatch watches this folder and automatically analyses new screenshots with AI.<br>
+          On macOS: <strong>Cmd+Shift+3</strong> saves to <code>~/Desktop</code> by default — change it in <strong>System Settings → Screenshots → Save to</strong>.
+          To disable the floating thumbnail: <strong>System Settings → Screenshots → uncheck "Show Floating Thumbnail"</strong>.
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Speech-to-Text ────────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Speech-to-Text</span>
+    </div>
+    <div class="section-body">
+      <div class="field">
+        <label>STT Mode</label>
         <div class="stt-tabs">
           <button class="stt-tab active" id="tabSttLocal" data-mode="local">Local Whisper (MLX)</button>
-          <button class="stt-tab" id="tabSttApi" data-mode="openai">OpenAI Whisper API</button>
+          <button class="stt-tab" id="tabSttApi"   data-mode="openai">OpenAI Whisper API</button>
         </div>
 
-        <!-- Local sub-panel -->
         <div id="sttLocalPanel">
           <select id="sttLocalModel">
-            <option value="tiny">tiny  — fastest, lowest accuracy</option>
-            <option value="base">base  — fast, decent accuracy</option>
-            <option value="small" selected>small — balanced (recommended)</option>
+            <option value="tiny">tiny   — fastest, lowest accuracy</option>
+            <option value="base">base   — fast, decent accuracy</option>
+            <option value="small" selected>small  — balanced (recommended)</option>
             <option value="medium">medium — slower, better accuracy</option>
             <option value="large">large  — slowest, best accuracy</option>
           </select>
-          <span class="hint" style="margin-top:4px">Runs on-device via Apple MLX. No API key needed.</span>
+          <span class="hint" style="margin-top:4px">Runs on-device using Apple MLX. No API key required. Changing the model restarts the transcriber.</span>
         </div>
 
-        <!-- OpenAI Whisper sub-panel -->
         <div id="sttApiPanel" style="display:none">
           <select id="sttApiModel">
             <option value="whisper-1">whisper-1 (OpenAI API)</option>
@@ -287,148 +419,8 @@
           <div id="sttApiKeyWarn" class="banner banner-warn" style="display:none;margin-top:8px">
             ⚠ OpenAI API key not configured. Add it in the AI Providers section above.
           </div>
-          <span class="hint" style="margin-top:4px">Sends audio to OpenAI. Requires an OpenAI API key and internet connection.</span>
+          <span class="hint" style="margin-top:4px">Sends audio to OpenAI's Whisper API. Requires an OpenAI API key and internet.</span>
         </div>
-      </div>
-
-      <hr style="border:none;border-top:1px solid var(--border)">
-
-      <!-- Question Classifier -->
-      <div class="field">
-        <label>Question Classifier</label>
-        <select id="classifierSelect"></select>
-        <!-- shown when an ollama local option is chosen -->
-        <div id="ollamaModelRow" style="display:none;margin-top:6px">
-          <input type="text" id="ollamaModelInput" placeholder="e.g. llama3.2:1b" value="llama3.2:1b">
-          <span class="hint" style="margin-top:4px">Ollama model to use for classification. Run <code>ollama pull llama3.2:1b</code> to download.</span>
-        </div>
-        <span class="hint" style="margin-top:4px">Model that decides if detected speech is a question. Local Ollama is free and unlimited.</span>
-      </div>
-
-      <!-- Answer From -->
-      <div class="field">
-        <label>Answer From</label>
-        <select id="answerSelect"></select>
-        <span class="hint">Model that generates answers when a question is detected.</span>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- ── Voice Activity Detection ───────────────────────────────── -->
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Voice Activity Detection (VAD)</span>
-    </div>
-    <div class="section-body">
-      <p class="hint">Controls how the always-on listener detects and filters speech from background noise. Lower values = more sensitive, higher values = stricter filtering.</p>
-
-      <div class="field">
-        <label>VAD Engine</label>
-        <select id="vadEngine">
-          <option value="webrtc">WebRTC (Classic / GMM)</option>
-          <option value="silero">Silero (DNN / Neural)</option>
-        </select>
-        <span class="hint">WebRTC is lightweight and fast. Silero uses a neural network for higher accuracy and outputs a confidence score (0-1) instead of binary speech/no-speech.</span>
-      </div>
-
-      <div class="field">
-        <label>Energy Gate Threshold</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Sensitive</span>
-          <input type="range" id="vadEnergyGate" min="0.005" max="0.1" step="0.005" value="0.02">
-          <span style="font-size:11px;color:var(--muted)">Strict</span>
-          <span class="slider-val" id="vadEnergyGateVal">0.02</span>
-        </div>
-        <span class="hint">Pre-filter: audio chunks quieter than this RMS level are instantly discarded before any speech analysis. Eliminates fan hum, mic self-noise, and quiet background sounds. Raise this if you get false triggers in a quiet room.</span>
-      </div>
-
-      <div class="field" id="fieldSpeechRatio" data-engine="webrtc">
-        <label>Speech Frame Ratio</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Loose</span>
-          <input type="range" id="vadSpeechRatio" min="0.3" max="0.95" step="0.05" value="0.7">
-          <span style="font-size:11px;color:var(--muted)">Strict</span>
-          <span class="slider-val" id="vadSpeechRatioVal">0.70</span>
-        </div>
-        <span class="hint">What percentage of 30ms frames in a 100ms chunk must be classified as speech by WebRTC VAD. At 0.7, 70% of frames need to contain speech. Higher values mean more of the chunk must be actual speech — reduces false positives from keyboard clicks or coughs.</span>
-      </div>
-
-      <div class="field" id="fieldSileroThreshold" data-engine="silero" style="display:none">
-        <label>Speech Confidence Threshold</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Sensitive</span>
-          <input type="range" id="vadSileroThreshold" min="0.1" max="0.95" step="0.05" value="0.5">
-          <span style="font-size:11px;color:var(--muted)">Strict</span>
-          <span class="slider-val" id="vadSileroThresholdVal">0.50</span>
-        </div>
-        <span class="hint">Silero model confidence threshold (0-1). Lower = more sensitive to faint speech, higher = stricter filtering. 0.5 is a balanced default.</span>
-      </div>
-
-      <div class="field" id="fieldSileroMinSpeech" data-engine="silero" style="display:none">
-        <label>Min Speech Duration (ms)</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">50</span>
-          <input type="range" id="vadSileroMinSpeechMs" min="50" max="500" step="50" value="250">
-          <span style="font-size:11px;color:var(--muted)">500</span>
-          <span class="slider-val" id="vadSileroMinSpeechMsVal">250</span>
-        </div>
-        <span class="hint">Minimum speech segment duration (in milliseconds) before Silero considers it real speech.</span>
-      </div>
-
-      <div class="field" id="fieldSileroMinSilence" data-engine="silero" style="display:none">
-        <label>Min Silence Duration (ms)</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">50</span>
-          <input type="range" id="vadSileroMinSilenceMs" min="50" max="500" step="50" value="100">
-          <span style="font-size:11px;color:var(--muted)">500</span>
-          <span class="slider-val" id="vadSileroMinSilenceMsVal">100</span>
-        </div>
-        <span class="hint">Minimum silence duration (in milliseconds) to end a speech segment in Silero's internal state.</span>
-      </div>
-
-      <div class="field">
-        <label>Min Speech Duration (seconds)</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Short</span>
-          <input type="range" id="vadMinSpeech" min="0.25" max="3.0" step="0.25" value="0.75">
-          <span style="font-size:11px;color:var(--muted)">Long</span>
-          <span class="slider-val" id="vadMinSpeechVal">0.75</span>
-        </div>
-        <span class="hint">Minimum duration of detected speech before it's sent to Whisper for transcription. Anything shorter is discarded as noise. Prevents short bursts (door slam, cough) from triggering transcription.</span>
-      </div>
-
-      <div class="field">
-        <label>Silence Threshold (seconds)</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Quick</span>
-          <input type="range" id="vadSilenceThreshold" min="0.5" max="3.0" step="0.25" value="1.0">
-          <span style="font-size:11px;color:var(--muted)">Patient</span>
-          <span class="slider-val" id="vadSilenceVal">1.00</span>
-        </div>
-        <span class="hint">How many seconds of silence after speech before the utterance is considered complete. Lower = faster response but may split sentences. Higher = waits longer for the speaker to continue, better for slow speakers or pauses mid-thought.</span>
-      </div>
-
-      <div class="field">
-        <label>Max Utterance Duration (seconds)</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Short</span>
-          <input type="range" id="vadMaxUtterance" min="10" max="60" step="5" value="30">
-          <span style="font-size:11px;color:var(--muted)">Long</span>
-          <span class="slider-val" id="vadMaxUtteranceVal">30</span>
-        </div>
-        <span class="hint">Force-flush the audio buffer after this many seconds of continuous speech, even if the speaker hasn't paused. Prevents unbounded memory usage during long monologues. The flushed audio is transcribed and a new buffer starts.</span>
-      </div>
-
-      <div class="field">
-        <label>Min Word Count</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">1</span>
-          <input type="range" id="vadMinWordCount" min="1" max="6" step="1" value="3">
-          <span style="font-size:11px;color:var(--muted)">6</span>
-          <span class="slider-val" id="vadMinWordCountVal">3</span>
-        </div>
-        <span class="hint">After Whisper transcribes the audio, discard results with fewer words than this. Filters out hallucinated short phrases like "Thank you" or "Bye" that Whisper produces from noise. Increase if you still see gibberish one-liners.</span>
       </div>
     </div>
   </div>
@@ -445,9 +437,12 @@
           <span style="font-size:11px;color:var(--muted)">Opaque</span>
           <input type="range" id="opacitySlider" min="0" max="90" value="0">
           <span style="font-size:11px;color:var(--muted)">Transparent</span>
-          <span class="slider-val" id="opacityVal">0</span>
+          <span class="slider-val" id="opacityVal">0%</span>
         </div>
         <span class="hint">0 = fully opaque, 90 = near-invisible. Changes apply live to the open HUD window.</span>
+      </div>
+      <div class="banner banner-info" style="font-size:11px">
+        The HUD is <strong>invisible in screen sharing</strong> by default — only you can see it. Shortcut keys: <strong>⌘⇧H</strong> toggle HUD · <strong>⌘⇧X</strong> push-to-talk.
       </div>
     </div>
   </div>
@@ -461,391 +456,509 @@
   <button class="btn btn-primary"   id="btnSave">Save Settings</button>
 </div>
 
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
-// ── Socket ────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Socket
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const socket = io('/data-updates', { transports: ['websocket'] });
 const connDot  = document.getElementById('connDot');
 const connText = document.getElementById('connText');
-
 socket.on('connect',       () => { connDot.className='conn-dot ok';  connText.textContent='Connected'; });
 socket.on('disconnect',    () => { connDot.className='conn-dot err'; connText.textContent='Disconnected'; });
 socket.on('connect_error', () => { connDot.className='conn-dot err'; connText.textContent='Error'; });
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let providers = [];      // [{ id, hasKey, enabled, newKey, isCustom }]
-let hasOpenAiKey = false;
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Helpers
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-const KNOWN = {
-  openai: { label: 'OpenAI',  ph: 'sk-…' },
-  grok:   { label: 'Grok',    ph: 'gsk_…' },
-  gemini: { label: 'Gemini',  ph: 'AIzaSy…' },
+let toastTimer;
+function showToast(msg, type = 'ok') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = 'toast', 2800);
+}
+
+function setSlider(id, val, maxVal) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = val;
+  const pct = (val / maxVal * 100).toFixed(1);
+  el.style.setProperty('--pct', pct + '%');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// State
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let providers = [];   // [{ id, label, hasKey, enabled, model, newKey }]
+let modelCache = {};  // { providerId: [{id, name}] }
+let currentPromptType = 'interview-answer';
+
+const PROVIDER_META = {
+  openai: { label: 'OpenAI',            ph: 'sk-…',     icon: '🟢' },
+  grok:   { label: 'Groq',               ph: 'gsk_…',    icon: '🟣' },
+  gemini: { label: 'Gemini',             ph: 'AIzaSy…',  icon: '🔵' },
+  claude: { label: 'Claude (Anthropic)', ph: 'sk-ant-…', icon: '🟠' },
 };
 
-function providerLabel(id) { return KNOWN[id]?.label || id; }
-function providerPh(id)    { return KNOWN[id]?.ph    || 'API key…'; }
+function getMeta(id) {
+  return PROVIDER_META[id] || { label: id, ph: 'API key…', icon: '⚪' };
+}
 
-// ── Provider list ─────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Load config
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config/full');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    providers = (data.providers || []).map(p => ({ ...p, newKey: '' }));
+
+    // STT
+    const sttVal = data.stt_model || 'small';
+    if (sttVal === 'whisper-1') {
+      setTabActive('tabSttApi');
+      document.getElementById('sttApiPanel').style.display = '';
+      document.getElementById('sttLocalPanel').style.display = 'none';
+    } else {
+      setTabActive('tabSttLocal');
+      const sel = document.getElementById('sttLocalModel');
+      if ([...sel.options].some(o => o.value === sttVal)) sel.value = sttVal;
+    }
+
+    // HUD opacity
+    const op = data.hud_opacity ?? 0;
+    setSlider('opacitySlider', op, 90);
+    document.getElementById('opacityVal').textContent = op + '%';
+
+    // Screenshots path
+    const sp = data.screenshots_path || '';
+    document.getElementById('screenshotsPath').value = sp;
+    document.getElementById('screenshotWarn').style.display = sp ? 'none' : 'flex';
+
+    // Interview role
+    document.getElementById('interviewRole').value = data.interview_role || '';
+
+    renderProviders();
+    updateFallbackChain();
+
+    // Pre-load models for providers that have keys
+    for (const p of providers) {
+      if (p.hasKey) loadModelsForProvider(p.id);
+    }
+
+    // Check OpenAI key for STT warning
+    updateSttApiKeyWarn();
+  } catch (err) {
+    console.error('Failed to load config:', err);
+    showToast('Failed to load settings', 'err');
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Provider rendering
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function renderProviders() {
   const list = document.getElementById('providerList');
   list.innerHTML = '';
+  let enabledOrder = 0;
 
   providers.forEach((p, idx) => {
-    const row = document.createElement('div');
-    row.className = 'provider-row';
-    const nameHtml = p.isCustom
-      ? `<input type="text" class="prov-name-input" value="${esc(p.id)}" placeholder="provider-id" data-idx="${idx}">`
-      : `<span class="provider-name">${esc(providerLabel(p.id))}<small>${esc(p.id)}</small></span>`;
+    const meta = getMeta(p.id);
+    if (p.enabled) enabledOrder++;
+    const orderNum = p.enabled ? enabledOrder : '—';
 
-    row.innerHTML = `
-      <div>${nameHtml}</div>
-      <div class="key-wrap">
-        <input type="password" class="prov-key-input"
-          placeholder="${p.hasKey ? '•••••  (leave blank to keep)' : providerPh(p.id)}"
-          data-idx="${idx}" autocomplete="off">
-        <button class="key-toggle" data-idx="${idx}">Show</button>
+    const card = document.createElement('div');
+    card.className = `provider-card${p.enabled ? ' enabled' : ''}`;
+    card.dataset.idx = idx;
+    card.draggable = true;
+
+    const models = modelCache[p.id] || [];
+    const modelOptions = models.length > 0
+      ? models.map(m => `<option value="${esc(m.id)}" ${m.id === p.model ? 'selected' : ''}>${esc(m.name)}</option>`).join('')
+      : `<option value="${esc(p.model || '')}">${esc(p.model || 'Loading…')}</option>`;
+
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <span class="order-badge">${orderNum}</span>
+        <div class="provider-info">
+          <div class="provider-name">${esc(meta.label)}</div>
+          <div class="provider-sub">${esc(p.id)} · ${p.hasKey ? '🔑 key saved' : 'no key'}</div>
+        </div>
+        <div class="card-actions">
+          <label class="toggle" title="${p.enabled ? 'Enabled' : 'Disabled'}">
+            <input type="checkbox" class="prov-toggle" ${p.enabled ? 'checked' : ''} data-idx="${idx}">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
       </div>
-      <label class="toggle" title="${p.enabled ? 'Enabled' : 'Disabled'}">
-        <input type="checkbox" class="prov-toggle" ${p.enabled ? 'checked' : ''} data-idx="${idx}">
-        <span class="toggle-track"></span>
-      </label>
-      <button class="btn btn-danger" data-action="remove" data-idx="${idx}">✕</button>`;
+      <div class="provider-body">
+        <div class="key-row">
+          <div class="key-wrap">
+            <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
+              placeholder="${p.hasKey ? '•••  leave blank to keep existing key' : meta.ph}">
+            <button class="key-toggle" data-idx="${idx}">Show</button>
+          </div>
+          <button class="btn btn-ghost test-btn" data-idx="${idx}" title="Test connection">Test</button>
+        </div>
+        <div class="model-row">
+          <select class="prov-model-select" data-idx="${idx}" title="Model to use">
+            ${modelOptions}
+          </select>
+          <button class="btn btn-ghost reload-models-btn" data-idx="${idx}" title="Refresh model list" style="flex-shrink:0">↻</button>
+        </div>
+      </div>`;
 
-    list.appendChild(row);
+    list.appendChild(card);
   });
 
-  list.querySelectorAll('.prov-key-input').forEach(el =>
-    el.addEventListener('input', e => { providers[+e.target.dataset.idx].newKey = e.target.value; }));
-  list.querySelectorAll('.prov-toggle').forEach(el =>
-    el.addEventListener('change', e => {
-      providers[+e.target.dataset.idx].enabled = e.target.checked;
-      rebuildModelDropdowns();
-      updateSttApiWarn();
-    }));
-  list.querySelectorAll('.key-toggle').forEach(el =>
-    el.addEventListener('click', e => {
-      const inp = e.target.parentElement.querySelector('input');
-      inp.type = inp.type === 'password' ? 'text' : 'password';
-      e.target.textContent = inp.type === 'password' ? 'Show' : 'Hide';
-    }));
-  list.querySelectorAll('[data-action="remove"]').forEach(el =>
-    el.addEventListener('click', e => {
-      providers.splice(+e.target.dataset.idx, 1);
-      renderProviders(); rebuildModelDropdowns(); updateSttApiWarn();
-    }));
-  list.querySelectorAll('.prov-name-input').forEach(el =>
-    el.addEventListener('input', e => {
-      providers[+e.target.dataset.idx].id = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g,'');
-      rebuildModelDropdowns();
-    }));
+  bindProviderEvents();
+  setupDragDrop();
 }
 
-document.getElementById('btnAddProvider').addEventListener('click', () => {
-  providers.push({ id: 'provider', hasKey: false, enabled: true, newKey: '', isCustom: true });
-  renderProviders();
-  document.getElementById('providerList').lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-});
+function bindProviderEvents() {
+  // Toggle enable/disable
+  document.querySelectorAll('.prov-toggle').forEach(cb => {
+    cb.addEventListener('change', e => {
+      const idx = +e.target.dataset.idx;
+      providers[idx].enabled = e.target.checked;
+      renderProviders();
+      updateFallbackChain();
+    });
+  });
 
-// ── STT mode tabs ─────────────────────────────────────────────────────────────
-let sttMode = 'local'; // 'local' | 'openai'
+  // Key input
+  document.querySelectorAll('.prov-key-input').forEach(inp => {
+    inp.addEventListener('input', e => {
+      const idx = +e.target.dataset.idx;
+      providers[idx].newKey = e.target.value;
+    });
+  });
 
-document.querySelectorAll('.stt-tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    sttMode = btn.dataset.mode;
-    document.querySelectorAll('.stt-tab').forEach(b => b.classList.toggle('active', b === btn));
-    document.getElementById('sttLocalPanel').style.display = sttMode === 'local'  ? '' : 'none';
-    document.getElementById('sttApiPanel').style.display   = sttMode === 'openai' ? '' : 'none';
-    updateSttApiWarn();
+  // Show/hide key
+  document.querySelectorAll('.key-toggle').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const idx = +e.target.dataset.idx;
+      const input = document.querySelector(`.prov-key-input[data-idx="${idx}"]`);
+      const isPass = input.type === 'password';
+      input.type = isPass ? 'text' : 'password';
+      e.target.textContent = isPass ? 'Hide' : 'Show';
+    });
+  });
+
+  // Model select
+  document.querySelectorAll('.prov-model-select').forEach(sel => {
+    sel.addEventListener('change', e => {
+      const idx = +e.target.dataset.idx;
+      providers[idx].model = e.target.value;
+    });
+  });
+
+  // Reload models
+  document.querySelectorAll('.reload-models-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      const idx = +e.target.dataset.idx;
+      loadModelsForProvider(providers[idx].id, true);
+    });
+  });
+
+  // Test connection
+  document.querySelectorAll('.test-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      const idx = +e.target.dataset.idx;
+      const p = providers[idx];
+      const keyToTest = p.newKey || null;
+      if (!keyToTest && !p.hasKey) {
+        showToast(`No API key for ${getMeta(p.id).label}`, 'err');
+        return;
+      }
+
+      const origText = e.target.textContent;
+      e.target.textContent = '…';
+      e.target.disabled = true;
+
+      try {
+        // If there's a new key, save config first so test uses correct key
+        let body;
+        if (keyToTest) {
+          body = { providerId: p.id, key: keyToTest };
+        } else {
+          // Use saved key — we need to send a signal; controller will use stored key
+          // We'll do a mini-save of just this provider's key via test endpoint
+          body = { providerId: p.id, key: '***STORED***' };
+        }
+
+        const res = await fetch('/api/config/test-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (data.success) {
+          e.target.textContent = '✓';
+          e.target.className = 'btn btn-success test-btn';
+          showToast(data.message, 'ok');
+        } else {
+          e.target.textContent = '✗';
+          e.target.className = 'btn btn-fail test-btn';
+          showToast(data.error || 'Connection failed', 'err');
+        }
+      } catch (err) {
+        e.target.textContent = '✗';
+        e.target.className = 'btn btn-fail test-btn';
+        showToast('Connection test failed', 'err');
+      }
+
+      e.target.disabled = false;
+      setTimeout(() => {
+        e.target.textContent = origText;
+        e.target.className = 'btn btn-ghost test-btn';
+      }, 3000);
+    });
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Drag & Drop reorder
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+let dragSrcIdx = null;
+
+function setupDragDrop() {
+  const cards = document.querySelectorAll('.provider-card');
+  cards.forEach(card => {
+    card.addEventListener('dragstart', e => {
+      dragSrcIdx = +card.dataset.idx;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('drag-over'));
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      const targetIdx = +card.dataset.idx;
+      if (dragSrcIdx === null || dragSrcIdx === targetIdx) return;
+      const moved = providers.splice(dragSrcIdx, 1)[0];
+      providers.splice(targetIdx, 0, moved);
+      dragSrcIdx = null;
+      renderProviders();
+      updateFallbackChain();
+    });
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Fallback chain
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function updateFallbackChain() {
+  const enabled = providers.filter(p => p.enabled && (p.hasKey || p.newKey));
+  const chain   = document.getElementById('fallbackChain');
+  const content = document.getElementById('chainContent');
+
+  if (enabled.length === 0) {
+    chain.style.display = 'none';
+    return;
+  }
+  chain.style.display = 'flex';
+  content.innerHTML = enabled.map((p, i) =>
+    (i > 0 ? '<span class="chain-arrow">→</span>' : '') +
+    `<span class="chain-badge">${esc(getMeta(p.id).label)}</span>`
+  ).join('');
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Model loading
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function loadModelsForProvider(providerId, forceReload = false) {
+  if (modelCache[providerId] && !forceReload) return;
+
+  try {
+    const res = await fetch(`/api/config/models/${providerId}`);
+    const data = await res.json();
+    if (data.success && data.models.length > 0) {
+      modelCache[providerId] = data.models;
+
+      // Update the dropdown if card exists
+      const idx = providers.findIndex(p => p.id === providerId);
+      if (idx !== -1) {
+        const sel = document.querySelector(`.prov-model-select[data-idx="${idx}"]`);
+        if (sel) {
+          const currentVal = providers[idx].model;
+          sel.innerHTML = data.models.map(m =>
+            `<option value="${esc(m.id)}" ${m.id === currentVal ? 'selected' : ''}>${esc(m.name)}</option>`
+          ).join('');
+        }
+      }
+    }
+  } catch {}
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// STT tabs
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function setTabActive(id) {
+  ['tabSttLocal','tabSttApi'].forEach(t => {
+    document.getElementById(t).classList.toggle('active', t === id);
+  });
+}
+
+['tabSttLocal','tabSttApi'].forEach(id => {
+  document.getElementById(id).addEventListener('click', () => {
+    setTabActive(id);
+    const isLocal = id === 'tabSttLocal';
+    document.getElementById('sttLocalPanel').style.display = isLocal ? '' : 'none';
+    document.getElementById('sttApiPanel').style.display   = isLocal ? 'none' : '';
+    if (!isLocal) updateSttApiKeyWarn();
   });
 });
 
-function updateSttApiWarn() {
-  const openaiEnabled = providers.some(p => p.id === 'openai' && (p.enabled || p.hasKey));
-  hasOpenAiKey = openaiEnabled;
-  const warn = document.getElementById('sttApiKeyWarn');
-  if (sttMode === 'openai') {
-    warn.style.display = openaiEnabled ? 'none' : '';
-  } else {
-    warn.style.display = 'none';
-  }
+function updateSttApiKeyWarn() {
+  const hasOpenAI = providers.some(p => p.id === 'openai' && (p.hasKey || p.newKey));
+  document.getElementById('sttApiKeyWarn').style.display = hasOpenAI ? 'none' : 'flex';
 }
 
-function getSttModelValue() {
-  if (sttMode === 'local') return document.getElementById('sttLocalModel').value;
-  return document.getElementById('sttApiModel').value; // e.g. "whisper-1"
-}
-
-function setSttModelValue(model) {
-  const whisperApiModels = ['whisper-1'];
-  if (whisperApiModels.includes(model)) {
-    sttMode = 'openai';
-    document.querySelectorAll('.stt-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === 'openai'));
-    document.getElementById('sttLocalPanel').style.display = 'none';
-    document.getElementById('sttApiPanel').style.display   = '';
-    const opt = document.getElementById('sttApiModel').querySelector(`option[value="${model}"]`);
-    if (opt) opt.selected = true;
-  } else {
-    sttMode = 'local';
-    document.querySelectorAll('.stt-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === 'local'));
-    document.getElementById('sttLocalPanel').style.display = '';
-    document.getElementById('sttApiPanel').style.display   = 'none';
-    const opt = document.getElementById('sttLocalModel').querySelector(`option[value="${model}"]`);
-    if (opt) opt.selected = true;
-  }
-  updateSttApiWarn();
-}
-
-// ── Model dropdowns ───────────────────────────────────────────────────────────
-const classifierSelect = document.getElementById('classifierSelect');
-const answerSelect     = document.getElementById('answerSelect');
-const ollamaModelRow   = document.getElementById('ollamaModelRow');
-const ollamaModelInput = document.getElementById('ollamaModelInput');
-
-function rebuildModelDropdowns() {
-  const ollamaModel  = ollamaModelInput.value.trim() || 'llama3.2:1b';
-  const enabledProvs = providers.filter(p => p.enabled);
-
-  const prevC = classifierSelect.value;
-  const prevA = answerSelect.value;
-
-  // ── Classifier ──
-  classifierSelect.innerHTML = '';
-  // Local Ollama option (uses the configured model)
-  addOpt(classifierSelect, `ollama:${ollamaModel}`, `Local: ${ollamaModel}  (Ollama)`);
-  // Remote providers
-  enabledProvs.forEach(p => addOpt(classifierSelect, `remote:${p.id}`, `Remote: ${providerLabel(p.id)}`));
-  restoreSelect(classifierSelect, prevC);
-
-  // ── Answer From ──
-  answerSelect.innerHTML = '';
-  addOpt(answerSelect, 'auto',   'Auto (fallback chain)');
-  addOpt(answerSelect, 'ollama', `Local: Ollama  (${ollamaModel})`);
-  enabledProvs.forEach(p => addOpt(answerSelect, p.id, `Remote: ${providerLabel(p.id)}`));
-  restoreSelect(answerSelect, prevA);
-
-  // Show/hide ollama model input depending on classifier choice
-  syncOllamaRow();
-}
-
-function syncOllamaRow() {
-  const isLocal = classifierSelect.value?.startsWith('ollama:');
-  ollamaModelRow.style.display = isLocal ? '' : 'none';
-}
-
-classifierSelect.addEventListener('change', syncOllamaRow);
-
-ollamaModelInput.addEventListener('input', rebuildModelDropdowns);
-
-function addOpt(sel, val, txt) {
-  const o = document.createElement('option');
-  o.value = val; o.textContent = txt;
-  sel.appendChild(o);
-}
-function restoreSelect(sel, val) {
-  for (const opt of sel.options) {
-    if (opt.value === val) { opt.selected = true; return; }
-  }
-  if (sel.options.length) sel.options[0].selected = true;
-}
-
-// ── Opacity slider ────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HUD opacity slider
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const opacitySlider = document.getElementById('opacitySlider');
 const opacityVal    = document.getElementById('opacityVal');
-
-function updateSliderTrack(v) {
-  const pct = (v / 90) * 100;
-  opacitySlider.style.setProperty('--pct', pct.toFixed(1) + '%');
-  opacityVal.textContent = v;
-}
-
-opacitySlider.addEventListener('input', e => {
-  const v = parseInt(e.target.value);
-  updateSliderTrack(v);
-  socket.emit('set_hud_opacity', { value: v });
+opacitySlider.addEventListener('input', () => {
+  const v = +opacitySlider.value;
+  opacityVal.textContent = v + '%';
+  opacitySlider.style.setProperty('--pct', (v / 90 * 100).toFixed(1) + '%');
+  socket.emit('set_hud_opacity', v);
 });
 
-updateSliderTrack(0);
-
-// ── VAD sliders ──────────────────────────────────────────────────────────────
-const vadEngineSelect = document.getElementById('vadEngine');
-const vadSliders = {
-  energyGate:      { el: document.getElementById('vadEnergyGate'),      val: document.getElementById('vadEnergyGateVal'),    fmt: v => parseFloat(v).toFixed(3) },
-  speechRatio:     { el: document.getElementById('vadSpeechRatio'),     val: document.getElementById('vadSpeechRatioVal'),   fmt: v => parseFloat(v).toFixed(2) },
-  minSpeech:       { el: document.getElementById('vadMinSpeech'),       val: document.getElementById('vadMinSpeechVal'),     fmt: v => parseFloat(v).toFixed(2) },
-  silenceThreshold:{ el: document.getElementById('vadSilenceThreshold'),val: document.getElementById('vadSilenceVal'),       fmt: v => parseFloat(v).toFixed(2) },
-  maxUtterance:    { el: document.getElementById('vadMaxUtterance'),    val: document.getElementById('vadMaxUtteranceVal'),  fmt: v => parseInt(v).toString() },
-  minWordCount:    { el: document.getElementById('vadMinWordCount'),    val: document.getElementById('vadMinWordCountVal'),  fmt: v => parseInt(v).toString() },
-  sileroThreshold: { el: document.getElementById('vadSileroThreshold'), val: document.getElementById('vadSileroThresholdVal'),fmt: v => parseFloat(v).toFixed(2) },
-  sileroMinSpeechMs:{ el: document.getElementById('vadSileroMinSpeechMs'), val: document.getElementById('vadSileroMinSpeechMsVal'), fmt: v => parseInt(v).toString() },
-  sileroMinSilenceMs:{ el: document.getElementById('vadSileroMinSilenceMs'), val: document.getElementById('vadSileroMinSilenceMsVal'), fmt: v => parseInt(v).toString() },
-};
-
-// Toggle engine-specific fields
-function updateVadEngineFields() {
-  const engine = vadEngineSelect.value;
-  document.querySelectorAll('[data-engine]').forEach(el => {
-    el.style.display = el.dataset.engine === engine ? '' : 'none';
-  });
-}
-vadEngineSelect.addEventListener('change', updateVadEngineFields);
-updateVadEngineFields();
-
-function updateVadSliderTrack(slider, value) {
-  const min = parseFloat(slider.min), max = parseFloat(slider.max);
-  const pct = ((value - min) / (max - min)) * 100;
-  slider.style.setProperty('--pct', pct.toFixed(1) + '%');
-}
-
-Object.values(vadSliders).forEach(s => {
-  s.el.addEventListener('input', () => {
-    s.val.textContent = s.fmt(s.el.value);
-    updateVadSliderTrack(s.el, parseFloat(s.el.value));
-  });
-  // Init track fill
-  updateVadSliderTrack(s.el, parseFloat(s.el.value));
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Screenshots path warning
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+document.getElementById('screenshotsPath').addEventListener('input', e => {
+  document.getElementById('screenshotWarn').style.display = e.target.value.trim() ? 'none' : 'flex';
 });
 
-function getVadConfig() {
-  return {
-    engine:                        vadEngineSelect.value,
-    energy_gate_threshold:         parseFloat(vadSliders.energyGate.el.value),
-    speech_frame_ratio:            parseFloat(vadSliders.speechRatio.el.value),
-    min_speech_duration:           parseFloat(vadSliders.minSpeech.el.value),
-    silence_threshold:             parseFloat(vadSliders.silenceThreshold.el.value),
-    max_utterance_duration:        parseFloat(vadSliders.maxUtterance.el.value),
-    min_word_count:                parseInt(vadSliders.minWordCount.el.value),
-    silero_threshold:              parseFloat(vadSliders.sileroThreshold.el.value),
-    silero_min_speech_duration_ms: parseInt(vadSliders.sileroMinSpeechMs.el.value),
-    silero_min_silence_duration_ms:parseInt(vadSliders.sileroMinSilenceMs.el.value),
-  };
-}
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Prompt accordion
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+document.getElementById('promptAccordionBtn').addEventListener('click', () => {
+  const body  = document.getElementById('promptAccordionBody');
+  const arrow = document.getElementById('promptArrow');
+  const open  = body.classList.toggle('open');
+  arrow.textContent = open ? '▲' : '▼';
+  if (open) loadPromptPreview(currentPromptType);
+});
 
-function setVadConfig(vad) {
-  if (!vad) return;
-  if (vad.engine) { vadEngineSelect.value = vad.engine; updateVadEngineFields(); }
-  if (vad.energy_gate_threshold  != null) vadSliders.energyGate.el.value       = vad.energy_gate_threshold;
-  if (vad.speech_frame_ratio     != null) vadSliders.speechRatio.el.value      = vad.speech_frame_ratio;
-  if (vad.min_speech_duration    != null) vadSliders.minSpeech.el.value        = vad.min_speech_duration;
-  if (vad.silence_threshold      != null) vadSliders.silenceThreshold.el.value = vad.silence_threshold;
-  if (vad.max_utterance_duration != null) vadSliders.maxUtterance.el.value     = vad.max_utterance_duration;
-  if (vad.min_word_count         != null) vadSliders.minWordCount.el.value     = vad.min_word_count;
-  if (vad.silero_threshold       != null) vadSliders.sileroThreshold.el.value  = vad.silero_threshold;
-  if (vad.silero_min_speech_duration_ms != null) vadSliders.sileroMinSpeechMs.el.value  = vad.silero_min_speech_duration_ms;
-  if (vad.silero_min_silence_duration_ms != null) vadSliders.sileroMinSilenceMs.el.value = vad.silero_min_silence_duration_ms;
-  // Update display values and track fills
-  Object.values(vadSliders).forEach(s => {
-    s.val.textContent = s.fmt(s.el.value);
-    updateVadSliderTrack(s.el, parseFloat(s.el.value));
+document.querySelectorAll('.prompt-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.prompt-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentPromptType = tab.dataset.type;
+    loadPromptPreview(currentPromptType);
   });
-}
+});
 
-// ── Load config ───────────────────────────────────────────────────────────────
-async function loadConfig() {
+async function loadPromptPreview(type) {
+  const ta = document.getElementById('promptPreviewText');
+  ta.value = 'Loading…';
   try {
-    const res  = await fetch('/api/config/full');
+    const res = await fetch(`/api/config/prompt-preview?type=${type}`);
     const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'load failed');
-
-    // Providers
-    providers = (data.providers || []).map(p => ({
-      id: p.id, hasKey: p.hasKey, enabled: p.enabled, newKey: '', isCustom: !KNOWN[p.id],
-    }));
-    // Ensure the three known providers are always present
-    for (const id of ['openai','grok','gemini']) {
-      if (!providers.find(p => p.id === id))
-        providers.push({ id, hasKey: false, enabled: false, newKey: '', isCustom: false });
-    }
-
-    // Ollama model
-    ollamaModelInput.value = data.ollama_model || 'llama3.2:1b';
-
-    // Build dropdowns first
-    renderProviders();
-    rebuildModelDropdowns();
-
-    // Restore selections
-    setSttModelValue(data.stt_model || 'small');
-    restoreSelect(classifierSelect, data.classifier_mode || `ollama:${data.ollama_model || 'llama3.2:1b'}`);
-    restoreSelect(answerSelect,     data.answer_mode     || 'auto');
-    syncOllamaRow();
-
-    // Opacity
-    const op = data.hud_opacity ?? 0;
-    opacitySlider.value = op;
-    updateSliderTrack(op);
-
-    // VAD config
-    setVadConfig(data.vad);
-
-    updateSttApiWarn();
-  } catch (err) {
-    showStatus('Failed to load: ' + err.message, 'err');
+    ta.value = data.success ? data.prompt : `Error: ${data.error}`;
+  } catch {
+    ta.value = 'Failed to load prompt.';
   }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Save
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+document.getElementById('btnSave').addEventListener('click', saveSettings);
+document.getElementById('btnReload').addEventListener('click', () => location.reload());
 
-document.getElementById('btnReload').addEventListener('click', () => { loadConfig(); showStatus('',''); });
+async function saveSettings() {
+  const btn = document.getElementById('btnSave');
+  const status = document.getElementById('saveStatus');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  status.textContent = '';
+  status.className = 'save-status';
 
-// ── Save ──────────────────────────────────────────────────────────────────────
-document.getElementById('btnSave').addEventListener('click', async () => {
-  const saveBtn = document.getElementById('btnSave');
-  saveBtn.disabled = true;
-  showStatus('Saving…', '');
+  const isLocalStt = document.getElementById('tabSttLocal').classList.contains('active');
+  const sttModel = isLocalStt
+    ? document.getElementById('sttLocalModel').value
+    : document.getElementById('sttApiModel').value;
 
-  const sttModel       = getSttModelValue();
-  const classifierMode = classifierSelect.value;
-  const answerMode     = answerSelect.value;
-  const ollamaModel    = ollamaModelInput.value.trim() || 'llama3.2:1b';
-  const hudOpacity     = parseInt(opacitySlider.value);
-  const vadConfig      = getVadConfig();
+  const opVal = +document.getElementById('opacitySlider').value;
+
+  const payload = {
+    providers: providers.map(p => ({
+      id:      p.id,
+      key:     p.newKey || '',
+      enabled: p.enabled,
+      model:   p.model || '',
+    })),
+    stt_model:        sttModel,
+    answer_mode:      'auto',
+    hud_opacity:      opVal,
+    screenshots_path: document.getElementById('screenshotsPath').value.trim(),
+    interview_role:   document.getElementById('interviewRole').value.trim(),
+  };
 
   try {
     const res = await fetch('/api/config/full', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        providers: providers.map(p => ({ id: p.id, key: p.newKey || '', enabled: p.enabled })),
-        stt_model:       sttModel,
-        classifier_mode: classifierMode,
-        answer_mode:     answerMode,
-        ollama_model:    ollamaModel,
-        hud_opacity:     hudOpacity,
-        vad:             vadConfig,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'save failed');
 
-    // Apply live via socket
-    socket.emit('set_stt_model',   { model: sttModel });
-    socket.emit('set_classifier',  { mode: classifierMode });
-    socket.emit('set_answer_mode', { mode: answerMode });
-    socket.emit('set_hud_opacity', { value: hudOpacity });
-    socket.emit('set_vad_config',  vadConfig);
-
-    // Clear new-key inputs
-    providers.forEach(p => { p.newKey = ''; if (p.hasKey || p.newKey) p.hasKey = true; });
-    renderProviders();
-
-    showStatus('Saved ✓', 'ok');
+    if (data.success) {
+      status.textContent = '✓ Saved';
+      status.className = 'save-status ok';
+      showToast('Settings saved successfully', 'ok');
+      // Clear newKey and reload
+      setTimeout(() => loadConfig(), 300);
+    } else {
+      status.textContent = '✗ ' + data.error;
+      status.className = 'save-status err';
+      showToast(data.error || 'Save failed', 'err');
+    }
   } catch (err) {
-    showStatus('Error: ' + err.message, 'err');
-  } finally {
-    saveBtn.disabled = false;
+    status.textContent = '✗ Network error';
+    status.className = 'save-status err';
+    showToast('Save failed — check server', 'err');
   }
+
+  btn.disabled = false;
+  btn.textContent = 'Save Settings';
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HUD opacity live relay via socket
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+socket.on('hud_opacity_saved', (v) => {
+  setSlider('opacitySlider', v, 90);
+  opacityVal.textContent = v + '%';
 });
 
-// ── Util ──────────────────────────────────────────────────────────────────────
-function showStatus(msg, type) {
-  const el = document.getElementById('saveStatus');
-  el.textContent = msg;
-  el.className = 'save-status ' + (type || '');
-}
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Init ──────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Boot
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 loadConfig();
 </script>
 </body>

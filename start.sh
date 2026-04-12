@@ -15,7 +15,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-NODE_PORT=4000
+NODE_PORT=$(python3 -c "
+import json
+try:
+  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
+  print(c.get('port', 4000))
+except: print(4000)
+" 2>/dev/null)
+NODE_PORT="${NODE_PORT:-4000}"
 PIDS=()
 OLLAMA_STARTED=false   # true only when this script launched ollama
 
@@ -191,10 +198,11 @@ except: pass
   echo -e "     ${DIM}Open ${BOLD}config/api-keys.json${RESET}${DIM} (copy from api-keys.json.example)${RESET}"
   echo -e "     ${DIM}Or open the settings page at ${BOLD}http://localhost:$NODE_PORT/settings${RESET}${DIM} after starting${RESET}"
   echo ""
-  echo -e "  2. Keys you may need:"
-  echo -e "     ${YELLOW}OpenAI${RESET}  → https://platform.openai.com/api-keys"
-  echo -e "     ${YELLOW}Grok${RESET}    → https://console.groq.com/keys"
-  echo -e "     ${YELLOW}Gemini${RESET}  → https://aistudio.google.com/app/apikey"
+  echo -e "  2. Keys you may need (need at least one):"
+  echo -e "     ${YELLOW}OpenAI${RESET}   → https://platform.openai.com/api-keys"
+  echo -e "     ${YELLOW}Grok${RESET}     → https://console.groq.com/keys"
+  echo -e "     ${YELLOW}Gemini${RESET}   → https://aistudio.google.com/app/apikey"
+  echo -e "     ${YELLOW}Claude${RESET}   → https://console.anthropic.com/settings/api-keys"
   echo ""
   echo -e "  3. Ollama (free, local — ${GREEN}already installed${RESET})"
   echo -e "     Default classifier model: ${BOLD}$OLLAMA_MODEL${RESET}"
@@ -219,6 +227,15 @@ fi
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  RUNTIME SECTION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ── Read audio device from config ─────────────────────────────────────────────
+AUDIO_INPUT_DEVICE=$(python3 -c "
+import json
+try:
+  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
+  print(c.get('audio_input_device', ''))
+except: print('')
+" 2>/dev/null)
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 command -v node    >/dev/null 2>&1 || die "node not found. Run: ./start.sh --setup"
@@ -317,7 +334,7 @@ else
 fi
 
 log "Starting Python transcriber (STT model: $WHISPER_MODEL)..."
-WHISPER_MODEL="$WHISPER_MODEL" "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
+WHISPER_MODEL="$WHISPER_MODEL" AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
   >"$PYTHON_LOG" 2>&1 &
 PYTHON_PID=$!
 PIDS+=("$PYTHON_PID")
