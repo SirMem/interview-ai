@@ -13,7 +13,7 @@ const _cfg = loadAppConfig();
 export const CONFIG = {
   PORT: _cfg.port || 4000,
   FUNCTION_INTERVAL: _cfg.function_interval || 5000,
-  SCREENSHOTS_PATH: _cfg.screenshots_path || '/Users/parmeet1.0/Documents/screenshots',
+  SCREENSHOTS_PATH: _cfg.screenshots_path || null,
   UPLOAD_DIR: path.join(process.cwd(), 'uploads'),
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   ALLOWED_IMAGE_TYPES: /jpeg|jpg|png|gif|bmp|webp/,

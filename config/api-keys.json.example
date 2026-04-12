@@ -1,13 +1,43 @@
 {
+  "port": 4000,
+
   "keys": {
     "openai": "your-openai-api-key-here",
     "grok": "your-groq-api-key-here",
     "gemini": "your-gemini-api-key-here",
+    "claude": "your-anthropic-api-key-here",
     "ollama_model": "llama3.2:1b"
   },
-  "order": ["openai", "grok", "gemini"],
-  "enabled": ["openai", "grok", "gemini"],
-  "classifier_mode": "ollama:llama3.2:1b",
+
+  "models": {
+    "openai": "gpt-4o-mini",
+    "grok": "llama-3.3-70b-versatile",
+    "gemini": "gemini-2.5-flash",
+    "claude": "claude-sonnet-4-5"
+  },
+
+  "order": ["openai", "grok", "gemini", "claude"],
+  "enabled": ["openai"],
+
   "answer_mode": "auto",
-  "stt_model": "small"
+  "stt_model": "small",
+
+  "screenshots_path": "",
+
+  "interview_role": "",
+
+  "hud_opacity": 0,
+
+  "_vad_note": "Advanced: edit the vad block below to tune Silero VAD parameters. These are not exposed in the settings UI.",
+  "vad": {
+    "energy_gate_threshold": 0.015,
+    "speech_frame_ratio": 0.45,
+    "min_speech_duration": 0.5,
+    "silence_threshold": 0.5,
+    "max_utterance_duration": 30,
+    "min_word_count": 5,
+    "silero_threshold": 0.5,
+    "silero_min_speech_duration_ms": 100,
+    "silero_min_silence_duration_ms": 300
+  }
 }

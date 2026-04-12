@@ -410,9 +410,6 @@ def stop_recording_internal_sync():
     logger.info("Recording stopped")
 
 
-async def stop_recording_internal():
-    stop_recording_internal_sync()
-
 
 # ---------------------------------------------------------------------------
 # API endpoints
@@ -431,8 +428,17 @@ async def start_recording():
 
 @app.post("/stop-recording", response_model=StopRecordingResponse)
 async def stop_recording():
+    """Return immediately so the Node server can unblock the HUD state instantly.
+    The heavy work (executor drain, final Whisper call, process_transcription)
+    runs in a thread so it never blocks the event loop."""
+    if not is_recording:
+        return StopRecordingResponse(status="success", message="Not recording")
     try:
-        await stop_recording_internal()
+        # Run the blocking sync work in a thread — don't block the event loop.
+        # The total time to AI answer is unchanged; only listen_state_changed
+        # fires immediately instead of after all Whisper processing finishes.
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, stop_recording_internal_sync)
         return StopRecordingResponse(status="success", message="Recording stopped successfully")
     except Exception as e:
         logger.error(f"Failed to stop recording: {e}")

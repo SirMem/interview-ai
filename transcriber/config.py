@@ -83,8 +83,8 @@ ALWAYS_ON_SILENCE_THRESHOLD: float = float(os.getenv("ALWAYS_ON_SILENCE_THRESHOL
 ALWAYS_ON_MIN_SPEECH_DURATION: float = float(os.getenv("ALWAYS_ON_MIN_SPEECH_DURATION", str(_vad_cfg.get("min_speech_duration", 0.75))))
 ALWAYS_ON_MAX_UTTERANCE_DURATION: float = float(os.getenv("ALWAYS_ON_MAX_UTTERANCE_DURATION", str(_vad_cfg.get("max_utterance_duration", 30.0))))
 
-# VAD engine selection ("webrtc" or "silero")
-VAD_ENGINE: str = os.getenv("VAD_ENGINE", _vad_cfg.get("engine", "webrtc"))
+# VAD engine — always silero (the only supported engine)
+VAD_ENGINE: str = "silero"
 
 # VAD tuning parameters (read from config, overridable via env)
 VAD_ENERGY_GATE_THRESHOLD: float = float(os.getenv("VAD_ENERGY_GATE_THRESHOLD", str(_vad_cfg.get("energy_gate_threshold", 0.02))))

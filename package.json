@@ -23,11 +23,13 @@
   "author": "Parmeet Singh",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.6.2",
     "clipboardy": "^5.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "electron": "^33.0.0",
     "express": "^5.1.0",
     "form-data": "^4.0.0",
     "groq-sdk": "^0.36.0",
@@ -42,7 +44,6 @@
     "socket.io": "^4.7.2",
     "systeminformation": "^5.21.20",
     "tesseract.js": "^6.0.0",
-    "ws": "^8.14.2",
-    "electron": "^33.0.0"
+    "ws": "^8.14.2"
   }
 }
