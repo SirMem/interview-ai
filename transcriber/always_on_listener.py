@@ -296,12 +296,32 @@ class AlwaysOnListener:
             return
 
         # Speaker identification — skip utterances that sound like the candidate
-        if self._speaker_id and self._speaker_id.is_ready and len(audio) > 0:
-            is_user = self._speaker_id.identify(audio)
-            if is_user:
-                logger.debug(f"SpeakerID: candidate voice filtered: {text[:60]!r}")
-                log_writer.log('speaker_id_skipped', text=text[:60])
-                return
+        if self._speaker_id:
+            sid = self._speaker_id
+            if not sid.is_model_loaded:
+                logger.debug("SpeakerID: model not loaded — identification skipped")
+            elif not sid.has_enrollment:
+                logger.debug("SpeakerID: no enrollment — identification skipped")
+            elif len(audio) == 0:
+                logger.debug("SpeakerID: empty audio — identification skipped")
+            else:
+                duration_s = len(audio) / SAMPLE_RATE
+                is_user, similarity = sid.identify(audio)
+                decision = "CANDIDATE (skip)" if is_user else "INTERVIEWER (pass)"
+                logger.info(
+                    "SpeakerID: similarity=%.3f threshold=%.2f → %s | %.1fs | %r",
+                    similarity, sid.threshold, decision, duration_s, text[:60],
+                )
+                log_writer.log(
+                    'speaker_id_decision',
+                    similarity=round(similarity, 4),
+                    threshold=sid.threshold,
+                    decision="candidate_skipped" if is_user else "interviewer_passed",
+                    audio_duration_s=round(duration_s, 2),
+                    text=text[:60],
+                )
+                if is_user:
+                    return
 
         logger.info(f"STT Final: {text}")
         print(f"Interviewer (streaming): {text}")

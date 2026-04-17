@@ -122,30 +122,27 @@ class SpeakerIdentifier:
 
     # ── Identification ────────────────────────────────────────────────────────
 
-    def identify(self, audio: np.ndarray, sample_rate: int = 16000) -> bool:
+    def identify(self, audio: np.ndarray, sample_rate: int = 16000) -> tuple:
         """
-        Returns True if the audio sounds like the enrolled candidate.
-        Returns False (treat as interviewer) if not ready or on error.
+        Returns (is_user, similarity_score).
+        is_user=True  → audio matches the enrolled candidate (caller should skip it).
+        is_user=False → treat as interviewer (caller should send to AI).
 
-        The fail-safe default is False — if anything goes wrong, we assume it's
+        The fail-safe default is (False, 0.0) — if anything goes wrong, we assume it's
         the interviewer and send the utterance to AI rather than silently dropping it.
         """
         if not self.is_ready:
-            return False
+            return False, 0.0
         if len(audio) < sample_rate * 0.5:   # skip very short fragments
-            return False
+            return False, 0.0
         try:
             embedding  = self._compute_embedding(audio, sample_rate)
             similarity = self._cosine_similarity(embedding, self._embedding)
             is_user    = similarity >= self.threshold
-            logger.debug(
-                "SpeakerID: similarity=%.3f threshold=%.2f → %s",
-                similarity, self.threshold, "CANDIDATE (skip)" if is_user else "INTERVIEWER (send)",
-            )
-            return is_user
+            return is_user, float(similarity)
         except Exception as e:
             logger.warning("SpeakerIdentifier: identify error — %s (treating as interviewer)", e)
-            return False   # fail-safe: don't silently drop the utterance
+            return False, 0.0   # fail-safe: don't silently drop the utterance
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
