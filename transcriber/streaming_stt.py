@@ -64,6 +64,12 @@ class StreamingSTT:
         self._vad_silent   = False
         self._silent_since = None        # time.time() when silence began
 
+        # Generation counter — incremented on every _reset(). Each _step() snapshots
+        # this at the top and re-checks after the decode finishes. If the value changed,
+        # force_final() (or any other reset) ran mid-decode, so we discard the result
+        # to prevent a duplicate stt_final.
+        self._generation = 0
+
         # Lifecycle
         self._running = False
         self._thread  = None
@@ -158,6 +164,7 @@ class StreamingSTT:
             audio        = np.concatenate(list(self._buffer))
             buf_start    = self._buf_start_t
             silent_since = self._silent_since
+            generation   = self._generation   # snapshot — detect mid-decode reset
 
         # RMS energy gate — avoid decoding near-silence (hallucination prevention)
         rms = float(np.sqrt(np.mean(audio ** 2)))
@@ -169,6 +176,12 @@ class StreamingSTT:
 
         # Update committed prefix and build partial strings (under lock)
         with self._lock:
+            # If _reset() was called while we were decoding (e.g. force_final() ran),
+            # the generation counter will have changed — discard this decode entirely
+            # to prevent emitting a duplicate stt_final.
+            if self._generation != generation:
+                return
+
             self._committed   = self._local_agreement_2(words, self._prev_decode, self._committed)
             self._prev_decode = words
 
@@ -281,8 +294,12 @@ class StreamingSTT:
                 break
 
     def _reset(self):
-        """Reset all state after emitting a final. Called from decode thread."""
+        """Reset all state after emitting a final. Called from decode thread or force_final().
+        Increments _generation so any in-flight _step() that snaphotted the old generation
+        will detect the reset and discard its decode result (prevents duplicate stt_final).
+        """
         with self._lock:
+            self._generation  += 1
             self._buffer.clear()
             self._buf_samples  = 0
             self._buf_start_t  = time.time()
