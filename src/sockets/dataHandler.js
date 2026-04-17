@@ -15,7 +15,7 @@
  *    - Streams tokens to HUD via question_answer_token events
  */
 import { EventEmitter } from 'events';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import logger from '../utils/logger.js';
 import { logEvent } from '../utils/file-logger.js';
@@ -105,7 +105,7 @@ class DataHandler extends EventEmitter {
     socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
     socket.on('enroll_voice',         () => this.handleEnrollVoice());
     socket.on('get_enrollment_status', () => this.handleGetEnrollmentStatus(socket));
-    socket.on('load_speaker_id',       () => this.handleLoadSpeakerId(socket));
+    socket.on('load_speaker_id',       (data) => this.handleLoadSpeakerId(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -603,19 +603,35 @@ class DataHandler extends EventEmitter {
   // in config/api-keys.json. Emits speaker_id_loading while downloading (can be
   // slow on first run — model is ~200MB from HuggingFace), then speaker_id_loaded
   // with success/failure. On success also broadcasts fresh enrollment_status.
-  async handleLoadSpeakerId(socket) {
-    // Read token + threshold from the config file that was just saved
-    let hfToken = '';
-    let threshold = 0.70;
-    try {
-      const cfg = JSON.parse(readFileSync(join(process.cwd(), 'config', 'api-keys.json'), 'utf8'));
-      hfToken   = cfg.hf_token || '';
-      threshold = cfg.speaker_id_threshold ?? 0.70;
-    } catch (_) {}
+  async handleLoadSpeakerId(socket, data = {}) {
+    // Token may come directly from the UI (user just typed it), or fall back to config
+    let hfToken   = (data.hf_token || '').trim();
+    let threshold = data.threshold ?? 0.70;
+
+    const configPath = join(process.cwd(), 'config', 'api-keys.json');
+    if (!hfToken) {
+      // Fall back to whatever is already saved
+      try {
+        const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+        hfToken   = cfg.hf_token || '';
+        threshold = cfg.speaker_id_threshold ?? threshold;
+      } catch (_) {}
+    }
 
     if (!hfToken) {
-      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: 'No HF token found in config' });
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: 'No HF token provided' });
       return;
+    }
+
+    // Persist the token + enable flag to config so it survives restarts
+    try {
+      const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+      cfg.hf_token           = hfToken;
+      cfg.speaker_id_enabled = true;
+      cfg.speaker_id_threshold = threshold;
+      writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+    } catch (e) {
+      log.warn('Could not save hf_token to config', { error: e.message });
     }
 
     this.emitToSocket(socket, 'speaker_id_loading', {});
