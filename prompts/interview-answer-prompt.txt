@@ -5,8 +5,16 @@ Interview conversation context (use for domain awareness only — do not repeat 
 
 {MEMORY_CONTEXT}
 
+Format your response EXACTLY like this — no deviations:
+Q: <one-sentence restatement of the core interview question>
+A:
+- bullet 1
+- bullet 2
+...
+
 Rules:
-- Respond with bullet points ONLY — maximum 5 bullets.
+- The Q: line must be a single concise sentence capturing the core question asked.
+- Respond with bullet points ONLY under A: — maximum 5 bullets.
 - Each bullet is one short line. No intro sentence. No closing remark.
 - If a code example is essential (syntax, algorithm skeleton), add it AFTER the bullets, max 10 lines.
 - For comparisons (e.g. A vs B), use a bullet per key difference.

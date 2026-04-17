@@ -299,19 +299,13 @@ class DataHandler extends EventEmitter {
     this.namespace.emit('interviewer_question', { questionId, questionText: fullTranscription });
     this.namespace.emit('question_answer_started', { questionId });
 
-    let fullResponse = '';
     try {
-      for await (const { token } of aiService.answerInterviewQuestion(fullTranscription, transcriptContext, memoryContext)) {
-        fullResponse += token;
-        this.namespace.emit('question_answer_token', { token, questionId });
-      }
-
-      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
-      log.info('Manual question answered', { questionId, responseLength: fullResponse.length });
-      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
-
-      if (fullTranscription && fullResponse) {
-        this.transcriptBuffer.addQAPair(fullTranscription, fullResponse);
+      const answerText = await this._streamInterviewAnswer(fullTranscription, questionId, transcriptContext, memoryContext);
+      this.namespace.emit('question_answer_complete', { questionId, response: answerText });
+      log.info('Manual question answered', { questionId, responseLength: answerText.length });
+      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+      if (fullTranscription && answerText) {
+        this.transcriptBuffer.addQAPair(fullTranscription, answerText);
       }
     } catch (err) {
       log.error('Error answering manual question', { questionId, error: err.message });
@@ -502,6 +496,47 @@ class DataHandler extends EventEmitter {
     });
   }
 
+  // Streams an AI answer for an interview question.
+  // Buffers tokens until the AI outputs the "Q: ...\nA:" prefix, then:
+  //   - emits question_text_updated with the extracted question
+  //   - streams remaining tokens as question_answer_token
+  // Returns the answer-only text (Q: line stripped) for memory storage.
+  async _streamInterviewAnswer(rawText, questionId, transcriptContext, memoryContext) {
+    let buffer = '';
+    let answerText = '';
+    let questionExtracted = false;
+
+    for await (const { token } of aiService.answerInterviewQuestion(rawText, transcriptContext, memoryContext)) {
+      if (!questionExtracted) {
+        buffer += token;
+        // Match the required format: Q: <question>\nA: (with optional extra newlines)
+        const match = buffer.match(/^Q:\s*(.+?)\n+A:\s*/s);
+        if (match) {
+          questionExtracted = true;
+          this.namespace.emit('question_text_updated', { questionId, questionText: match[1].trim() });
+          // Emit any answer text already buffered after the A: line
+          const answerStart = buffer.slice(match[0].length);
+          if (answerStart) {
+            answerText += answerStart;
+            this.namespace.emit('question_answer_token', { token: answerStart, questionId });
+          }
+        }
+        // else keep buffering — don't emit Q: line tokens to HUD
+      } else {
+        answerText += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+    }
+
+    // Fallback: AI didn't follow the Q:/A: format — emit everything as the answer
+    if (!questionExtracted) {
+      answerText = buffer;
+      if (buffer) this.namespace.emit('question_answer_token', { token: buffer, questionId });
+    }
+
+    return answerText;
+  }
+
   // stt_final fires from Python when StreamingSTT detects ≥700ms of VAD silence.
   // Replaces the old interviewer_speech + process_transcription chain for always-on mode.
   async handleSttFinal(socket, data) {
@@ -519,18 +554,12 @@ class DataHandler extends EventEmitter {
     this.namespace.emit('interviewer_question', { questionId, questionText: text });
     this.namespace.emit('question_answer_started', { questionId });
 
-    let fullResponse = '';
     try {
-      for await (const { token } of aiService.answerInterviewQuestion(
-        text, transcriptContext, memoryContext,
-      )) {
-        fullResponse += token;
-        this.namespace.emit('question_answer_token', { token, questionId });
-      }
-      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
-      log.info('stt_final question answered', { questionId, responseLength: fullResponse.length });
-      logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
-      if (text && fullResponse) this.transcriptBuffer.addQAPair(text, fullResponse);
+      const answerText = await this._streamInterviewAnswer(text, questionId, transcriptContext, memoryContext);
+      this.namespace.emit('question_answer_complete', { questionId, response: answerText });
+      log.info('stt_final question answered', { questionId, responseLength: answerText.length });
+      logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+      if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
     } catch (err) {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });

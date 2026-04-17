@@ -36,6 +36,8 @@ get_architecture_overview_tool()
 ./start.sh --setup        # first-time setup: installs all deps, then starts
 ./start.sh --setup-only   # install deps only, don't start services
 ./start.sh --newlogs      # clear all logs then start fresh
+./start.sh --debug        # enable DEBUG log level for Python transcriber (speaker ID scores, VAD frames)
+./start.sh --newlogs --debug  # flags can be combined freely
 ```
 
 `start.sh` does the following on every run:
@@ -258,7 +260,8 @@ User presses Cmd+Shift+X again (stop):
 | `toggle_listen_mode` | Client → Server | Toggle always-on listener on/off |
 | `stt_partial` | Python → Node → Client | Streaming partial: `{committed, tentative}` — every 300ms while speaking |
 | `stt_final` | Python → Node | Final transcript from StreamingSTT — triggers AI answer |
-| `interviewer_question` | Server → Client | Question confirmed: `{questionId, questionText}` |
+| `interviewer_question` | Server → Client | Question confirmed: `{questionId, questionText}` — initially raw transcript, updated by `question_text_updated` |
+| `question_text_updated` | Server → Client | AI-extracted clean question: `{questionId, questionText}` — replaces raw transcript in question card |
 | `question_answer_started` | Server → Client | AI starting to answer: `{questionId}` |
 | `question_answer_token` | Server → Client | Streaming AI token: `{token, questionId}` |
 | `question_answer_complete` | Server → Client | Answer finished: `{questionId, response}` |
@@ -339,18 +342,19 @@ Standalone FastAPI service, managed by `start.sh`. Communicates with Node via So
 |------|------|
 | `main.py` | FastAPI app + async NDJSON writer. Pre-warms MLX Whisper at startup. |
 | `transcriber.py` | Whisper model wrapper. `_mlx_lock` (module-level) serializes all Whisper calls. |
-| `streaming_stt.py` | **Core streaming engine.** Rolling deque buffer, 300ms decode loop, LocalAgreement-2. Emits `stt_partial` (every step) and `stt_final` (700ms silence or `force_final()` on stop). |
-| `always_on_listener.py` | VAD state machine feeds audio to `StreamingSTT`. Old flush-on-silence executor path disabled. |
+| `streaming_stt.py` | **Core streaming engine.** Rolling deque buffer, 300ms decode loop, LocalAgreement-2. Emits `stt_partial` (every step) and `stt_final` (1s silence or `force_final()` on stop). |
+| `always_on_listener.py` | VAD state machine feeds audio to `StreamingSTT`. Speaker ID check in `_on_stt_final`. |
+| `speaker_id.py` | pyannote-based speaker identification. Enrolls candidate voice, filters it out during interview. |
 | `keyboard_handler.py` | Global keyboard shortcut handler |
 | `socket_client.py` | Pushes events to Node. Key methods: `send_stt_partial()`, `send_stt_final()` |
-| `question_extractor.py` | Heuristics to detect interview questions from transcription |
-| `config.py` | `SAMPLE_RATE`, `API_HOST/PORT`, `LOG_LEVEL`, feature flags |
+| `config.py` | `SAMPLE_RATE`, `API_HOST/PORT`, `LOG_LEVEL`, `HF_TOKEN`, `SPEAKER_ID_THRESHOLD`, feature flags |
 | `vad/` | Voice activity detection model |
 
 **Runtime config via env vars (set by `start.sh`):**
 ```
 WHISPER_MODEL=small       # set from config/api-keys.json stt_model key
 AUDIO_INPUT_DEVICE=       # set from config/api-keys.json audio_input_device key
+LOG_LEVEL=INFO            # set to DEBUG via --debug flag for speaker ID scores + VAD detail
 ```
 
 **Python venv:** `transcriber/venv/` — created by `start.sh --setup`, synced on every start.
@@ -383,9 +387,14 @@ Hot-reloaded by `ai.service.js` — no restart needed.
   "models": { "openai": "gpt-4o-mini", "grok": "llama-3.3-70b-versatile" },
   "ollama_model": "llama3.2:1b",
   "stt_model": "small",
-  "audio_input_device": ""
+  "audio_input_device": "",
+  "hf_token": "hf_...",
+  "speaker_id_threshold": 0.70
 }
 ```
+
+`hf_token` — required for speaker identification (pyannote model). Accept model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM first.
+`speaker_id_threshold` — cosine similarity cutoff (0.0–1.0). Raise toward 0.80 if your voice leaks through; lower toward 0.60 if interviewer is blocked.
 
 Copy from `config/api-keys.json.example` on first setup. Also configurable at `http://localhost:4000/settings`.
 

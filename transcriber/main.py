@@ -608,7 +608,7 @@ async def get_settings():
 @app.post("/enroll-voice")
 async def enroll_voice():
     """Record 30 seconds of mic audio and save the candidate's voice embedding."""
-    global speaker_identifier
+    global speaker_identifier, always_on_listener
     if speaker_identifier is None:
         raise HTTPException(status_code=503, detail="Speaker identification not available — check hf_token in config")
     if not speaker_identifier.is_model_loaded:
@@ -617,6 +617,19 @@ async def enroll_voice():
     import sounddevice as sd
 
     ENROLL_SECONDS = 30
+
+    # Pause the always-on listener so it releases the mic before we call sd.rec().
+    # Without this, PortAudio raises err=-50 (device already in use) and returns
+    # an empty buffer immediately — producing a garbage embedding in ~1 second.
+    listener_was_running = (
+        always_on_listener is not None
+        and always_on_listener._running
+        and not always_on_listener._paused
+    )
+    if listener_was_running:
+        logger.info("Pausing always-on listener to free mic for enrollment...")
+        always_on_listener.pause()
+
     logger.info(f"Starting voice enrollment — recording {ENROLL_SECONDS}s from mic...")
     log_writer.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
 
@@ -647,6 +660,11 @@ async def enroll_voice():
     except Exception as e:
         logger.error(f"Enrollment error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Always resume the listener, even if enrollment failed
+        if listener_was_running and always_on_listener is not None:
+            logger.info("Resuming always-on listener after enrollment")
+            always_on_listener.resume()
 
 
 @app.get("/enrollment-status")

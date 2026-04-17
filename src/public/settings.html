@@ -432,22 +432,59 @@
     </div>
     <div class="section-body">
       <span class="hint">
-        Enroll your voice so the app can distinguish you from the interviewer.
-        Speak naturally for 30 seconds — your voice profile is saved and persists across restarts.
-        Requires a HuggingFace token and <code>hf_token</code> set in config.
+        Enroll your voice so the app can filter you out and only send the interviewer's questions to the AI.
+        Click the button then read the script below aloud — your voice profile is saved and persists across restarts.
+        Requires <code>hf_token</code> set in config.
       </span>
-      <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
-        <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
-        <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
+
+      <!-- Reading script -->
+      <div id="enrollScript" style="
+        margin: 10px 0;
+        padding: 14px 16px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--border2);
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.8;
+        color: var(--text);
+      ">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">
+          Read this aloud during enrollment
+        </div>
+        I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
+        <br><br>
+        Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
+        <br><br>
+        When collaborating on a team, I prioritize clear communication and thorough code reviews. I'm looking forward to discussing my technical background and how I can contribute to your engineering team today.
       </div>
-      <div id="enrollProgress" style="display:none;margin-top:4px;">
+
+      <!-- Progress bar (shown during recording) -->
+      <div id="enrollProgress" style="display:none;margin-bottom:10px;">
         <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
-          Recording… <span id="enrollCountdown">30</span>s remaining — speak naturally
+          Recording… <span id="enrollCountdown">30</span>s remaining — read the script above
         </div>
         <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
           <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
                border-radius:2px;transition:width 1s linear;"></div>
         </div>
+      </div>
+
+      <!-- Enroll button + status -->
+      <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
+        <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
+      </div>
+
+      <!-- Threshold -->
+      <div class="field">
+        <label class="label">Similarity Threshold
+          <span class="hint" style="display:inline;margin-left:6px;">
+            Higher = stricter (fewer false matches). Lower = looser (fewer missed matches). Default: 0.70
+          </span>
+        </label>
+        <input type="number" id="speakerThreshold" class="input"
+               min="0.50" max="0.95" step="0.01" value="0.70"
+               style="width:90px;" />
       </div>
     </div>
   </div>
@@ -541,8 +578,14 @@ socket.on('enrollment_started', (data) => {
   btn.disabled          = true;
   btn.textContent       = 'Recording…';
   progress.style.display = 'block';
-  status.textContent    = 'Speak naturally…';
+  status.textContent    = 'Read the script above aloud…';
   status.style.color    = '#f59e0b';
+  // Highlight the script while recording
+  const script = document.getElementById('enrollScript');
+  if (script) {
+    script.style.borderColor = '#f59e0b';
+    script.style.background  = 'rgba(245,158,11,0.06)';
+  }
 
   const total   = data.seconds || 30;
   let remaining = total;
@@ -571,6 +614,13 @@ socket.on('enrollment_complete', (data) => {
 
   btn.disabled           = false;
   progress.style.display = 'none';
+
+  // Reset script highlight
+  const script = document.getElementById('enrollScript');
+  if (script) {
+    script.style.borderColor = '';
+    script.style.background  = '';
+  }
 
   if (data.success) {
     btn.textContent      = 'Re-enroll Voice';
@@ -658,6 +708,9 @@ async function loadConfig() {
 
     // Interview role
     document.getElementById('interviewRole').value = data.interview_role || '';
+
+    // Speaker ID threshold
+    document.getElementById('speakerThreshold').value = data.speaker_id_threshold ?? 0.70;
 
     renderProviders();
     updateFallbackChain();
@@ -1024,11 +1077,12 @@ async function saveSettings() {
       enabled: p.enabled,
       model:   p.model || '',
     })),
-    stt_model:        sttModel,
-    answer_mode:      'auto',
-    hud_opacity:      opVal,
-    screenshots_path: document.getElementById('screenshotsPath').value.trim(),
-    interview_role:   document.getElementById('interviewRole').value.trim(),
+    stt_model:            sttModel,
+    answer_mode:          'auto',
+    hud_opacity:          opVal,
+    screenshots_path:     document.getElementById('screenshotsPath').value.trim(),
+    interview_role:       document.getElementById('interviewRole').value.trim(),
+    speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value) || 0.70,
   };
 
   try {

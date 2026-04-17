@@ -6,6 +6,8 @@
 #  Usage:
 #    ./start.sh              # uses whisper model from config, default: small
 #    ./start.sh --newlogs    # clear all logs and start fresh
+#    ./start.sh --debug      # enable DEBUG log level for Python transcriber
+#    ./start.sh --newlogs --debug  # combine flags freely
 #    ./start.sh --setup      # first-time setup (installs everything, then starts)
 #    ./start.sh --setup-only # install deps only, don't start services
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -30,11 +32,13 @@ OLLAMA_STARTED=false   # true only when this script launched ollama
 DO_SETUP=false
 SETUP_ONLY=false
 NEW_LOGS=false
+DEBUG_MODE=false
 for arg in "$@"; do
   case "$arg" in
     --setup)      DO_SETUP=true ;;
     --setup-only) DO_SETUP=true; SETUP_ONLY=true ;;
     --newlogs|-newlogs) NEW_LOGS=true ;;
+    --debug|-debug) DEBUG_MODE=true ;;
   esac
 done
 
@@ -334,7 +338,10 @@ else
 fi
 
 log "Starting Python transcriber (STT model: $WHISPER_MODEL)..."
-WHISPER_MODEL="$WHISPER_MODEL" AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
+PYTHON_LOG_LEVEL="INFO"
+$DEBUG_MODE && PYTHON_LOG_LEVEL="DEBUG"
+WHISPER_MODEL="$WHISPER_MODEL" AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" LOG_LEVEL="$PYTHON_LOG_LEVEL" \
+  "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
   >"$PYTHON_LOG" 2>&1 &
 PYTHON_PID=$!
 PIDS+=("$PYTHON_PID")
@@ -367,6 +374,7 @@ echo -e "  Toggle HUD      → ${BOLD}Cmd+Shift+H${RESET}"
 echo -e "  Stop everything → ${BOLD}Ctrl+C${RESET}"
 echo -e ""
 echo -e "  ${BOLD}STT model:${RESET} $WHISPER_MODEL"
+echo -e "  ${BOLD}Log level:${RESET} $PYTHON_LOG_LEVEL"
 echo -e "  ${BOLD}Behaviour:${RESET} Questions are classified and answered automatically"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""

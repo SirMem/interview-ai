@@ -102,10 +102,11 @@
       font-size: 10px;
       color: #334155;
       line-height: 1.4;
-      min-height: 28px;
+      height: 28px;
       font-style: italic;
       -webkit-app-region: no-drag;
-      word-break: break-word;
+      white-space: nowrap;
+      overflow: hidden;
     }
 
     .live-strip.active {
@@ -635,7 +636,7 @@
         liveStrip.textContent = screenshotStatus;
         liveStrip.className = 'live-strip active';
       } else if (saved) {
-        liveStrip.textContent = saved;
+        liveStrip.textContent = saved.length > 100 ? '\u2026' + saved.slice(-100) : saved;
         liveStrip.className = 'live-strip persisted';
       } else {
         liveStrip.textContent = 'No real-time transcription';
@@ -816,7 +817,8 @@
         liveLines.push(data.text.trim());
         if (liveLines.length > 3) liveLines.shift();
       }
-      liveStrip.textContent = liveLines.join(' ');
+      const joined = liveLines.join(' ');
+      liveStrip.textContent = joined.length > 100 ? '\u2026' + joined.slice(-100) : joined;
       liveStrip.className = 'live-strip active';
     });
 
@@ -824,8 +826,10 @@
     // Wired up now; will fire once streaming STT (phase 5) is built.
     socket.on('stt_partial', (data) => {
       const { committed, tentative } = data || {};
+      // Sliding window: show only the tail of committed so the strip stays one line
+      const tail = committed && committed.length > 80 ? '\u2026' + committed.slice(-80) : (committed || '');
       let html = '';
-      if (committed) html += `<span class="committed-text">${escapeHtml(committed)}</span>`;
+      if (tail) html += `<span class="committed-text">${escapeHtml(tail)}</span>`;
       if (tentative) html += ` <span class="tentative-text">${escapeHtml(tentative)}</span>`;
       if (html) {
         liveStrip.innerHTML = html;
@@ -930,6 +934,18 @@
         if (aEl) {
           aEl.innerHTML = '<div class="thinking-placeholder">Thinking… <span class="thinking-dots"><span></span><span></span><span></span></span></div>';
         }
+      }
+    });
+
+    // AI extracted the core question from the raw transcript — update the question card.
+    socket.on('question_text_updated', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.questionText = data.questionText;
+      // Update the live question card if currently visible
+      if (viewIndex >= 0 && allQAs[viewIndex].questionId === data.questionId) {
+        const qEl = qaViewer.querySelector('.qa-question');
+        if (qEl) qEl.textContent = data.questionText;
       }
     });
 
