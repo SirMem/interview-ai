@@ -103,6 +103,18 @@ async def lifespan(app: FastAPI):
         logger.info("Transcriber initialized")
         log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
 
+        # Pre-warm: load model weights into GPU memory and trigger Metal JIT compile.
+        # Without this, the first real question pays a 2-5s cold-start penalty.
+        if not transcriber.use_api:
+            try:
+                logger.info("Pre-warming MLX Whisper (compiling Metal kernels)...")
+                _dummy_audio = np.zeros(16000, dtype=np.float32)  # 1s silence
+                transcriber._transcribe_local(_dummy_audio)
+                logger.info("MLX Whisper pre-warmed — Metal kernels compiled")
+                log_writer.log('transcriber_prewarmed', model=transcriber.model_size)
+            except Exception as _e:
+                logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
+
         # MLX is protected by an internal lock in transcriber.py — one worker
         # handles preprocessing concurrently while the other waits for the GPU.
         _transcription_executor = ThreadPoolExecutor(

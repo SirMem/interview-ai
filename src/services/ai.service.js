@@ -284,10 +284,14 @@ class AIService {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: m.content }));
 
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
     const response = await client.messages.create({
       model: options.model || this._getModel('claude'),
       max_tokens: options.max_tokens || 2048,
-      system: systemMsg || undefined,
+      system: systemBlock,
       messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
     });
     return response.content[0]?.text || 'No response generated';
@@ -403,10 +407,18 @@ class AIService {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // cache_control marks the system prompt as cacheable (ephemeral, 5-min TTL).
+    // Anthropic caches any prefix seen twice within 5 min — ~90% input-token
+    // discount + ~100-200ms TTFT improvement on question 2+ in a session.
+    // Requires prompt >= 1024 tokens to qualify; smaller prompts are ignored silently.
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
     const stream = await client.messages.stream({
       model: options.model || this._getModel('claude'),
       max_tokens: options.max_tokens || 2048,
-      system: systemMsg || undefined,
+      system: systemBlock,
       messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
     });
 

@@ -389,6 +389,53 @@
       30% { transform: translateY(-4px); opacity: 1; }
     }
 
+    /* ── Thinking placeholder ────────────────────────────────────────── */
+    .thinking-placeholder {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475569;
+      font-style: italic;
+      font-size: 11px;
+      padding: 4px 0;
+    }
+
+    .thinking-placeholder .thinking-dots span {
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: #475569;
+      margin: 0 1px;
+      animation: bounce 1.2s infinite;
+    }
+    .thinking-placeholder .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-placeholder .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    /* ── Streaming text + caret ──────────────────────────────────────── */
+    .stream-text {
+      color: #cbd5e1;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+    }
+
+    .stream-caret {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: #22c55e;
+      margin-left: 1px;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Confidence-weighted live strip ──────────────────────────────── */
+    .committed-text { color: #94a3b8; }
+    .tentative-text { color: #94a3b8; opacity: 0.45; font-style: italic; }
+
     /* ── Action bar ──────────────────────────────────────────────────── */
     .action-bar {
       flex-shrink: 0;
@@ -757,6 +804,19 @@
       liveStrip.className = 'live-strip active';
     });
 
+    // Confidence-weighted live strip — committed words bright, tentative dim.
+    // Wired up now; will fire once streaming STT (phase 5) is built.
+    socket.on('stt_partial', (data) => {
+      const { committed, tentative } = data || {};
+      let html = '';
+      if (committed) html += `<span class="committed-text">${escapeHtml(committed)}</span>`;
+      if (tentative) html += ` <span class="tentative-text">${escapeHtml(tentative)}</span>`;
+      if (html) {
+        liveStrip.innerHTML = html;
+        liveStrip.className = 'live-strip active';
+      }
+    });
+
     // Screenshot pipeline status
     socket.on('screenshot_captured', () => {
       screenshotStatus = 'Screenshot captured';
@@ -839,43 +899,75 @@
     // Interview Q&A
     socket.on('interviewer_question', (data) => {
       // Use the server's authoritative full transcription for the strip display.
-      // liveLines may have been partially cleared by the stop event before this
-      // event arrives, so it can miss leading chunks (e.g. shows only "database."
-      // instead of "ok so tell me what is a database? database.").
       transcriptionMap[data.questionId] = data.questionText || liveLines.join(' ').trim();
-      allQAs.push({ questionId: data.questionId, questionText: data.questionText, answer: '', done: false });
+      allQAs.push({ questionId: data.questionId, questionText: data.questionText, answer: '', done: false, _textNode: null });
       if (!isLocked) {
         viewIndex = allQAs.length - 1;
         renderCurrentQA();
       }
       renderNav();
-    });
 
-    socket.on('question_answer_started', (data) => {
-      const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (qa) { qa.answer = ''; qa.done = false; }
-      if (!isLocked && qa && allQAs.indexOf(qa) === viewIndex) renderCurrentQA();
-    });
-
-    socket.on('question_answer_token', (data) => {
-      const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (!qa) return;
-      qa.answer += data.token;
-      if (allQAs.indexOf(qa) === viewIndex) {
-        let aEl = qaViewer.querySelector('.qa-answer');
-        if (!aEl) {
-          renderCurrentQA();
-        } else {
-          aEl.innerHTML = renderMarkdown(qa.answer);
-          qaViewer.scrollTop = qaViewer.scrollHeight;
+      // Show thinking placeholder immediately — the LLM hasn't fired yet but
+      // the user's question is known. Replaces blank gap with visible feedback.
+      if (!isLocked) {
+        const aEl = qaViewer.querySelector('.qa-answer');
+        if (aEl) {
+          aEl.innerHTML = '<div class="thinking-placeholder">Thinking… <span class="thinking-dots"><span></span><span></span><span></span></span></div>';
         }
       }
     });
 
+    socket.on('question_answer_started', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.answer = '';
+      qa.done = false;
+      qa._textNode = null;
+      // Thinking placeholder is already showing from interviewer_question — no re-render needed
+    });
+
+    // ── Raw token streaming — appendData instead of innerHTML re-render ──
+    // Previously: aEl.innerHTML = renderMarkdown(qa.answer) on every token
+    // — that re-parses the full accumulated string and replaces the entire DOM
+    // subtree, causing visible jitter on long answers.
+    // Now: append directly to a Text node (no parsing, no reflow per token).
+    // Full markdown render happens once on question_answer_complete.
+    socket.on('question_answer_token', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.answer += data.token;
+
+      if (allQAs.indexOf(qa) !== viewIndex) return;
+
+      let aEl = qaViewer.querySelector('.qa-answer');
+      if (!aEl) { renderCurrentQA(); return; }
+
+      if (!qa._textNode) {
+        // First token: clear thinking placeholder, set up text node + caret
+        aEl.innerHTML = '';
+        const pre = document.createElement('div');
+        pre.className = 'stream-text';
+        qa._textNode = document.createTextNode('');
+        pre.appendChild(qa._textNode);
+        aEl.appendChild(pre);
+
+        const caret = document.createElement('span');
+        caret.className = 'stream-caret';
+        caret.id = `caret-${data.questionId}`;
+        aEl.appendChild(caret);
+      }
+
+      qa._textNode.appendData(data.token);
+      qaViewer.scrollTop = qaViewer.scrollHeight;
+    });
+
     socket.on('question_answer_complete', (data) => {
       const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (qa) qa.done = true;
-      if (qa && allQAs.indexOf(qa) === viewIndex) renderCurrentQA();
+      if (!qa) return;
+      qa.done = true;
+      qa._textNode = null;
+      // Now do the full markdown render on the completed text
+      if (allQAs.indexOf(qa) === viewIndex) renderCurrentQA();
     });
 
     // ── Drag (original working implementation) ────────────────────────
