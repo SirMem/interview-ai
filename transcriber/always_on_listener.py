@@ -39,7 +39,7 @@ _CHUNK_LOG_SAMPLE_RATE = 0.1
 class AlwaysOnListener:
     """Continuously listens to the microphone and emits detected utterances."""
 
-    def __init__(self, transcriber, socket_client):
+    def __init__(self, transcriber, socket_client, speaker_id=None):
         self._transcriber = transcriber
         self._socket_client = socket_client
 
@@ -63,6 +63,9 @@ class AlwaysOnListener:
         self._silence_frames_threshold = int(ALWAYS_ON_SILENCE_THRESHOLD / _BLOCK_DURATION)
         self._min_speech_samples = int(ALWAYS_ON_MIN_SPEECH_DURATION * SAMPLE_RATE)
         self._max_speech_samples = int(ALWAYS_ON_MAX_UTTERANCE_DURATION * SAMPLE_RATE)
+
+        # Optional speaker identification — filters out the candidate's own voice
+        self._speaker_id = speaker_id
 
         # Metrics
         self.metrics = VADMetrics()
@@ -276,9 +279,10 @@ class AlwaysOnListener:
         if self._socket_client and self._socket_client.is_connected():
             self._socket_client.send_stt_partial(committed, tentative)
 
-    def _on_stt_final(self, text: str):
-        """Called by StreamingSTT once VAD silence ≥ 700ms.
-        Applies the same hallucination/length filters as the old flush path.
+    def _on_stt_final(self, text: str, audio: np.ndarray):
+        """Called by StreamingSTT once VAD silence ≥ 1s (or force_final on stop).
+        Applies hallucination/length filters then speaker ID before emitting.
+        audio: float32 array at 16000 Hz — empty array when called via force_final.
         """
         words = text.strip().split()
         if len(words) < self._min_word_count:
@@ -290,6 +294,14 @@ class AlwaysOnListener:
         if self._is_gibberish(text):
             logger.debug(f"STT final is gibberish, skipping: {text!r}")
             return
+
+        # Speaker identification — skip utterances that sound like the candidate
+        if self._speaker_id and self._speaker_id.is_ready and len(audio) > 0:
+            is_user = self._speaker_id.identify(audio)
+            if is_user:
+                logger.debug(f"SpeakerID: candidate voice filtered: {text[:60]!r}")
+                log_writer.log('speaker_id_skipped', text=text[:60])
+                return
 
         logger.info(f"STT Final: {text}")
         print(f"Interviewer (streaming): {text}")

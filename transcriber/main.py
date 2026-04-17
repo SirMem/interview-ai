@@ -21,8 +21,9 @@ from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
+from speaker_id import SpeakerIdentifier
 import log_writer
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED
+from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED, HF_TOKEN, SPEAKER_ID_THRESHOLD
 
 # Configure logging
 logging.basicConfig(
@@ -90,7 +91,7 @@ def append_transcription_to_json(text: str):
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcriber, socket_client, keyboard_handler, always_on_listener
+    global transcriber, socket_client, keyboard_handler, always_on_listener, speaker_identifier
     global _json_writer_thread, _json_writer_running, _transcription_executor
 
     logger.info("Initializing STT system components...")
@@ -115,6 +116,24 @@ async def lifespan(app: FastAPI):
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
 
+        # Speaker identification — load pyannote model if HF token is configured
+        if HF_TOKEN:
+            try:
+                logger.info("Loading speaker identification model (pyannote)...")
+                speaker_identifier = SpeakerIdentifier(
+                    hf_token=HF_TOKEN,
+                    threshold=SPEAKER_ID_THRESHOLD,
+                )
+                speaker_identifier.load_model()
+                status = "enrolled" if speaker_identifier.has_enrollment else "not enrolled yet — open Settings to enroll"
+                logger.info(f"SpeakerIdentifier ready ({status})")
+                log_writer.log('speaker_id_initialized', enrolled=speaker_identifier.has_enrollment)
+            except Exception as _e:
+                logger.warning(f"SpeakerIdentifier init failed (speaker filtering disabled): {_e}")
+                speaker_identifier = None
+        else:
+            logger.info("No hf_token in config — speaker identification disabled")
+
         # MLX is protected by an internal lock in transcriber.py — one worker
         # handles preprocessing concurrently while the other waits for the GPU.
         _transcription_executor = ThreadPoolExecutor(
@@ -137,7 +156,7 @@ async def lifespan(app: FastAPI):
         logger.info("JSON writer thread started (NDJSON mode)")
 
         try:
-            always_on_listener = AlwaysOnListener(transcriber, socket_client)
+            always_on_listener = AlwaysOnListener(transcriber, socket_client, speaker_id=speaker_identifier)
             logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
         except Exception as e:
             logger.warning(f"Could not initialize always-on listener: {e}")
@@ -221,6 +240,7 @@ socket_client: Optional[SocketClient] = None
 recording_thread: Optional[threading.Thread] = None
 keyboard_handler: Optional[KeyboardHandler] = None
 always_on_listener: Optional[AlwaysOnListener] = None
+speaker_identifier: Optional[SpeakerIdentifier] = None
 _transcription_executor: Optional[ThreadPoolExecutor] = None
 
 is_recording: bool = False
@@ -582,6 +602,63 @@ async def get_vad_metrics():
 async def get_settings():
     return {
         "stt_model": transcriber.model_size if transcriber else "small",
+    }
+
+
+@app.post("/enroll-voice")
+async def enroll_voice():
+    """Record 30 seconds of mic audio and save the candidate's voice embedding."""
+    global speaker_identifier
+    if speaker_identifier is None:
+        raise HTTPException(status_code=503, detail="Speaker identification not available — check hf_token in config")
+    if not speaker_identifier.is_model_loaded:
+        raise HTTPException(status_code=503, detail="Speaker ID model not loaded — check logs for pyannote errors")
+
+    import sounddevice as sd
+
+    ENROLL_SECONDS = 30
+    logger.info(f"Starting voice enrollment — recording {ENROLL_SECONDS}s from mic...")
+    log_writer.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
+
+    try:
+        # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
+        def _record():
+            audio = sd.rec(
+                int(ENROLL_SECONDS * SAMPLE_RATE),
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype='float32',
+            )
+            sd.wait()
+            return audio.flatten()
+
+        loop = asyncio.get_event_loop()
+        audio_flat = await loop.run_in_executor(None, _record)
+
+        success = speaker_identifier.enroll_from_audio(audio_flat, SAMPLE_RATE)
+        if success:
+            logger.info("Voice enrollment completed successfully")
+            log_writer.log('voice_enrolled', success=True)
+            return {"status": "ok", "enrolled": True}
+        else:
+            raise HTTPException(status_code=500, detail="Enrollment computation failed — see logs")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Enrollment error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/enrollment-status")
+async def get_enrollment_status():
+    """Return current speaker ID model and enrollment status."""
+    if speaker_identifier is None:
+        return {"model_loaded": False, "enrolled": False, "threshold": None,
+                "reason": "No hf_token configured" if not HF_TOKEN else "Model failed to load"}
+    return {
+        "model_loaded": speaker_identifier.is_model_loaded,
+        "enrolled": speaker_identifier.has_enrollment,
+        "threshold": speaker_identifier.threshold,
     }
 
 

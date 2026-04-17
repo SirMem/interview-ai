@@ -43,8 +43,9 @@ class StreamingSTT:
                          and the module-level _mlx_lock.
             on_partial:  callback(committed: str, tentative: str) — called
                          every decode step with the latest partial.
-            on_final:    callback(text: str) — called once when VAD silence
-                         ≥ SILENCE_FINAL_S; text is committed + tentative joined.
+            on_final:    callback(text: str, audio: np.ndarray) — called once when
+                         VAD silence ≥ SILENCE_FINAL_S. audio is the float32 buffer
+                         of the full utterance (16000 Hz), used for speaker ID.
         """
         self._transcriber = transcriber
         self.on_partial   = on_partial
@@ -117,7 +118,8 @@ class StreamingSTT:
         if full:
             logger.info("StreamingSTT force_final: %s", full[:80])
             self._reset()
-            self.on_final(full)
+            # force_final has no live decode running, so no audio snapshot available
+            self.on_final(full, np.array([], dtype=np.float32))
 
     # ── Audio callback interface (must be O(1)) ───────────────────────────────
 
@@ -207,9 +209,11 @@ class StreamingSTT:
             full = committed_str
             if tentative_str:
                 full = (full + ' ' + tentative_str).strip()
+            # Capture audio BEFORE _reset() clears the buffer — needed for speaker ID
+            audio_snapshot = audio.copy()
             self._reset()
             if full:
-                self.on_final(full)
+                self.on_final(full, audio_snapshot)
 
     # ── Whisper call ─────────────────────────────────────────────────────────
 

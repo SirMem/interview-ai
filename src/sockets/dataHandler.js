@@ -101,6 +101,8 @@ class DataHandler extends EventEmitter {
     socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
     socket.on('stt_partial', (data) => this.handleSttPartial(data));
     socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
+    socket.on('enroll_voice',         () => this.handleEnrollVoice());
+    socket.on('get_enrollment_status', () => this.handleGetEnrollmentStatus(socket));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -532,6 +534,36 @@ class DataHandler extends EventEmitter {
     } catch (err) {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
+  }
+
+  // ==================== Voice Enrollment ====================
+
+  // Trigger 30-second voice enrollment recording in Python transcriber.
+  // Broadcasts enrollment_started to all clients (settings page shows countdown).
+  async handleEnrollVoice() {
+    log.info('Voice enrollment triggered');
+    this.namespace.emit('enrollment_started', { seconds: 30 });
+    try {
+      const res  = await fetch('http://localhost:8000/enroll-voice', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      const result = { success: res.ok, ...body };
+      log.info('Voice enrollment complete', result);
+      logEvent('voice_enrolled', 'INFO', { module: 'DataHandler', success: res.ok });
+      this.namespace.emit('enrollment_complete', result);
+    } catch (err) {
+      log.warn('Enrollment request failed', { error: err.message });
+      this.namespace.emit('enrollment_complete', { success: false, error: err.message });
+    }
+  }
+
+  async handleGetEnrollmentStatus(socket) {
+    try {
+      const res  = await fetch('http://localhost:8000/enrollment-status');
+      const body = await res.json().catch(() => ({}));
+      this.emitToSocket(socket, 'enrollment_status', body);
+    } catch (_) {
+      this.emitToSocket(socket, 'enrollment_status', { model_loaded: false, enrolled: false });
     }
   }
 

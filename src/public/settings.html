@@ -425,6 +425,33 @@
     </div>
   </div>
 
+  <!-- ── Voice Enrollment ─────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Voice Enrollment</span>
+    </div>
+    <div class="section-body">
+      <span class="hint">
+        Enroll your voice so the app can distinguish you from the interviewer.
+        Speak naturally for 30 seconds — your voice profile is saved and persists across restarts.
+        Requires a HuggingFace token and <code>hf_token</code> set in config.
+      </span>
+      <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
+        <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
+        <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
+      </div>
+      <div id="enrollProgress" style="display:none;margin-top:4px;">
+        <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
+          Recording… <span id="enrollCountdown">30</span>s remaining — speak naturally
+        </div>
+        <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+          <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
+               border-radius:2px;transition:width 1s linear;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── HUD Appearance ────────────────────────────────────────── -->
   <div class="section">
     <div class="section-header">
@@ -467,9 +494,94 @@
 const socket = io('/data-updates', { transports: ['websocket'] });
 const connDot  = document.getElementById('connDot');
 const connText = document.getElementById('connText');
-socket.on('connect',       () => { connDot.className='conn-dot ok';  connText.textContent='Connected'; });
+socket.on('connect', () => {
+  connDot.className='conn-dot ok';
+  connText.textContent='Connected';
+  // Refresh enrollment status whenever we (re)connect
+  socket.emit('get_enrollment_status');
+});
 socket.on('disconnect',    () => { connDot.className='conn-dot err'; connText.textContent='Disconnected'; });
 socket.on('connect_error', () => { connDot.className='conn-dot err'; connText.textContent='Error'; });
+
+// ── Voice Enrollment ─────────────────────────────────────────────────────────
+socket.on('enrollment_status', (data) => {
+  const statusEl = document.getElementById('enrollStatus');
+  const btn      = document.getElementById('btnEnrollVoice');
+  if (!statusEl || !btn) return;
+  if (data.enrolled) {
+    statusEl.textContent  = 'Enrolled ✓';
+    statusEl.style.color  = '#22c55e';
+    btn.textContent       = 'Re-enroll Voice';
+    btn.disabled          = false;
+  } else if (!data.model_loaded) {
+    const reason = data.reason || 'check hf_token in config';
+    statusEl.textContent = `Model not loaded — ${reason}`;
+    statusEl.style.color = '#ef4444';
+    btn.disabled         = true;
+  } else {
+    statusEl.textContent = 'Not enrolled';
+    statusEl.style.color = 'var(--muted)';
+    btn.disabled         = false;
+  }
+});
+
+document.getElementById('btnEnrollVoice')?.addEventListener('click', () => {
+  socket.emit('enroll_voice');
+});
+
+let _enrollTimer = null;
+socket.on('enrollment_started', (data) => {
+  const btn      = document.getElementById('btnEnrollVoice');
+  const progress = document.getElementById('enrollProgress');
+  const countdown = document.getElementById('enrollCountdown');
+  const bar      = document.getElementById('enrollBar');
+  const status   = document.getElementById('enrollStatus');
+  if (!btn) return;
+
+  btn.disabled          = true;
+  btn.textContent       = 'Recording…';
+  progress.style.display = 'block';
+  status.textContent    = 'Speak naturally…';
+  status.style.color    = '#f59e0b';
+
+  const total   = data.seconds || 30;
+  let remaining = total;
+  countdown.textContent = remaining;
+  bar.style.transition  = 'none';
+  bar.style.width       = '0%';
+  // Trigger reflow before re-enabling transition
+  void bar.offsetWidth;
+  bar.style.transition  = `width ${total}s linear`;
+
+  clearInterval(_enrollTimer);
+  _enrollTimer = setInterval(() => {
+    remaining--;
+    countdown.textContent = Math.max(0, remaining);
+    bar.style.width = `${((total - remaining) / total) * 100}%`;
+    if (remaining <= 0) clearInterval(_enrollTimer);
+  }, 1000);
+});
+
+socket.on('enrollment_complete', (data) => {
+  clearInterval(_enrollTimer);
+  const btn      = document.getElementById('btnEnrollVoice');
+  const progress = document.getElementById('enrollProgress');
+  const status   = document.getElementById('enrollStatus');
+  if (!btn) return;
+
+  btn.disabled           = false;
+  progress.style.display = 'none';
+
+  if (data.success) {
+    btn.textContent      = 'Re-enroll Voice';
+    status.textContent   = 'Enrolled ✓';
+    status.style.color   = '#22c55e';
+  } else {
+    btn.textContent      = 'Enroll My Voice';
+    status.textContent   = `Failed: ${data.error || data.detail || 'unknown error'}`;
+    status.style.color   = '#ef4444';
+  }
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helpers
