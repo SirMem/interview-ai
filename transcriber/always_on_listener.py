@@ -23,6 +23,7 @@ from config import (
     VAD_MIN_WORD_COUNT,
 )
 from vad.metrics import VADMetrics
+from streaming_stt import StreamingSTT
 import log_writer
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,14 @@ class AlwaysOnListener:
         # Metrics
         self.metrics = VADMetrics()
 
+        # Streaming STT — rolling buffer + LocalAgreement-2 decoder.
+        # Replaces the old flush-on-silence transcription path for always-on mode.
+        self._streaming_stt = StreamingSTT(
+            transcriber=self._transcriber,
+            on_partial=self._on_stt_partial,
+            on_final=self._on_stt_final,
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -85,6 +94,7 @@ class AlwaysOnListener:
             callback=self._audio_callback,
         )
         self._stream.start()
+        self._streaming_stt.start()
         logger.info(
             f"AlwaysOnListener started "
             f"(silence_threshold={ALWAYS_ON_SILENCE_THRESHOLD}s, "
@@ -98,6 +108,7 @@ class AlwaysOnListener:
 
     def stop(self):
         self._running = False
+        self._streaming_stt.stop()
         if self._stream:
             try:
                 self._stream.stop()
@@ -188,6 +199,11 @@ class AlwaysOnListener:
                     self._flush_utterance()
             # If already in silence state, do nothing
 
+        # Feed every chunk into StreamingSTT — it manages its own rolling buffer.
+        # set_vad_silent drives the final-emission timer (700ms silence → stt_final).
+        self._streaming_stt.feed(chunk)
+        self._streaming_stt.set_vad_silent(not is_speech)
+
     def _get_threshold(self) -> float:
         """Get the speech threshold for the current engine."""
         vad = self._transcriber.vad
@@ -201,28 +217,11 @@ class AlwaysOnListener:
     # ------------------------------------------------------------------
 
     def _flush_utterance(self):
-        if not self._speech_buffer:
-            self._reset_vad()
-            return
-
-        if self._speech_samples < self._min_speech_samples:
-            # Too short — likely noise, discard
-            self._reset_vad()
-            return
-
-        audio = np.concatenate(self._speech_buffer)
-        probs = list(self._probability_buffer)
-        silent_frames = self._silent_frames
-        force_flushed = self._force_flushed
-        chunk_count = len(probs)
-        duration_s = self._speech_samples / SAMPLE_RATE
+        # StreamingSTT now handles all transcription and emission via stt_partial /
+        # stt_final events. The old flush path (executor.submit → _transcribe_and_emit)
+        # is disabled to prevent double-emission.
+        # VAD state is still reset so the silence/speech state machine stays clean.
         self._reset_vad()
-
-        # Transcribe in thread pool (MLX is slow, don't block audio callback)
-        self._executor.submit(
-            self._transcribe_and_emit,
-            audio, probs, chunk_count, duration_s, silent_frames, force_flushed,
-        )
 
     def _reset_vad(self):
         self._state = 'silence'
@@ -265,6 +264,37 @@ class AlwaysOnListener:
             if bigram_counts.most_common(1)[0][1] >= 3:
                 return True
         return False
+
+    # ── StreamingSTT callbacks ────────────────────────────────────────────────
+
+    def _on_stt_partial(self, committed: str, tentative: str):
+        """Called by StreamingSTT every ~300ms with the latest partial transcript."""
+        if self._socket_client and self._socket_client.is_connected():
+            self._socket_client.send_stt_partial(committed, tentative)
+
+    def _on_stt_final(self, text: str):
+        """Called by StreamingSTT once VAD silence ≥ 700ms.
+        Applies the same hallucination/length filters as the old flush path.
+        """
+        words = text.strip().split()
+        if len(words) < self._min_word_count:
+            logger.debug(f"STT final too short ({len(words)} words), skipping: {text!r}")
+            return
+        if text.strip().lower().rstrip('.!?,') in self._HALLUCINATIONS:
+            logger.debug(f"STT final matched hallucination list, skipping: {text!r}")
+            return
+        if self._is_gibberish(text):
+            logger.debug(f"STT final is gibberish, skipping: {text!r}")
+            return
+
+        logger.info(f"STT Final: {text}")
+        print(f"Interviewer (streaming): {text}")
+        log_writer.log('stt_final_emitted', text=text, word_count=len(words))
+
+        if self._socket_client and self._socket_client.is_connected():
+            self._socket_client.send_stt_final(text)
+
+    # ── Legacy transcription path (kept for reference, no longer called) ──────
 
     def _transcribe_and_emit(self, audio: np.ndarray, probs: list,
                               chunk_count: int, duration_s: float,

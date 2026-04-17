@@ -202,6 +202,36 @@ class SocketClient:
         except Exception as e:
             logger.error(f"Error sending interviewer speech: {e}")
 
+    def send_stt_partial(self, committed: str, tentative: str):
+        """Emit streaming partial transcript — committed (stable) + tentative (may change).
+        Called ~every 300ms while the speaker is talking.
+        """
+        if not self.connected:
+            return
+        try:
+            self.sio.emit('stt_partial', {
+                'committed': committed,
+                'tentative': tentative,
+                'timestamp': time.time(),
+            }, namespace=self.endpoint)
+        except Exception as e:
+            logger.error(f"Error sending stt_partial: {e}")
+
+    def send_stt_final(self, text: str):
+        """Emit final confirmed transcript. Triggers AI answer on the Node side."""
+        if not self.connected:
+            return
+        if not text or not text.strip():
+            return
+        try:
+            self.sio.emit('stt_final', {
+                'text': text.strip(),
+                'timestamp': time.time(),
+            }, namespace=self.endpoint)
+            logger.info(f"Sent stt_final: {text[:80]}…")
+        except Exception as e:
+            logger.error(f"Error sending stt_final: {e}")
+
     def send_listen_state(self, listening: bool):
         """Notify Node.js that the always-on listener was toggled via keyboard."""
         if not self.connected:

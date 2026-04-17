@@ -99,6 +99,8 @@ class DataHandler extends EventEmitter {
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
     socket.on('toggle_listen_mode', (data) => this.handleToggleListenMode(socket, data));
     socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
+    socket.on('stt_partial', (data) => this.handleSttPartial(data));
+    socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -483,6 +485,54 @@ class DataHandler extends EventEmitter {
       error: errorMessage,
       message: `Error during ${stage} processing`,
     });
+  }
+
+  // ==================== Streaming STT (always-on mode) ====================
+
+  // Relay stt_partial directly to all HUD clients.
+  // The HUD handler at hud.html:809 displays committed (bright) + tentative (dim).
+  handleSttPartial(data) {
+    const { committed, tentative } = data || {};
+    if (!committed && !tentative) return;
+    this.namespace.emit('stt_partial', {
+      committed: committed || '',
+      tentative: tentative || '',
+    });
+  }
+
+  // stt_final fires from Python when StreamingSTT detects ≥700ms of VAD silence.
+  // Replaces the old interviewer_speech + process_transcription chain for always-on mode.
+  async handleSttFinal(socket, data) {
+    const { text } = data || {};
+    if (!text || !text.trim()) return;
+
+    const questionId        = `q-${Date.now()}`;
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    const memoryContext     = this.transcriptBuffer.getMemoryContext();
+    this.transcriptBuffer.addUtterance(text);
+
+    log.info('Processing stt_final as interview question', { questionId, textLength: text.length });
+    logEvent('stt_final_received', 'INFO', { module: 'DataHandler', questionId });
+
+    this.namespace.emit('interviewer_question', { questionId, questionText: text });
+    this.namespace.emit('question_answer_started', { questionId });
+
+    let fullResponse = '';
+    try {
+      for await (const { token } of aiService.answerInterviewQuestion(
+        text, transcriptContext, memoryContext,
+      )) {
+        fullResponse += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
+      log.info('stt_final question answered', { questionId, responseLength: fullResponse.length });
+      logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
+      if (text && fullResponse) this.transcriptBuffer.addQAPair(text, fullResponse);
+    } catch (err) {
+      log.error('Error answering stt_final question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
   }
 
   // ==================== Manual Listen Mode ====================
