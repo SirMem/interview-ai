@@ -605,6 +605,57 @@ async def get_settings():
     }
 
 
+@app.post("/load-speaker-id")
+async def load_speaker_id_endpoint(body: dict):
+    """Dynamically load (or reload) the pyannote speaker ID model.
+    Called when the user saves a new HF token in settings — no app restart needed.
+    Downloads the model from HuggingFace (~200MB on first run, cached thereafter).
+    """
+    global speaker_identifier, always_on_listener
+
+    hf_token  = (body.get("hf_token") or "").strip()
+    threshold = float(body.get("threshold") or SPEAKER_ID_THRESHOLD)
+
+    if not hf_token:
+        raise HTTPException(status_code=400, detail="hf_token is required")
+
+    logger.info("Loading speaker ID model on-demand (token provided)...")
+    log_writer.log('speaker_id_load_requested')
+
+    try:
+        new_identifier = SpeakerIdentifier(hf_token=hf_token, threshold=threshold)
+
+        # load_model() downloads from HuggingFace — run in thread so we don't block
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, new_identifier.load_model)
+
+        if not new_identifier.is_model_loaded:
+            raise HTTPException(
+                status_code=500,
+                detail="Model failed to load — check hf_token is valid and you accepted the model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM"
+            )
+
+        # Swap in the new identifier globally
+        speaker_identifier = new_identifier
+        if always_on_listener is not None:
+            always_on_listener._speaker_id = speaker_identifier
+
+        logger.info("Speaker ID model loaded dynamically (enrolled=%s)", speaker_identifier.has_enrollment)
+        log_writer.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
+
+        return {
+            "success":      True,
+            "model_loaded": True,
+            "enrolled":     speaker_identifier.has_enrollment,
+            "threshold":    speaker_identifier.threshold,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Dynamic speaker ID load failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/enroll-voice")
 async def enroll_voice():
     """Record 30 seconds of mic audio and save the candidate's voice embedding."""

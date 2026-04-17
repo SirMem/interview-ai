@@ -15,6 +15,8 @@
  *    - Streams tokens to HUD via question_answer_token events
  */
 import { EventEmitter } from 'events';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import logger from '../utils/logger.js';
 import { logEvent } from '../utils/file-logger.js';
 import aiService from '../services/ai.service.js';
@@ -103,6 +105,7 @@ class DataHandler extends EventEmitter {
     socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
     socket.on('enroll_voice',         () => this.handleEnrollVoice());
     socket.on('get_enrollment_status', () => this.handleGetEnrollmentStatus(socket));
+    socket.on('load_speaker_id',       () => this.handleLoadSpeakerId(socket));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -593,6 +596,49 @@ class DataHandler extends EventEmitter {
       this.emitToSocket(socket, 'enrollment_status', body);
     } catch (_) {
       this.emitToSocket(socket, 'enrollment_status', { model_loaded: false, enrolled: false });
+    }
+  }
+
+  // Dynamically load the pyannote speaker ID model using the token already saved
+  // in config/api-keys.json. Emits speaker_id_loading while downloading (can be
+  // slow on first run — model is ~200MB from HuggingFace), then speaker_id_loaded
+  // with success/failure. On success also broadcasts fresh enrollment_status.
+  async handleLoadSpeakerId(socket) {
+    // Read token + threshold from the config file that was just saved
+    let hfToken = '';
+    let threshold = 0.70;
+    try {
+      const cfg = JSON.parse(readFileSync(join(process.cwd(), 'config', 'api-keys.json'), 'utf8'));
+      hfToken   = cfg.hf_token || '';
+      threshold = cfg.speaker_id_threshold ?? 0.70;
+    } catch (_) {}
+
+    if (!hfToken) {
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: 'No HF token found in config' });
+      return;
+    }
+
+    this.emitToSocket(socket, 'speaker_id_loading', {});
+    log.info('Loading speaker ID model on-demand via /load-speaker-id');
+
+    try {
+      const res  = await fetch('http://localhost:8000/load-speaker-id', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ hf_token: hfToken, threshold }),
+      });
+      const body = await res.json().catch(() => ({}));
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: res.ok, ...body });
+
+      if (res.ok) {
+        // Broadcast fresh enrollment status to all connected clients
+        const statusRes  = await fetch('http://localhost:8000/enrollment-status');
+        const statusBody = await statusRes.json().catch(() => ({}));
+        this.namespace.emit('enrollment_status', statusBody);
+      }
+    } catch (err) {
+      log.error('handleLoadSpeakerId error', { error: err.message });
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: err.message });
     }
   }
 

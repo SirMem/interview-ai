@@ -539,10 +539,24 @@
           </div>
         </div>
 
-        <!-- Token saved but model not loaded yet -->
+        <!-- Token saved but model not loaded yet / loading in progress -->
         <div id="enrollPending" style="display:none;margin-top:8px;">
           <div class="banner banner-info" style="font-size:12px;">
             Token saved. <strong>Restart the app</strong> to load the pyannote model, then come back to enroll your voice.
+          </div>
+        </div>
+
+        <!-- Loading in progress -->
+        <div id="speakerIdLoading" style="display:none;margin-top:8px;">
+          <div class="banner banner-info" style="font-size:12px;">
+            <span id="speakerIdLoadingText">Downloading pyannote model from HuggingFace… this may take a minute on first run.</span>
+          </div>
+        </div>
+
+        <!-- Load error -->
+        <div id="speakerIdError" style="display:none;margin-top:8px;">
+          <div class="banner" style="font-size:12px;background:var(--red-dim);border-color:rgba(239,68,68,0.3);">
+            <span id="speakerIdErrorText"></span>
           </div>
         </div>
 
@@ -649,6 +663,29 @@ function applyEnrollmentStatus(data) {
 }
 
 socket.on('enrollment_status', applyEnrollmentStatus);
+
+// ── Speaker ID model loading ──────────────────────────────────────────────────
+socket.on('speaker_id_loading', () => {
+  document.getElementById('speakerIdLoading').style.display = '';
+  document.getElementById('speakerIdError').style.display   = 'none';
+  document.getElementById('enrollPending').style.display    = 'none';
+  document.getElementById('enrollPanel').style.display      = 'none';
+  document.getElementById('speakerIdLoadingText').textContent =
+    'Downloading pyannote model from HuggingFace… this may take a minute on first run.';
+});
+
+socket.on('speaker_id_loaded', (data) => {
+  document.getElementById('speakerIdLoading').style.display = 'none';
+  if (data.success) {
+    document.getElementById('speakerIdError').style.display = 'none';
+    showToast('Speaker ID model loaded — enroll your voice below', 'ok');
+    // enrollment_status will be broadcast by server; applyEnrollmentStatus handles panel show/hide
+  } else {
+    document.getElementById('speakerIdError').style.display  = '';
+    document.getElementById('speakerIdErrorText').textContent =
+      `Failed to load model: ${data.error || 'unknown error'}. Check your HF token and make sure you accepted the model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM`;
+  }
+});
 
 document.getElementById('btnEnrollVoice')?.addEventListener('click', () => {
   socket.emit('enroll_voice');
@@ -1198,6 +1235,14 @@ async function saveSettings() {
       status.textContent = '✓ Saved';
       status.className = 'save-status ok';
       showToast('Settings saved successfully', 'ok');
+
+      // If speaker ID is enabled and user entered a new token, load the model now
+      const newToken      = document.getElementById('hfTokenInput').value.trim();
+      const speakerEnabled = document.getElementById('speakerIdEnabled').checked;
+      if (speakerEnabled && newToken && newToken !== '***') {
+        socket.emit('load_speaker_id');
+      }
+
       // Clear newKey and reload
       setTimeout(() => loadConfig(), 300);
     } else {
