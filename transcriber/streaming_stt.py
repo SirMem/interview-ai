@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 DECODE_INTERVAL_S = 0.30    # re-decode every 300ms
 BUFFER_MAX_S      = 15.0    # hard cap: drop oldest audio beyond this
 COMMIT_TS_TOL_S   = 0.30    # LocalAgreement-2 timestamp tolerance (loose — tighten if false commits appear)
-SILENCE_FINAL_S   = 0.70    # emit stt_final after this many seconds of VAD silence
+SILENCE_FINAL_S   = 1.00    # emit stt_final after this many seconds of VAD silence
 MIN_BUFFER_S      = 1.0     # don't attempt decode until ≥1s of audio buffered
 RMS_GATE          = 10 ** (-40 / 20)   # -40 dBFS — skip near-silent frames (hallucination prevention)
 
