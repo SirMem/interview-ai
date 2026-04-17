@@ -108,6 +108,10 @@ class AlwaysOnListener:
 
     def stop(self):
         self._running = False
+        # Force-emit stt_final with whatever is buffered so that a question
+        # spoken right before the user pressed stop still gets answered,
+        # even if the 700ms silence timer hasn't fired yet.
+        self._streaming_stt.force_final()
         self._streaming_stt.stop()
         if self._stream:
             try:

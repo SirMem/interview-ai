@@ -87,6 +87,32 @@ class StreamingSTT:
         self._running = False
         logger.info("StreamingSTT stopped")
 
+    def force_final(self):
+        """Emit stt_final immediately with whatever is in the buffer.
+        Called when the user explicitly stops the listener (Cmd+Shift+X off)
+        so that a question spoken right before stopping still gets answered,
+        even if the 700ms silence timer hasn't fired yet.
+        Does nothing if the buffer is empty.
+        """
+        with self._lock:
+            if not self._committed and not self._prev_decode:
+                return   # nothing to emit
+
+            committed_str = ' '.join(w for w, _, _ in self._committed)
+            committed_set = {(w, round(s, 2)) for w, s, _ in self._committed}
+            tentative_str = ' '.join(
+                w for w, s, _ in self._prev_decode
+                if (w, round(s, 2)) not in committed_set
+            )
+            full = committed_str
+            if tentative_str:
+                full = (full + ' ' + tentative_str).strip()
+
+        if full:
+            logger.info("StreamingSTT force_final: %s", full[:80])
+            self._reset()
+            self.on_final(full)
+
     # ── Audio callback interface (must be O(1)) ───────────────────────────────
 
     def feed(self, chunk: np.ndarray):
