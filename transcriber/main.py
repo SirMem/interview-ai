@@ -23,7 +23,7 @@ from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
 from speaker_id import SpeakerIdentifier
 import log_writer
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED, HF_TOKEN, SPEAKER_ID_THRESHOLD
+from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED, HF_TOKEN, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED
 
 # Configure logging
 logging.basicConfig(
@@ -116,8 +116,8 @@ async def lifespan(app: FastAPI):
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
 
-        # Speaker identification — load pyannote model if HF token is configured
-        if HF_TOKEN:
+        # Speaker identification — load pyannote model only if enabled + token present
+        if SPEAKER_ID_ENABLED and HF_TOKEN:
             try:
                 logger.info("Loading speaker identification model (pyannote)...")
                 speaker_identifier = SpeakerIdentifier(

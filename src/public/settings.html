@@ -425,67 +425,128 @@
     </div>
   </div>
 
-  <!-- ── Voice Enrollment ─────────────────────────────────────── -->
+  <!-- ── Speaker Identification ──────────────────────────────── -->
   <div class="section">
     <div class="section-header">
-      <span class="section-title">Voice Enrollment</span>
+      <span class="section-title">Speaker Identification</span>
     </div>
     <div class="section-body">
-      <span class="hint">
-        Enroll your voice so the app can filter you out and only send the interviewer's questions to the AI.
-        Click the button then read the script below aloud — your voice profile is saved and persists across restarts.
-        Requires <code>hf_token</code> set in config.
-      </span>
 
-      <!-- Reading script -->
-      <div id="enrollScript" style="
-        margin: 10px 0;
-        padding: 14px 16px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid var(--border2);
-        border-radius: 8px;
-        font-size: 13px;
-        line-height: 1.8;
-        color: var(--text);
-      ">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">
-          Read this aloud during enrollment
-        </div>
-        I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
-        <br><br>
-        Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
-        <br><br>
-        When collaborating on a team, I prioritize clear communication and thorough code reviews. I'm looking forward to discussing my technical background and how I can contribute to your engineering team today.
-      </div>
-
-      <!-- Progress bar (shown during recording) -->
-      <div id="enrollProgress" style="display:none;margin-bottom:10px;">
-        <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
-          Recording… <span id="enrollCountdown">30</span>s remaining — read the script above
-        </div>
-        <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
-          <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
-               border-radius:2px;transition:width 1s linear;"></div>
-        </div>
-      </div>
-
-      <!-- Enroll button + status -->
-      <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
-        <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
-        <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
-      </div>
-
-      <!-- Threshold -->
-      <div class="field">
-        <label class="label">Similarity Threshold
-          <span class="hint" style="display:inline;margin-left:6px;">
-            Higher = stricter (fewer false matches). Lower = looser (fewer missed matches). Default: 0.70
-          </span>
+      <!-- Enable toggle -->
+      <div class="field" style="flex-direction:row;align-items:center;gap:12px;">
+        <label class="toggle">
+          <input type="checkbox" id="speakerIdEnabled">
+          <span class="toggle-track"></span>
         </label>
-        <input type="number" id="speakerThreshold" class="input"
-               min="0.50" max="0.95" step="0.01" value="0.70"
-               style="width:90px;" />
+        <div>
+          <div style="font-size:13px;font-weight:500;">Enable Speaker Identification</div>
+          <div class="hint" style="margin-top:2px;">
+            Filters out your voice so only the interviewer's questions trigger AI answers.
+            Uses pyannote (HuggingFace) — requires a free token.
+          </div>
+        </div>
       </div>
+
+      <!-- Everything below hidden until enabled -->
+      <div id="speakerIdPanel" style="display:none;margin-top:4px;">
+
+        <!-- HuggingFace token -->
+        <div class="field">
+          <label class="label">HuggingFace Token</label>
+          <span class="hint">
+            1. Accept model terms at
+            <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM"
+               target="_blank" style="color:var(--accent);">
+              huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+            </a><br>
+            2. Create a token at
+            <a href="https://huggingface.co/settings/tokens" target="_blank"
+               style="color:var(--accent);">huggingface.co/settings/tokens</a>
+            and paste it below.
+          </span>
+          <div class="key-row">
+            <div class="key-wrap">
+              <input type="password" id="hfTokenInput" class="input" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+              <button class="key-toggle" id="hfTokenToggle" type="button">Show</button>
+            </div>
+            <span id="hfTokenStatus" style="font-size:12px;color:var(--muted);white-space:nowrap;">Not set</span>
+          </div>
+          <span class="hint" style="margin-top:4px;">Saved with Settings. Restart the app after changing the token.</span>
+        </div>
+
+        <!-- Threshold -->
+        <div class="field">
+          <label class="label">Similarity Threshold
+            <span class="hint" style="display:inline;margin-left:6px;">
+              Higher = stricter. Lower = looser. Default: 0.70
+            </span>
+          </label>
+          <input type="number" id="speakerThreshold" class="input"
+                 min="0.50" max="0.95" step="0.01" value="0.70"
+                 style="width:90px;" />
+        </div>
+
+        <!-- Voice enrollment — only shown when model is loaded -->
+        <div id="enrollPanel" style="
+          display:none;
+          margin-top:12px;
+          padding-top:12px;
+          border-top:1px solid var(--border);
+        ">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px;">
+            Voice Enrollment
+          </div>
+          <span class="hint">
+            Read the script below aloud so the app learns your voice. Done once — profile persists across restarts.
+          </span>
+
+          <!-- Reading script -->
+          <div id="enrollScript" style="
+            margin: 10px 0;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border2);
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--text);
+          ">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">
+              Read this aloud when recording starts
+            </div>
+            I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
+            <br><br>
+            Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
+            <br><br>
+            When collaborating on a team, I prioritize clear communication and thorough code reviews. I'm looking forward to discussing my technical background and how I can contribute to your engineering team today.
+          </div>
+
+          <!-- Progress bar (shown during recording) -->
+          <div id="enrollProgress" style="display:none;margin-bottom:10px;">
+            <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
+              Recording… <span id="enrollCountdown">30</span>s remaining — read the script above
+            </div>
+            <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+              <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
+                   border-radius:2px;transition:width 1s linear;"></div>
+            </div>
+          </div>
+
+          <!-- Enroll button + status -->
+          <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
+            <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
+          </div>
+        </div>
+
+        <!-- Token saved but model not loaded yet -->
+        <div id="enrollPending" style="display:none;margin-top:8px;">
+          <div class="banner banner-info" style="font-size:12px;">
+            Token saved. <strong>Restart the app</strong> to load the pyannote model, then come back to enroll your voice.
+          </div>
+        </div>
+
+      </div><!-- /speakerIdPanel -->
     </div>
   </div>
 
@@ -540,27 +601,54 @@ socket.on('connect', () => {
 socket.on('disconnect',    () => { connDot.className='conn-dot err'; connText.textContent='Disconnected'; });
 socket.on('connect_error', () => { connDot.className='conn-dot err'; connText.textContent='Error'; });
 
-// ── Voice Enrollment ─────────────────────────────────────────────────────────
-socket.on('enrollment_status', (data) => {
-  const statusEl = document.getElementById('enrollStatus');
-  const btn      = document.getElementById('btnEnrollVoice');
-  if (!statusEl || !btn) return;
-  if (data.enrolled) {
-    statusEl.textContent  = 'Enrolled ✓';
-    statusEl.style.color  = '#22c55e';
-    btn.textContent       = 'Re-enroll Voice';
-    btn.disabled          = false;
-  } else if (!data.model_loaded) {
-    const reason = data.reason || 'check hf_token in config';
-    statusEl.textContent = `Model not loaded — ${reason}`;
-    statusEl.style.color = '#ef4444';
-    btn.disabled         = true;
-  } else {
-    statusEl.textContent = 'Not enrolled';
-    statusEl.style.color = 'var(--muted)';
-    btn.disabled         = false;
-  }
+// ── Speaker Identification ────────────────────────────────────────────────────
+
+// Toggle show/hide of speakerIdPanel
+function updateSpeakerIdPanel() {
+  const enabled = document.getElementById('speakerIdEnabled')?.checked;
+  document.getElementById('speakerIdPanel').style.display = enabled ? '' : 'none';
+}
+document.getElementById('speakerIdEnabled').addEventListener('change', updateSpeakerIdPanel);
+
+// HF token show/hide
+document.getElementById('hfTokenToggle')?.addEventListener('click', () => {
+  const inp = document.getElementById('hfTokenInput');
+  const btn = document.getElementById('hfTokenToggle');
+  if (inp.type === 'password') { inp.type = 'text';     btn.textContent = 'Hide'; }
+  else                         { inp.type = 'password'; btn.textContent = 'Show'; }
 });
+
+// Show/hide enrollment panel vs pending banner based on enrollment_status
+function applyEnrollmentStatus(data) {
+  const enrollPanel   = document.getElementById('enrollPanel');
+  const enrollPending = document.getElementById('enrollPending');
+  const statusEl      = document.getElementById('enrollStatus');
+  const btn           = document.getElementById('btnEnrollVoice');
+
+  if (!enrollPanel) return;
+
+  if (data.model_loaded) {
+    enrollPanel.style.display   = '';
+    enrollPending.style.display = 'none';
+
+    if (data.enrolled) {
+      statusEl.textContent = 'Enrolled ✓';
+      statusEl.style.color = '#22c55e';
+      btn.textContent      = 'Re-enroll Voice';
+      btn.disabled         = false;
+    } else {
+      statusEl.textContent = 'Not enrolled';
+      statusEl.style.color = 'var(--muted)';
+      btn.disabled         = false;
+    }
+  } else {
+    // Token may be saved in config but Python hasn't loaded the model yet
+    enrollPanel.style.display   = 'none';
+    enrollPending.style.display = '';
+  }
+}
+
+socket.on('enrollment_status', applyEnrollmentStatus);
 
 document.getElementById('btnEnrollVoice')?.addEventListener('click', () => {
   socket.emit('enroll_voice');
@@ -568,19 +656,19 @@ document.getElementById('btnEnrollVoice')?.addEventListener('click', () => {
 
 let _enrollTimer = null;
 socket.on('enrollment_started', (data) => {
-  const btn      = document.getElementById('btnEnrollVoice');
-  const progress = document.getElementById('enrollProgress');
+  const btn       = document.getElementById('btnEnrollVoice');
+  const progress  = document.getElementById('enrollProgress');
   const countdown = document.getElementById('enrollCountdown');
-  const bar      = document.getElementById('enrollBar');
-  const status   = document.getElementById('enrollStatus');
+  const bar       = document.getElementById('enrollBar');
+  const status    = document.getElementById('enrollStatus');
   if (!btn) return;
 
-  btn.disabled          = true;
-  btn.textContent       = 'Recording…';
+  btn.disabled           = true;
+  btn.textContent        = 'Recording…';
   progress.style.display = 'block';
-  status.textContent    = 'Read the script above aloud…';
-  status.style.color    = '#f59e0b';
-  // Highlight the script while recording
+  status.textContent     = 'Read the script above aloud…';
+  status.style.color     = '#f59e0b';
+
   const script = document.getElementById('enrollScript');
   if (script) {
     script.style.borderColor = '#f59e0b';
@@ -592,7 +680,6 @@ socket.on('enrollment_started', (data) => {
   countdown.textContent = remaining;
   bar.style.transition  = 'none';
   bar.style.width       = '0%';
-  // Trigger reflow before re-enabling transition
   void bar.offsetWidth;
   bar.style.transition  = `width ${total}s linear`;
 
@@ -615,12 +702,8 @@ socket.on('enrollment_complete', (data) => {
   btn.disabled           = false;
   progress.style.display = 'none';
 
-  // Reset script highlight
   const script = document.getElementById('enrollScript');
-  if (script) {
-    script.style.borderColor = '';
-    script.style.background  = '';
-  }
+  if (script) { script.style.borderColor = ''; script.style.background = ''; }
 
   if (data.success) {
     btn.textContent      = 'Re-enroll Voice';
@@ -709,8 +792,24 @@ async function loadConfig() {
     // Interview role
     document.getElementById('interviewRole').value = data.interview_role || '';
 
-    // Speaker ID threshold
+    // Speaker ID
+    const sidEnabled = !!(data.speaker_id_enabled);
+    document.getElementById('speakerIdEnabled').checked = sidEnabled;
+    updateSpeakerIdPanel();
     document.getElementById('speakerThreshold').value = data.speaker_id_threshold ?? 0.70;
+
+    // HF token — show *** if already set
+    const hfInput    = document.getElementById('hfTokenInput');
+    const hfStatus   = document.getElementById('hfTokenStatus');
+    if (data.hf_token_set) {
+      hfInput.value        = '***';
+      hfStatus.textContent = 'Token set ✓';
+      hfStatus.style.color = '#22c55e';
+    } else {
+      hfInput.value        = '';
+      hfStatus.textContent = 'Not set';
+      hfStatus.style.color = 'var(--muted)';
+    }
 
     renderProviders();
     updateFallbackChain();
@@ -1083,6 +1182,8 @@ async function saveSettings() {
     screenshots_path:     document.getElementById('screenshotsPath').value.trim(),
     interview_role:       document.getElementById('interviewRole').value.trim(),
     speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value) || 0.70,
+    speaker_id_enabled:   document.getElementById('speakerIdEnabled').checked,
+    hf_token:             (() => { const v = document.getElementById('hfTokenInput').value.trim(); return (v && v !== '***') ? v : ''; })(),
   };
 
   try {

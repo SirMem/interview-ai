@@ -182,6 +182,8 @@ class ConfigController {
         screenshots_path:     config.screenshots_path      || '',
         interview_role:       config.interview_role        || '',
         speaker_id_threshold: config.speaker_id_threshold  ?? 0.70,
+        speaker_id_enabled:   config.speaker_id_enabled    ?? false,
+        hf_token_set:         !!(config.hf_token),
       });
     } catch (err) {
       log.error('Error reading full config', err);
@@ -193,7 +195,7 @@ class ConfigController {
 
   saveFullConfig(req, res) {
     try {
-      const { providers, stt_model, answer_mode, hud_opacity, screenshots_path, interview_role, speaker_id_threshold } = req.body;
+      const { providers, stt_model, answer_mode, hud_opacity, screenshots_path, interview_role, speaker_id_threshold, speaker_id_enabled, hf_token } = req.body;
 
       const configPath = this.getConfigFilePath();
       let existingConfig = { keys: {}, order: [], enabled: [] };
@@ -239,6 +241,8 @@ class ConfigController {
         screenshots_path:     screenshots_path     !== undefined ? screenshots_path     : (existingConfig.screenshots_path || ''),
         interview_role:       interview_role       !== undefined ? interview_role       : (existingConfig.interview_role   || ''),
         speaker_id_threshold: speaker_id_threshold !== undefined ? +speaker_id_threshold : (existingConfig.speaker_id_threshold ?? 0.70),
+        speaker_id_enabled:   speaker_id_enabled   !== undefined ? !!speaker_id_enabled  : (existingConfig.speaker_id_enabled   ?? false),
+        hf_token:             (hf_token && hf_token.trim() && hf_token !== '***') ? hf_token.trim() : (existingConfig.hf_token || ''),
       };
 
       fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
