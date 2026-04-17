@@ -471,7 +471,7 @@
             </div>
             <span id="hfTokenStatus" style="font-size:12px;color:var(--muted);white-space:nowrap;">Not set</span>
           </div>
-          <span class="hint" style="margin-top:4px;">Saved with Settings. Restart the app after changing the token.</span>
+          <span class="hint" style="margin-top:4px;">Saved with Settings. The model loads automatically after saving — no restart needed.</span>
         </div>
 
         <!-- Threshold -->
@@ -539,10 +539,11 @@
           </div>
         </div>
 
-        <!-- Token saved but model not loaded yet / loading in progress -->
+        <!-- Token saved but model not loaded yet -->
         <div id="enrollPending" style="display:none;margin-top:8px;">
-          <div class="banner banner-info" style="font-size:12px;">
-            Token saved. <strong>Restart the app</strong> to load the pyannote model, then come back to enroll your voice.
+          <div class="banner banner-info" style="font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <span>Token saved but model not loaded yet.</span>
+            <button class="btn btn-secondary" id="btnLoadSpeakerId" style="font-size:11px;padding:4px 10px;white-space:nowrap;">Load Model</button>
           </div>
         </div>
 
@@ -632,8 +633,14 @@ document.getElementById('hfTokenToggle')?.addEventListener('click', () => {
   else                         { inp.type = 'password'; btn.textContent = 'Show'; }
 });
 
+// Track whether model loading is in progress — prevents applyEnrollmentStatus
+// from showing the "pending" banner while a download is already running.
+let _sidLoading = false;
+
 // Show/hide enrollment panel vs pending banner based on enrollment_status
 function applyEnrollmentStatus(data) {
+  if (_sidLoading) return;   // don't override loading state mid-download
+
   const enrollPanel   = document.getElementById('enrollPanel');
   const enrollPending = document.getElementById('enrollPending');
   const statusEl      = document.getElementById('enrollStatus');
@@ -656,16 +663,23 @@ function applyEnrollmentStatus(data) {
       btn.disabled         = false;
     }
   } else {
-    // Token may be saved in config but Python hasn't loaded the model yet
     enrollPanel.style.display   = 'none';
-    enrollPending.style.display = '';
+    // Only show pending banner if a token is actually saved (hf_token_set)
+    const hasSavedToken = document.getElementById('hfTokenStatus')?.textContent?.includes('✓');
+    enrollPending.style.display = hasSavedToken ? '' : 'none';
   }
 }
 
 socket.on('enrollment_status', applyEnrollmentStatus);
 
+// "Load Model" button in the pending banner
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'btnLoadSpeakerId') socket.emit('load_speaker_id');
+});
+
 // ── Speaker ID model loading ──────────────────────────────────────────────────
 socket.on('speaker_id_loading', () => {
+  _sidLoading = true;
   document.getElementById('speakerIdLoading').style.display = '';
   document.getElementById('speakerIdError').style.display   = 'none';
   document.getElementById('enrollPending').style.display    = 'none';
@@ -675,15 +689,18 @@ socket.on('speaker_id_loading', () => {
 });
 
 socket.on('speaker_id_loaded', (data) => {
+  _sidLoading = false;
   document.getElementById('speakerIdLoading').style.display = 'none';
   if (data.success) {
     document.getElementById('speakerIdError').style.display = 'none';
     showToast('Speaker ID model loaded — enroll your voice below', 'ok');
-    // enrollment_status will be broadcast by server; applyEnrollmentStatus handles panel show/hide
+    // enrollment_status broadcast by server triggers applyEnrollmentStatus → shows enrollPanel
   } else {
     document.getElementById('speakerIdError').style.display  = '';
     document.getElementById('speakerIdErrorText').textContent =
       `Failed to load model: ${data.error || 'unknown error'}. Check your HF token and make sure you accepted the model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM`;
+    // Show pending banner again so user can retry
+    document.getElementById('enrollPending').style.display = '';
   }
 });
 
