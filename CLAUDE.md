@@ -5,25 +5,51 @@
 
 ---
 
-## Code Reviews — Use the Graph, Not Full Scans
+## Code Exploration — Two Graph Tools Available, Pick the Right One
 
-**Before reviewing any code or analyzing change impact, always use `code-review-graph` MCP tools first. Do NOT scan the entire `src/` tree or `node_modules/`.**
+This repo has **both** `code-review-graph` MCP and `graphify` available. Use whichever fits the task best. Direct file reads are a last resort.
+
+### Tool selection guide
+
+| Task | Best tool |
+|------|-----------|
+| "What does X do?" / quick lookup | `code-review-graph` → `semantic_search_nodes` |
+| Impact of changing a file | `code-review-graph` → `get_impact_radius` |
+| Code review (what changed, risk) | `code-review-graph` → `detect_changes` + `get_review_context` |
+| Trace callers / callees / imports | `code-review-graph` → `query_graph` |
+| First-time architecture exploration | `graphify` → builds visual community graph |
+| "Show me clusters / surprising links" | `graphify` → community detection + HTML viz |
+| Query an already-built graphify graph | `graphify query "<question>"` |
+| Deep-dive a specific known function | Direct `Read` (last resort) |
+
+### code-review-graph (fast, pre-built, structural)
 
 ```
-# Step 1 — find what's affected by a change
+# Find what's affected by a change
 get_impact_radius_tool(filepath)
 
-# Step 2 — pull only the context needed
+# Pull only the context needed for review
 get_review_context_tool(files: [affected_files])
 
-# Step 3 — search semantically instead of grepping everything
+# Search semantically instead of grepping everything
 semantic_search_nodes_tool(query: "what you're looking for")
 
-# Understand module structure without reading every file
+# High-level architecture without reading every file
 get_architecture_overview_tool()
 ```
 
-**Why this matters:** `node_modules/` alone contains thousands of files. Full scans waste 10–50× more tokens than graph-targeted reads. The graph already knows the blast radius — use it.
+### graphify (visual, community-aware, persistent)
+
+```
+/graphify <path>              # build knowledge graph + HTML viz
+/graphify query "<question>"  # BFS/DFS traversal of existing graph
+/graphify <path> --update     # incremental update after code changes
+```
+
+graphify output lives at `<path>/graphify-out/graph.html` — open in browser.
+The `transcriber/` module already has a built graph at `transcriber/graphify-out/`.
+
+**Why this matters:** `node_modules/` alone has thousands of files. Full scans waste 10–50× more tokens than graph-targeted reads. Always prefer a graph tool over Grep/Glob/Read for exploration.
 
 ---
 

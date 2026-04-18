@@ -1,0 +1,8 @@
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0004_mixed.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0005_mixed.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0003_mixed.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0006_mixed.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0000_speech.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0001_noise.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+  warning: could not transcribe /Users/parmeet1.0/Documents/workspaces/nodeWorkspace/solveWatchAi/transcriber/benchmark/samples/sample_0002_silence.wav: Video transcription requires faster-whisper. Run: pip install 'graphifyy[video]'
+[]
