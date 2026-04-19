@@ -90,7 +90,7 @@ const onLeave = (e: React.MouseEvent<HTMLElement>, active = false) => {
 
 export default function ShareButtons() {
   const [copied, setCopied] = useState(false);
-  const siteUrl = typeof window !== "undefined" ? window.location.origin : "";
+  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://solvewatchai.vercel.app";
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(siteUrl);
