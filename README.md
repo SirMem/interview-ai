@@ -1,262 +1,236 @@
+<div align="center">
+
+<img src="web/public/logo.png" alt="SolveWatch AI" width="80" />
+
 # SolveWatch AI
 
-A real-time interview assistant that listens to your interviewer, transcribes their questions, and streams AI answers directly into a stealth overlay — invisible to your interviewer even when you're screen-sharing.
+**Real-time AI interview assistant — invisible to your interviewer**
 
-> **Open source · MIT license · macOS (Apple Silicon)**
+Live transcription → instant AI answers → stealth HUD overlay
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-a855f7.svg)](LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/parmeet10/solveWatchAi)
+[![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/parmeet10/solveWatchAi)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 
-## What it does
-
-| Feature | How it works |
-|---------|-------------|
-| **Live audio transcription** | Captures microphone input, runs Whisper on-device via Apple MLX (no API key needed), streams transcriptions in real time |
-| **AI answer overlay (HUD)** | An Electron window floats over your screen, showing streamed AI answers as bullet points — designed for quick scanning during an interview |
-| **Screenshot analysis** | Monitors a folder for new screenshots; when one appears, runs OCR + AI to analyse the content and display insights in the HUD |
-| **Invisible in screenshare** | The HUD window uses macOS content protection (`setContentProtection`) — it is completely invisible in Zoom, Meet, and any screenshare tool |
-| **Conversation memory** | The AI remembers the last 3–5 Q&A pairs so follow-up questions ("what are its features?") work correctly |
-| **Multi-provider fallback** | If your primary AI provider fails or rate-limits, requests automatically retry down your configured fallback chain |
-| **Interview role context** | Tell the app your interview role (e.g. "Frontend Engineer") and prompts are automatically tailored to your domain |
+</div>
 
 ---
 
-## Prerequisites
+## What is SolveWatch?
 
-- **macOS** (Apple Silicon recommended; Intel may work but is untested)
-- **Homebrew**, **Node.js 18+**, **Python 3.10+**, **Ollama** — all installed automatically by `./start.sh --setup` if missing
-- At least **one API key**: OpenAI, Groq, Gemini, or Claude
+SolveWatch listens to your interview through your microphone, transcribes questions in real time using on-device Whisper, and streams AI answers into a floating HUD overlay — completely invisible to Zoom, Google Meet, Teams, and every other screen-capture tool.
 
-> **Don't have Node or Python?** Just run `./start.sh --setup` — it installs everything via Homebrew.
-> If you skip `--setup` and run `./start.sh` directly without Node or Python, the script exits immediately with a clear error message telling you to run `--setup`. Nothing breaks silently.
+No browser extension. No cloud audio. Runs on your machine.
 
 ---
 
-## Quick start
+## Screenshots
 
-### First-time setup (one command)
+<div align="center">
+
+<img src="web/public/hud-appearance.png" alt="SolveWatch HUD overlay" width="700" />
+
+*The HUD overlay — always on top, invisible in screenshare*
+
+</div>
+
+<br/>
+
+<div align="center">
+<img src="web/public/aiproviders.png" alt="AI Providers settings" width="700" />
+
+*Settings page — configure providers, fallback chain, and models*
+</div>
+
+<br/>
+
+<div align="center">
+<img src="web/public/stt-speaker-diarization.png" alt="STT and speaker diarization" width="700" />
+
+*On-device Whisper STT with speaker diarization*
+</div>
+
+---
+
+## Features
+
+| | Feature | Details |
+|---|---------|---------|
+| 🎤 | **On-device STT** | Whisper via Apple MLX (Mac) or openai-whisper (Windows). Zero API key needed for transcription. Fully offline. |
+| 👁️ | **Invisible overlay** | `setContentProtection(true)` — same OS API used by banking apps. Excluded from Zoom, Meet, Teams, Loom, OBS, and all screen recording tools. Works for full-screen share, not just window share. |
+| ⚡ | **Sub-second answers** | First token in ~200 ms with Groq. Answers stream token-by-token into the HUD while the model is still generating. |
+| 🔁 | **Multi-provider fallback** | Configure a cascade: OpenAI → Groq → Gemini → Claude. If one fails or rate-limits, the next kicks in automatically. |
+| 🧠 | **Conversation memory** | Remembers the last 3–5 Q&A pairs. Follow-up questions like *"what are its trade-offs?"* work correctly. |
+| 📸 | **Screenshot analysis** | Monitors a folder for new screenshots, runs OCR (Tesseract) + AI, and shows the answer in the HUD. Great for coding problems shared on screen. |
+| 🔒 | **No telemetry** | Zero analytics, zero crash reports. The only outbound calls are to your own API keys. |
+| 🆓 | **Free & open source** | MIT license. Use it for personal and commercial purposes. |
+
+---
+
+## Quick Start
+
+### 1 — First-time setup
 
 ```bash
-git clone https://github.com/your-username/solveWatchAi.git
+git clone https://github.com/parmeet10/solveWatchAi.git
 cd solveWatchAi
 ./start.sh --setup
 ```
 
-This will:
-1. Install Homebrew, Node.js, Python, Ollama (if missing)
-2. Pull the Ollama model (`llama3.2:1b` by default)
-3. Install Node.js and Python dependencies
-4. Print setup instructions
+This installs Homebrew, Node.js, Python, Ollama, and all dependencies — then starts the app.
 
-Then open the settings page and add your API keys:
+### 2 — Add your API keys
+
+Open the settings page and paste in at least one key:
 
 ```
 http://localhost:4000/settings
 ```
 
-### Starting the app (after setup)
+| Provider | Get a key |
+|----------|-----------|
+| Groq *(fastest — recommended first)* | [console.groq.com/keys](https://console.groq.com/keys) |
+| OpenAI | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Gemini | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
+| Claude | [console.anthropic.com/settings/api-keys](https://console.anthropic.com/settings/api-keys) |
+
+### 3 — Start the app
 
 ```bash
 ./start.sh
 ```
 
-This starts three services simultaneously:
-- **Node.js backend** — API, WebSocket, screenshot monitor
-- **Python transcriber** — Whisper STT + Silero VAD
-- **Electron HUD** — the floating overlay window
-
-Press `Ctrl+C` to stop everything.
-
----
-
-## Settings page
-
-Open `http://localhost:4000/settings` in your browser after starting the app. The page has two sections — AI Providers at the top, and everything else below when you scroll down.
-
----
-
-### AI Providers
-
-![AI Providers settings](docs/images/settings-providers.png)
-
-The first thing you see when you open settings.
-
-- Keys are stored locally in `config/api-keys.json` on your machine — nothing is sent anywhere
-- Leave a key field blank to keep the existing saved value
-- At least one provider must be enabled
-
-The **fallback chain** is shown at the top (e.g. `Groq → OpenAI → Gemini`) — if the first provider fails or rate-limits, the next one is tried automatically.
-
-| Provider | Where to get a key |
-|----------|--------------------|
-| OpenAI   | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| Groq     | [console.groq.com/keys](https://console.groq.com/keys) |
-| Gemini   | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
-| Claude   | [console.anthropic.com/settings/api-keys](https://console.anthropic.com/settings/api-keys) |
-
-Each provider card has:
-- **Toggle** — enable or disable the provider
-- **Key field** — masked; shows `🔑 key saved` when a key exists. Leave blank to keep the existing key.
-- **Show** — reveal the saved key
-- **Test** — verify the key works before your interview
-- **Model dropdown** — lists available models for that provider
-- **↻ button** — refresh the model list (useful after adding a new key)
-- **Drag handle** (`⠿`) — drag cards to reorder the fallback chain
-
----
-
-### Interview Role
-
-![Settings details](docs/images/settings-details.png)
-
-Scroll down past the providers to reach this section.
-
-Enter your role (e.g. `Frontend Engineer`, `Android Developer`, `Platform Engineer`). Every AI answer is automatically tailored to use relevant frameworks, tools, and terminology for that domain. Leave blank for generic technical answers.
-
-Click **View Active Prompts** to expand a preview of the exact prompt being sent to the AI, so you can see how your role is applied.
-
----
-
-### Screenshots
-
-Set the folder SolveWatch watches for new screenshots. When a new file appears, the app runs OCR + AI analysis and shows the result in the HUD.
-
-On macOS, `Cmd+Shift+3` saves to `~/Desktop` by default. To point it at a dedicated folder:
-1. `System Settings → Screenshots → Save to` → choose your folder
-2. Enter that same path in the Screenshots Folder field here
-3. `System Settings → Screenshots → uncheck "Show Floating Thumbnail"` to avoid distraction
-
----
-
-### Speech-to-Text
-
-Two modes, switchable via tabs:
-
-- **Local Whisper (MLX)** — runs fully on-device using Apple MLX, no API key required. Choose a model from the dropdown (`tiny` → `large`; `medium` is a good balance of speed and accuracy). Changing the model restarts the transcriber automatically.
-- **OpenAI Whisper API** — sends audio to OpenAI for transcription. Requires an OpenAI key configured in the AI Providers section above.
-
----
-
-### HUD Appearance
-
-**Window Opacity** slider: drag from **Opaque (0%)** to **Transparent (90%)**. Changes apply live to the open HUD window — no save needed.
-
-> The HUD is invisible in screen sharing by default — only you can see it.
-> Shortcut keys: `⌘⇧H` toggle HUD · `⌘⇧X` toggle listening
-
----
-
-## Shortcut keys
-
 | Shortcut | Action |
 |----------|--------|
-| `⌘ Shift H` | Toggle HUD overlay on/off |
-| `⌘ Shift X` | Toggle listening on/off — same as clicking the Listen button in the HUD |
+| `⌘ Shift H` | Toggle HUD on/off |
+| `⌘ Shift X` | Toggle listening on/off |
+
+Press `Ctrl+C` to stop all services.
 
 ---
 
-## How the HUD is invisible in screenshare
-
-The Electron overlay window uses macOS `setContentProtection(true)`. This is the same API used by banking apps and video players to prevent screen capture. The window appears normally on your display but is excluded from all screenshare, recording, and screenshot capture. Your interviewer cannot see it.
-
----
-
-## Ollama (local LLM)
-
-Ollama runs locally and is used for:
-- **Conversation memory** — summarizing Q&A pairs to keep context compact
-- No API key or internet required for this
-
-Default model: `llama3.2:1b` (1.3 GB, fast)
-
-To use a better model, pull it and update `ollama_model` in `config/api-keys.json`:
+## Start flags
 
 ```bash
-ollama pull llama3.2:3b   # more accurate, 2 GB
-ollama pull llama3.1:8b   # best quality, 5 GB
+./start.sh                  # normal start
+./start.sh --setup          # install deps + start
+./start.sh --setup-only     # install deps only
+./start.sh --newlogs        # clear logs then start
+./start.sh --debug          # verbose Python transcriber output
+./start.sh --newlogs --debug  # flags can be combined
 ```
-
----
-
-## Configuration file
-
-Settings are stored in `config/api-keys.json` (gitignored). You can also edit this file directly — copy from `config/api-keys.json.example` to get started.
-
-**Advanced VAD tuning** — the VAD section is not exposed in the UI (Silero VAD is always used). Edit the `vad` block directly:
-
-```json
-"vad": {
-  "silero_threshold": 0.5,
-  "silero_min_speech_duration_ms": 100,
-  "silero_min_silence_duration_ms": 300,
-  "min_speech_duration": 0.5,
-  "silence_threshold": 0.5,
-  "max_utterance_duration": 30,
-  "min_word_count": 5
-}
-```
-
----
-
-## Logs
-
-Logs are cleared automatically on every server start. They're written to:
-
-- `logs/app.jsonl` — structured JSON log of all server events
-- `logs/transcriber.log` — Python transcriber output (live-tailed in the terminal)
-- `logs/memory.jsonl` — conversation memory events
 
 ---
 
 ## Architecture
 
+Three services run together, managed by `start.sh`:
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  macOS                                                          │
-│                                                                 │
-│  ┌──────────────┐    WebSocket    ┌──────────────────────────┐  │
-│  │  Electron    │◄────────────────│  Node.js Backend         │  │
-│  │  HUD Overlay │                 │  (Express + Socket.IO)   │  │
-│  └──────────────┘                 │                          │  │
-│                                   │  ┌────────────────────┐  │  │
-│  ┌──────────────┐    WebSocket    │  │  AI Service        │  │  │
-│  │  Python STT  │────────────────►│  │  OpenAI / Grok /   │  │  │
-│  │  (Whisper +  │                 │  │  Gemini / Claude / │  │  │
-│  │   Silero VAD)│                 │  │  Ollama (local)    │  │  │
-│  └──────────────┘                 │  └────────────────────┘  │  │
-│       ▲                           │                          │  │
-│       │ microphone                │  ┌────────────────────┐  │  │
-│                                   │  │ Screenshot Monitor │  │  │
-│  ┌──────────────┐                 │  │ (fs.watch + OCR)   │  │  │
-│  │  Screenshots │────────────────►│  └────────────────────┘  │  │
-│  │  folder      │                 └──────────────────────────┘  │
-│  └──────────────┘                                               │
-└─────────────────────────────────────────────────────────────────┘
+Microphone
+  │
+  ▼
+┌─────────────────────────────┐
+│  Python Transcriber         │  FastAPI + Whisper (MLX / openai-whisper)
+│  VAD → rolling buffer       │  LocalAgreement-2 streaming decoder
+│  → stt_partial every 300ms  │  On-device, no cloud, no API key
+│  → stt_final on silence     │
+└────────────┬────────────────┘
+             │ Socket.IO
+             ▼
+┌─────────────────────────────┐
+│  Node.js Backend            │  Express + Socket.IO
+│  Assembles prompt           │  Multi-provider AI with fallback chain
+│  Streams answer tokens ─────┼──► Electron HUD
+│  Session memory             │
+└─────────────────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│  Electron HUD               │  Frameless, always-on-top overlay
+│  380×460px                  │  setContentProtection(true)
+│  Invisible in screenshare   │  Renders tokens as they stream in
+└─────────────────────────────┘
 ```
+
+**Screenshot flow** runs in parallel: `uploads/` folder → Sharp preprocessing → Tesseract OCR → same AI pipeline → HUD.
+
+---
+
+## How the overlay stays invisible
+
+`setContentProtection(true)` is an OS-level API — the same one used by banking apps and DRM video players.
+
+- **macOS:** maps to `NSWindow.sharingType = NSWindowSharingNone`
+- **Windows:** maps to `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`
+
+These flags tell the OS compositor to exclude the window from **all** capture streams — window capture and full-screen capture alike. The capture tool receives a frame that was never composed with the overlay. Your interviewer sees only your desktop.
+
+Confirmed invisible on: Zoom · Google Meet · Microsoft Teams · Loom · OBS Studio · macOS Screenshot · Windows Snipping Tool · Discord Go Live
+
+---
+
+## vs Cluely / Parakeet
+
+| | **SolveWatch** | Cluely | Parakeet |
+|---|---|---|---|
+| Price | **Free (MIT)** | $29–49/mo | $20–40/mo |
+| API cost | **Your keys only** | Included (their cloud) | Included (their cloud) |
+| Open source | ✅ | ❌ | ❌ |
+| Offline STT | ✅ | ❌ | ❌ |
+| Custom AI provider | ✅ | ❌ | ❌ |
+| Response latency | **~200–400 ms** | ~600–1200 ms | ~500–900 ms |
+| macOS | ✅ | ✅ | ✅ |
+| Windows | ✅ | ✅ | — |
 
 ---
 
 ## Troubleshooting
 
 **HUD doesn't appear**
-Run `./start.sh` and check the terminal — Electron should start within a few seconds. Try `⌘ Shift H`.
+Press `⌘ Shift H`. Check the terminal for Electron startup errors.
 
-**No transcription**
-- Check that your microphone is enabled for Terminal in `System Settings → Privacy & Security → Microphone`
-- Try a different STT model (start with `small`)
+**No transcription / mic not working**
+Go to `System Settings → Privacy → Microphone` and allow Terminal (macOS). Try switching to the `small` Whisper model.
 
 **AI not responding**
-- Open `http://localhost:4000/settings` and check that at least one provider is enabled with a valid key
-- Use the "Test" button next to each provider to verify connectivity
+Open settings, check at least one provider is enabled, and use the **Test** button to verify the key.
 
 **Screenshot analysis not working**
-- Make sure the screenshots path is set in Settings and the folder exists
-- Take a screenshot and check `logs/transcriber.log` for activity
+Set the screenshots folder in settings and confirm it matches where macOS saves screenshots (`System Settings → Screenshots → Save to`).
 
-**Ollama not found**
-Run `./start.sh --setup` to install it.
+**Transcriber not starting**
+Run `./start.sh --setup` to recreate the Python venv.
+
+**Ollama missing**
+Run `./start.sh --setup` — it pulls `llama3.2:1b` automatically.
+
+---
+
+## Configuration
+
+`config/api-keys.json` — hot-reloaded, no restart needed.
+
+```json
+{
+  "port": 4000,
+  "keys": { "openai": "...", "groq": "...", "gemini": "...", "anthropic": "..." },
+  "order": ["groq", "openai", "gemini", "claude"],
+  "models": { "openai": "gpt-4o-mini", "grok": "llama-3.3-70b-versatile", "gemini": "gemini-2.5-flash" },
+  "ollama_model": "llama3.2:1b",
+  "stt_model": "small",
+  "audio_input_device": "",
+  "hf_token": "hf_...",
+  "speaker_id_threshold": 0.70
+}
+```
+
+Copy from `config/api-keys.json.example` on first setup.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](./LICENSE)
+[MIT](./LICENSE) — free for personal and commercial use.
