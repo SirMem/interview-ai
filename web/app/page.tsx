@@ -6,6 +6,9 @@ import QuickStart from "@/components/QuickStart";
 import Providers from "@/components/Providers";
 import Screenshots from "@/components/Screenshots";
 import Privacy from "@/components/Privacy";
+import Comparison from "@/components/Comparison";
+import LearnMore from "@/components/LearnMore";
+import FAQ from "@/components/FAQ";
 import AboutContact from "@/components/AboutContact";
 import Footer from "@/components/Footer";
 import ShareButtons from "@/components/ShareButtons";
@@ -22,6 +25,9 @@ export default function Home() {
       <Providers />
       <Screenshots />
       <Privacy />
+      <Comparison />
+      <LearnMore />
+      <FAQ />
       <AboutContact />
       <Footer />
     </main>
