@@ -2,18 +2,27 @@
 Always-on microphone listener for continuous interviewer speech detection.
 
 Runs a separate audio stream (100ms chunks) with a VAD state machine.
-When silence follows a speech segment, the accumulated audio is transcribed
-and sent to the Node server as an 'interviewer_speech' event.
 
-Usage: instantiate with a Transcriber and SocketClient, then call start().
+Pre-STT diarization flow (when speaker ID is enabled + enrolled):
+  1. VAD detects speech-start → begin_utterance(uid) tagged in StreamingSTT
+  2. Audio accumulates in _speech_buffer
+  3. VAD detects speech-end → hold_final(uid) on StreamingSTT, speech audio
+     submitted to SpeakerIDWorker queue
+  4. SpeakerIDWorker runs pyannote (~200-400ms) in background:
+       CANDIDATE   → discard(uid): StreamingSTT buffer cleared, no on_final
+       INTERVIEWER/UNKNOWN → release_held(uid): on_final fires normally
+  5. _on_stt_final filters hallucinations, emits possible_interviewer_speech
+     if the utterance was UNKNOWN and interviewer is not yet enrolled
 """
 import logging
 import random
 import threading
 import time
+import uuid
 import numpy as np
 import sounddevice as sd
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from config import (
     SAMPLE_RATE,
@@ -24,15 +33,13 @@ from config import (
 )
 from vad.metrics import VADMetrics
 from streaming_stt import StreamingSTT
+from speaker_id import SpeakerIDWorker, PendingAudioStore, _PendingSpeechSegment, SpeakerLabel
 import log_writer
 
 logger = logging.getLogger(__name__)
 
-# 100ms micro-chunks for responsive VAD
 _BLOCK_DURATION = 0.1
 _BLOCK_SIZE = int(SAMPLE_RATE * _BLOCK_DURATION)
-
-# Log sampling rate for per-chunk metrics (10% → ~1 log per second of audio)
 _CHUNK_LOG_SAMPLE_RATE = 0.1
 
 
@@ -40,43 +47,70 @@ class AlwaysOnListener:
     """Continuously listens to the microphone and emits detected utterances."""
 
     def __init__(self, transcriber, socket_client, speaker_id=None):
-        self._transcriber = transcriber
-        self._socket_client = socket_client
+        self._transcriber    = transcriber
+        self._socket_client  = socket_client
+        self._speaker_id     = speaker_id
 
-        self._paused = False
+        self._paused  = False
         self._running = False
-        self._stream = None
+        self._stream  = None
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aol-transcribe")
 
         # VAD state
-        self._state = 'silence'          # 'silence' | 'speech'
-        self._speech_buffer = []         # list of np.ndarray chunks
-        self._probability_buffer = []    # per-chunk speech probabilities
-        self._speech_samples = 0         # total samples accumulated
-        self._silent_frames = 0          # consecutive silent 100ms frames
-        self._force_flushed = False      # whether max duration triggered flush
+        self._state              = 'silence'
+        self._speech_buffer      = []
+        self._probability_buffer = []
+        self._speech_samples     = 0
+        self._silent_frames      = 0
+        self._force_flushed      = False
 
-        # Min word count for post-transcription filtering
-        self._min_word_count = VAD_MIN_WORD_COUNT
+        self._min_word_count            = VAD_MIN_WORD_COUNT
+        self._silence_frames_threshold  = int(ALWAYS_ON_SILENCE_THRESHOLD / _BLOCK_DURATION)
+        self._min_speech_samples        = int(ALWAYS_ON_MIN_SPEECH_DURATION * SAMPLE_RATE)
+        self._max_speech_samples        = int(ALWAYS_ON_MAX_UTTERANCE_DURATION * SAMPLE_RATE)
 
-        # Derived thresholds
-        self._silence_frames_threshold = int(ALWAYS_ON_SILENCE_THRESHOLD / _BLOCK_DURATION)
-        self._min_speech_samples = int(ALWAYS_ON_MIN_SPEECH_DURATION * SAMPLE_RATE)
-        self._max_speech_samples = int(ALWAYS_ON_MAX_UTTERANCE_DURATION * SAMPLE_RATE)
+        # Pre-STT diarization state
+        self._current_utterance_id: Optional[str] = None
+        # UIDs flagged by SpeakerIDWorker as UNKNOWN — popup should be shown
+        self._pending_popup_uids: set = set()
 
-        # Optional speaker identification — filters out the candidate's own voice
-        self._speaker_id = speaker_id
+        # PendingAudioStore holds raw audio for possible interviewer enrollment
+        self._pending_audio_store = PendingAudioStore(max_age_seconds=300, max_entries=50)
 
-        # Metrics
+        # SpeakerIDWorker — only created when speaker ID is available
+        self._speaker_id_worker: Optional[SpeakerIDWorker] = None
+        if speaker_id is not None:
+            self._speaker_id_worker = SpeakerIDWorker(
+                speaker_identifier=speaker_id,
+                pending_audio_store=self._pending_audio_store,
+                on_pass=self._on_speaker_pass,
+                on_discard=self._on_speaker_discard,
+                on_possible_interviewer=self._on_possible_interviewer,
+            )
+
         self.metrics = VADMetrics()
 
-        # Streaming STT — rolling buffer + LocalAgreement-2 decoder.
-        # Replaces the old flush-on-silence transcription path for always-on mode.
         self._streaming_stt = StreamingSTT(
             transcriber=self._transcriber,
             on_partial=self._on_stt_partial,
             on_final=self._on_stt_final,
         )
+
+    # ── SpeakerIDWorker callbacks (called from worker thread) ─────────────────
+
+    def _on_speaker_pass(self, utterance_id: str):
+        """Speaker ID decided: not candidate. Release the held STT result."""
+        self._streaming_stt.release_held(utterance_id)
+
+    def _on_speaker_discard(self, utterance_id: str):
+        """Speaker ID decided: candidate. Discard the STT buffer."""
+        self._streaming_stt.discard(utterance_id)
+
+    def _on_possible_interviewer(self, utterance_id: str):
+        """SpeakerIDWorker flagged UNKNOWN with no interviewer enrolled.
+        Mark uid so _on_stt_final can emit the popup event with the transcript text.
+        """
+        self._pending_popup_uids.add(utterance_id)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -85,10 +119,13 @@ class AlwaysOnListener:
     def start(self):
         if self._running:
             return
-        # Recreate executor if it was shut down by a previous stop()
         if self._executor._shutdown:
             self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="aol-transcribe")
         self._running = True
+
+        if self._speaker_id_worker is not None:
+            self._speaker_id_worker.start()
+
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
@@ -99,29 +136,31 @@ class AlwaysOnListener:
         self._stream.start()
         self._streaming_stt.start()
         logger.info(
-            f"AlwaysOnListener started "
-            f"(silence_threshold={ALWAYS_ON_SILENCE_THRESHOLD}s, "
-            f"min_speech={ALWAYS_ON_MIN_SPEECH_DURATION}s)"
+            "AlwaysOnListener started "
+            "(silence_threshold=%ss, min_speech=%ss, pre-stt-diarization=%s)",
+            ALWAYS_ON_SILENCE_THRESHOLD,
+            ALWAYS_ON_MIN_SPEECH_DURATION,
+            "enabled" if self._speaker_id_worker else "disabled",
         )
         log_writer.log('always_on_started',
                        silence_threshold=ALWAYS_ON_SILENCE_THRESHOLD,
                        min_speech=ALWAYS_ON_MIN_SPEECH_DURATION,
                        max_utterance=ALWAYS_ON_MAX_UTTERANCE_DURATION,
-                       min_word_count=self._min_word_count)
+                       min_word_count=self._min_word_count,
+                       pre_stt_diarization=self._speaker_id_worker is not None)
 
     def stop(self):
         self._running = False
-        # Force-emit stt_final with whatever is buffered so that a question
-        # spoken right before the user pressed stop still gets answered,
-        # even if the 700ms silence timer hasn't fired yet.
         self._streaming_stt.force_final()
         self._streaming_stt.stop()
+        if self._speaker_id_worker is not None:
+            self._speaker_id_worker.stop()
         if self._stream:
             try:
                 self._stream.stop()
                 self._stream.close()
             except Exception as e:
-                logger.warning(f"Error stopping always-on stream: {e}")
+                logger.warning("Error stopping always-on stream: %s", e)
             self._stream = None
         self._executor.shutdown(wait=False)
         logger.info("AlwaysOnListener stopped")
@@ -135,8 +174,6 @@ class AlwaysOnListener:
         logger.info("AlwaysOnListener resumed")
 
     def update_config(self, config: dict):
-        """Update VAD thresholds at runtime from a config dict."""
-        # Delegate engine-specific params to the VAD instance
         self._transcriber.vad.update_config(config)
         if 'silence_threshold' in config:
             self._silence_frames_threshold = int(float(config['silence_threshold']) / _BLOCK_DURATION)
@@ -146,7 +183,7 @@ class AlwaysOnListener:
             self._max_speech_samples = int(float(config['max_utterance_duration']) * SAMPLE_RATE)
         if 'min_word_count' in config:
             self._min_word_count = int(config['min_word_count'])
-        logger.info(f"VAD config updated: {config}")
+        logger.info("VAD config updated: %s", config)
         log_writer.log('vad_config_applied', config=config)
 
     # ------------------------------------------------------------------
@@ -157,19 +194,16 @@ class AlwaysOnListener:
         if not self._running or self._paused:
             return
 
-        chunk = indata[:, 0].copy()  # mono, float32
+        chunk = indata[:, 0].copy()
 
-        # Measure VAD latency
         vad = self._transcriber.vad
         t0 = time.perf_counter()
         prob = vad.speech_probability(chunk, SAMPLE_RATE)
         latency_ms = (time.perf_counter() - t0) * 1000
 
         is_speech = prob >= self._get_threshold()
-
         rms_energy = float(np.sqrt(np.mean(chunk ** 2)))
 
-        # Record metrics
         record = self.metrics.record_chunk(
             engine=vad.engine_name,
             rms_energy=rms_energy,
@@ -178,69 +212,83 @@ class AlwaysOnListener:
             is_speech=is_speech,
             latency_ms=latency_ms,
         )
-
-        # Sampled logging (10% of chunks → ~1/s)
         if random.random() < _CHUNK_LOG_SAMPLE_RATE:
             log_writer.log('vad_chunk', **record)
 
         if is_speech:
+            # Detect speech-start transition (silence → speech)
+            if self._state != 'speech':
+                uid = str(uuid.uuid4())
+                self._current_utterance_id = uid
+                self._streaming_stt.begin_utterance(uid)
+
             self._state = 'speech'
             self._silent_frames = 0
             self._speech_buffer.append(chunk)
             self._probability_buffer.append(prob)
             self._speech_samples += len(chunk)
 
-            # Force-flush if utterance is too long
             if self._speech_samples >= self._max_speech_samples:
                 self._force_flushed = True
+                self._submit_to_speaker_id_worker()
                 self._flush_utterance()
         else:
             if self._state == 'speech':
                 self._silent_frames += 1
-                # Keep accumulating audio during silence (for trailing words)
                 self._speech_buffer.append(chunk)
                 self._probability_buffer.append(prob)
                 self._speech_samples += len(chunk)
 
                 if self._silent_frames >= self._silence_frames_threshold:
+                    self._submit_to_speaker_id_worker()
                     self._flush_utterance()
-            # If already in silence state, do nothing
 
-        # Feed every chunk into StreamingSTT — it manages its own rolling buffer.
-        # set_vad_silent drives the final-emission timer (700ms silence → stt_final).
         self._streaming_stt.feed(chunk)
         self._streaming_stt.set_vad_silent(not is_speech)
 
     def _get_threshold(self) -> float:
-        """Get the speech threshold for the current engine."""
         vad = self._transcriber.vad
         if vad.engine_name == 'silero':
             return getattr(vad, '_threshold', 0.5)
-        else:
-            return getattr(vad, '_speech_frame_ratio', 0.7)
+        return getattr(vad, '_speech_frame_ratio', 0.7)
 
     # ------------------------------------------------------------------
-    # Utterance flushing
+    # Pre-STT speaker ID submission
+    # ------------------------------------------------------------------
+
+    def _submit_to_speaker_id_worker(self):
+        """At VAD speech-end: hold StreamingSTT and submit audio to SpeakerIDWorker.
+        If worker is not available, StreamingSTT proceeds normally (no-op here).
+        """
+        uid = self._current_utterance_id
+        if not uid or not self._speech_buffer:
+            return
+        if self._speaker_id_worker is None:
+            return  # speaker ID disabled — STT proceeds normally
+
+        speech_audio = np.concatenate(self._speech_buffer)
+        self._streaming_stt.hold_final(uid)
+        seg = _PendingSpeechSegment(uid, speech_audio, SAMPLE_RATE)
+        self._speaker_id_worker.submit(seg)
+
+    # ------------------------------------------------------------------
+    # Utterance flushing (VAD state reset only)
     # ------------------------------------------------------------------
 
     def _flush_utterance(self):
-        # StreamingSTT now handles all transcription and emission via stt_partial /
-        # stt_final events. The old flush path (executor.submit → _transcribe_and_emit)
-        # is disabled to prevent double-emission.
-        # VAD state is still reset so the silence/speech state machine stays clean.
         self._reset_vad()
 
     def _reset_vad(self):
-        self._state = 'silence'
-        self._speech_buffer = []
+        self._state              = 'silence'
+        self._speech_buffer      = []
         self._probability_buffer = []
-        self._speech_samples = 0
-        self._silent_frames = 0
-        self._force_flushed = False
-        # Reset VAD internal state (important for Silero's RNN)
+        self._speech_samples     = 0
+        self._silent_frames      = 0
+        self._force_flushed      = False
         self._transcriber.vad.reset_state()
 
-    # Known Whisper hallucinations on silence/noise
+    # ── Known Whisper hallucinations on silence/noise ─────────────────────────
+
     _HALLUCINATIONS = {
         "you", "yeah", "hmm", "uh", "um", "hm", "oh", "ah", "okay", "ok", "bye",
         "thank you", "thanks", "thank you for watching", "thanks for watching",
@@ -254,17 +302,14 @@ class AlwaysOnListener:
 
     @staticmethod
     def _is_gibberish(text: str) -> bool:
-        """Detect repetitive/gibberish output that Whisper produces on noise."""
         words = text.strip().split()
         if len(words) < 4:
             return False
-        # Check if the same word repeats too much (e.g., "the the the the")
         from collections import Counter
         counts = Counter(w.lower() for w in words)
         most_common_count = counts.most_common(1)[0][1]
         if most_common_count / len(words) >= 0.6:
             return True
-        # Check for repeated phrases (e.g., "thank you thank you thank you")
         bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words) - 1)]
         if bigrams:
             bigram_counts = Counter(bigrams)
@@ -275,58 +320,42 @@ class AlwaysOnListener:
     # ── StreamingSTT callbacks ────────────────────────────────────────────────
 
     def _on_stt_partial(self, committed: str, tentative: str):
-        """Called by StreamingSTT every ~300ms with the latest partial transcript."""
         if self._socket_client and self._socket_client.is_connected():
             self._socket_client.send_stt_partial(committed, tentative)
 
-    def _on_stt_final(self, text: str, audio: np.ndarray):
-        """Called by StreamingSTT once VAD silence ≥ 1s (or force_final on stop).
-        Applies hallucination/length filters then speaker ID before emitting.
-        audio: float32 array at 16000 Hz — empty array when called via force_final.
+    def _on_stt_final(self, text: str, audio: np.ndarray, utterance_id: Optional[str] = None):
+        """Called by StreamingSTT when VAD silence ≥ 1s (or force_final on stop).
+
+        Speaker ID filtering has already happened pre-STT — this callback only
+        fires for non-candidate speech. Applies hallucination / length filters,
+        optionally triggers the interviewer enrollment popup, then emits to Node.
         """
         words = text.strip().split()
         if len(words) < self._min_word_count:
-            logger.debug(f"STT final too short ({len(words)} words), skipping: {text!r}")
+            logger.debug("STT final too short (%d words), skipping: %r", len(words), text)
             return
         if text.strip().lower().rstrip('.!?,') in self._HALLUCINATIONS:
-            logger.debug(f"STT final matched hallucination list, skipping: {text!r}")
+            logger.debug("STT final matched hallucination list, skipping: %r", text)
             return
         if self._is_gibberish(text):
-            logger.debug(f"STT final is gibberish, skipping: {text!r}")
+            logger.debug("STT final is gibberish, skipping: %r", text)
             return
 
-        # Speaker identification — skip utterances that sound like the candidate
-        if self._speaker_id:
-            sid = self._speaker_id
-            if not sid.is_model_loaded:
-                logger.debug("SpeakerID: model not loaded — identification skipped")
-            elif not sid.has_enrollment:
-                logger.debug("SpeakerID: no enrollment — identification skipped")
-            elif len(audio) == 0:
-                logger.debug("SpeakerID: empty audio — identification skipped")
-            else:
-                duration_s = len(audio) / SAMPLE_RATE
-                is_user, similarity = sid.identify(audio)
-                decision = "CANDIDATE (skip)" if is_user else "INTERVIEWER (pass)"
-                logger.info(
-                    "SpeakerID: similarity=%.3f threshold=%.2f → %s | %.1fs | %r",
-                    similarity, sid.threshold, decision, duration_s, text[:60],
-                )
-                log_writer.log(
-                    'speaker_id_decision',
-                    similarity=round(similarity, 4),
-                    threshold=sid.threshold,
-                    decision="candidate_skipped" if is_user else "interviewer_passed",
-                    audio_duration_s=round(duration_s, 2),
-                    text=text[:60],
-                )
-                if is_user:
-                    return
+        # Interviewer enrollment popup — fired when:
+        #   • SpeakerIDWorker flagged this utterance as UNKNOWN (uid in popup set)
+        #   • Candidate is enrolled but interviewer is not yet enrolled
+        if (utterance_id
+                and utterance_id in self._pending_popup_uids
+                and self._socket_client
+                and self._socket_client.is_connected()):
+            self._pending_popup_uids.discard(utterance_id)
+            excerpt = text.strip()[:80]
+            self._socket_client.send_possible_interviewer(utterance_id, excerpt)
+            logger.info("Offered interviewer enrollment for uid=%.8s: %r", utterance_id, excerpt)
 
-        logger.info(f"STT Final: {text}")
+        logger.info("STT Final: %s", text)
         print(f"Interviewer (streaming): {text}")
         log_writer.log('stt_final_emitted', text=text, word_count=len(words))
 
         if self._socket_client and self._socket_client.is_connected():
             self._socket_client.send_stt_final(text)
-

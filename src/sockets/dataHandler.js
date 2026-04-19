@@ -103,9 +103,12 @@ class DataHandler extends EventEmitter {
     socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
     socket.on('stt_partial', (data) => this.handleSttPartial(data));
     socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
-    socket.on('enroll_voice',         () => this.handleEnrollVoice());
-    socket.on('get_enrollment_status', () => this.handleGetEnrollmentStatus(socket));
-    socket.on('load_speaker_id',       (data) => this.handleLoadSpeakerId(socket, data));
+    socket.on('enroll_voice',              () => this.handleEnrollVoice());
+    socket.on('enroll_interviewer',        (data) => this.handleEnrollInterviewer(data));
+    socket.on('clear_interviewer',         () => this.handleClearInterviewer());
+    socket.on('get_enrollment_status',     () => this.handleGetEnrollmentStatus(socket));
+    socket.on('load_speaker_id',           (data) => this.handleLoadSpeakerId(socket, data));
+    socket.on('possible_interviewer_speech', (data) => this.handlePossibleInterviewerSpeech(data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -595,7 +598,48 @@ class DataHandler extends EventEmitter {
       const body = await res.json().catch(() => ({}));
       this.emitToSocket(socket, 'enrollment_status', body);
     } catch (_) {
-      this.emitToSocket(socket, 'enrollment_status', { model_loaded: false, enrolled: false });
+      this.emitToSocket(socket, 'enrollment_status', {
+        model_loaded: false, enrolled: false, interviewer_enrolled: false, interviewer_snippets: 0,
+      });
+    }
+  }
+
+  // Relay possible_interviewer_speech from Python socket client to all HUD clients.
+  // Python emits this when it detects UNKNOWN speech with no interviewer enrolled.
+  handlePossibleInterviewerSpeech(data) {
+    log.info('Possible interviewer speech detected', { audio_id: data?.audio_id });
+    this.namespace.emit('possible_interviewer_speech', data);
+  }
+
+  // HUD tapped "Enroll" on the interviewer toast — forward audio_id to Python.
+  async handleEnrollInterviewer(data) {
+    const { audio_id } = data || {};
+    if (!audio_id) return;
+    log.info('Enrolling interviewer snippet', { audio_id });
+    try {
+      const res  = await fetch('http://localhost:8000/enroll-interviewer', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ audio_id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      const result = { success: res.ok, ...body };
+      log.info('Interviewer enrollment complete', result);
+      logEvent('interviewer_enrolled', 'INFO', { module: 'DataHandler', success: res.ok, snippet_count: body.snippet_count });
+      this.namespace.emit('interviewer_enrollment_complete', result);
+    } catch (err) {
+      log.warn('Interviewer enrollment request failed', { error: err.message });
+      this.namespace.emit('interviewer_enrollment_complete', { success: false, error: err.message });
+    }
+  }
+
+  async handleClearInterviewer() {
+    log.info('Clearing interviewer enrollment');
+    try {
+      await fetch('http://localhost:8000/clear-interviewer-enrollment', { method: 'POST' });
+      this.namespace.emit('interviewer_enrollment_complete', { success: true, snippet_count: 0, interviewer_enrolled: false });
+    } catch (err) {
+      log.warn('Clear interviewer failed', { error: err.message });
     }
   }
 

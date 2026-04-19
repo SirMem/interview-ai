@@ -723,12 +723,72 @@ async def get_enrollment_status():
     """Return current speaker ID model and enrollment status."""
     if speaker_identifier is None:
         return {"model_loaded": False, "enrolled": False, "threshold": None,
+                "interviewer_enrolled": False, "interviewer_snippets": 0,
                 "reason": "No hf_token configured" if not HF_TOKEN else "Model failed to load"}
     return {
-        "model_loaded": speaker_identifier.is_model_loaded,
-        "enrolled": speaker_identifier.has_enrollment,
-        "threshold": speaker_identifier.threshold,
+        "model_loaded":          speaker_identifier.is_model_loaded,
+        "enrolled":              speaker_identifier.has_enrollment,
+        "threshold":             speaker_identifier.threshold,
+        "interviewer_enrolled":  speaker_identifier.is_interviewer_enrolled,
+        "interviewer_snippets":  speaker_identifier.interviewer_snippet_count(),
     }
+
+
+@app.post("/enroll-interviewer")
+async def enroll_interviewer_endpoint(body: dict):
+    """Enroll one audio snippet as the interviewer's voice.
+
+    Retrieves the audio from PendingAudioStore (populated by AlwaysOnListener
+    when SpeakerIDWorker flags an UNKNOWN utterance), computes a 512-dim embedding,
+    and averages it into the interviewer embedding. Multiple calls improve accuracy.
+    """
+    global speaker_identifier, always_on_listener
+
+    if speaker_identifier is None:
+        raise HTTPException(status_code=503, detail="Speaker identification not available")
+    if not speaker_identifier.is_model_loaded:
+        raise HTTPException(status_code=503, detail="Speaker ID model not loaded")
+
+    audio_id = (body or {}).get("audio_id")
+    if not audio_id:
+        raise HTTPException(status_code=400, detail="audio_id required")
+
+    if always_on_listener is None or not hasattr(always_on_listener, '_pending_audio_store'):
+        raise HTTPException(status_code=503, detail="Listener not running")
+
+    audio, sr = always_on_listener._pending_audio_store.retrieve(audio_id)
+    if audio is None:
+        raise HTTPException(status_code=404, detail="audio_id not found or expired (max 5 minutes)")
+
+    loop = asyncio.get_event_loop()
+    success = await loop.run_in_executor(
+        None,
+        lambda: speaker_identifier.enroll_interviewer_snippet(audio, sr or SAMPLE_RATE),
+    )
+
+    always_on_listener._pending_audio_store.delete(audio_id)
+
+    if success:
+        count = speaker_identifier.interviewer_snippet_count()
+        logger.info("Interviewer enrollment snippet added (total: %d)", count)
+        log_writer.log('interviewer_enrolled', snippet_count=count)
+        return {
+            "status": "ok",
+            "snippet_count": count,
+            "interviewer_enrolled": True,
+        }
+    raise HTTPException(status_code=500, detail="Enrollment failed — audio too short or model error")
+
+
+@app.post("/clear-interviewer-enrollment")
+async def clear_interviewer_enrollment():
+    """Remove the stored interviewer voice embedding."""
+    global speaker_identifier
+    if speaker_identifier is None:
+        raise HTTPException(status_code=503, detail="Speaker identification not available")
+    speaker_identifier.clear_interviewer_enrollment()
+    log_writer.log('interviewer_enrollment_cleared')
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

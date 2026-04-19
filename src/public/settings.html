@@ -3,173 +3,213 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SolveWatch Settings</title>
+  <title>SolveWatch AI — Settings</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0f1117;
-      --surface: #1a1d27;
-      --surface2: #21253a;
-      --border: rgba(148, 163, 184, 0.12);
-      --border2: rgba(148, 163, 184, 0.22);
-      --text: #e2e8f0;
-      --muted: #64748b;
-      --accent: #3b82f6;
-      --accent-dim: rgba(59, 130, 246, 0.12);
-      --green: #22c55e;
-      --green-dim: rgba(34, 197, 94, 0.12);
-      --red: #ef4444;
-      --red-dim: rgba(239, 68, 68, 0.1);
-      --yellow: #facc15;
-      --orange: #f97316;
+      --bg:          #09090f;
+      --surface:     #12121c;
+      --surface2:    #18182a;
+      --surface3:    #1e1e30;
+      --border:      rgba(139,92,246,0.12);
+      --border2:     rgba(139,92,246,0.22);
+      --border3:     rgba(139,92,246,0.38);
+      --text:        #e2e8f0;
+      --text2:       #94a3b8;
+      --muted:       #475569;
+      --purple:      #7c3aed;
+      --purple-l:    #a855f7;
+      --purple-dim:  rgba(124,58,237,0.1);
+      --green:       #22c55e;
+      --green-dim:   rgba(34,197,94,0.1);
+      --red:         #ef4444;
+      --red-dim:     rgba(239,68,68,0.1);
+      --yellow:      #f59e0b;
+      --r:           10px;
+      --r-sm:        7px;
     }
 
     html, body {
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
       font-size: 14px;
       line-height: 1.5;
       min-height: 100vh;
     }
 
-    .layout { max-width: 740px; margin: 0 auto; padding: 0 24px 40px; }
-
-    /* ── Header ─────────────────────────────────── */
-    .header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 22px 0 18px;
+    /* ── Top bar ───────────────────────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(9,9,15,0.92);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      margin-bottom: 28px;
+      padding: 0 2rem;
     }
-    .logo { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
-    .logo span { color: var(--accent); }
+    .topbar-inner {
+      width: 100%;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 0.5rem;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 28px; height: 28px; border-radius: 7px;
+      background: linear-gradient(135deg, #7c3aed, #a855f7);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800; color: #fff; flex-shrink: 0;
+    }
+    .logo-text { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+    .logo-text span { background: linear-gradient(135deg,#c4b5fd,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+
+    .topnav {
+      flex: 1;
+      display: flex; align-items: center; justify-content: space-evenly;
+      overflow-x: auto;
+      padding: 0 1.5rem;
+    }
+    .topnav a {
+      display: flex; align-items: center; gap: 5px;
+      padding: 6px 14px; border-radius: var(--r-sm);
+      font-size: 12px; font-weight: 600; color: var(--text2);
+      white-space: nowrap; text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .topnav a:hover { background: var(--purple-dim); color: #c4b5fd; }
+
     .conn-badge {
       display: flex; align-items: center; gap: 5px;
-      font-size: 11px; color: var(--muted);
+      font-size: 11px; color: var(--text2);
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: 20px; padding: 3px 10px;
+      border-radius: 20px; padding: 4px 10px; flex-shrink: 0;
     }
-    .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-    .conn-dot.ok  { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,0.45); }
+    .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background 0.3s; }
+    .conn-dot.ok  { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,0.5); }
     .conn-dot.err { background: var(--red); }
 
-    /* ── Section ─────────────────────────────────── */
+    /* ── Page body ─────────────────────────────────────────── */
+    .page { max-width: 860px; margin: 0 auto; padding: 2.5rem 2rem 5rem; }
+
+    .page-header { margin-bottom: 2rem; }
+    .page-title  { font-size: 20px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 3px; }
+    .page-sub    { font-size: 12px; color: var(--muted); }
+
+    /* ── Section ───────────────────────────────────────────── */
     .section {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      margin-bottom: 16px;
+      border-radius: var(--r);
+      margin-bottom: 1.5rem;
       overflow: hidden;
+      scroll-margin-top: 70px;
+      transition: border-color 0.2s;
     }
+    .section:focus-within { border-color: var(--border2); }
+
     .section-header {
-      padding: 14px 20px 12px;
+      padding: 1.1rem 1.5rem;
       border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 10px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
     }
-    .section-title { font-size: 13px; font-weight: 600; flex-shrink: 0; }
-    .section-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+    .sh-left { display: flex; align-items: center; gap: 10px; }
+    .sec-icon {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: var(--purple-dim); border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .sec-title { font-size: 13px; font-weight: 700; }
+    .sec-desc  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .sec-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .save-status { font-size: 11px; min-width: 48px; text-align: right; transition: opacity 0.3s; }
+    .save-status.ok  { color: var(--green); }
+    .save-status.err { color: var(--red); }
 
-    /* ── Section actions (per-section save/reload) ── */
-    .section-actions {
-      display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-    }
-    .section-save-status {
-      font-size: 11px; min-width: 48px; text-align: right;
-      transition: opacity 0.3s;
-    }
-    .section-save-status.ok  { color: var(--green); }
-    .section-save-status.err { color: var(--red); }
+    .sec-body { padding: 1.75rem 1.5rem; display: flex; flex-direction: column; gap: 1.25rem; }
 
-    /* ── Field ───────────────────────────────────── */
+    /* ── Fields ────────────────────────────────────────────── */
     .field { display: flex; flex-direction: column; gap: 5px; }
-    label { font-size: 12px; font-weight: 500; color: #94a3b8; }
-    .hint { font-size: 11px; color: var(--muted); }
+    label  { font-size: 12px; font-weight: 600; color: var(--text2); }
+    .hint  { font-size: 11px; color: var(--muted); line-height: 1.55; }
 
-    input[type="text"], input[type="password"], select, textarea {
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    select,
+    textarea {
       background: var(--surface2);
       border: 1px solid var(--border2);
-      border-radius: 7px;
+      border-radius: var(--r-sm);
       color: var(--text);
       font-size: 13px;
       font-family: inherit;
-      padding: 8px 11px;
+      padding: 9px 12px;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
       width: 100%;
     }
-    input:focus, select:focus, textarea:focus { border-color: rgba(59,130,246,0.5); }
-
+    input:focus, select:focus, textarea:focus {
+      border-color: rgba(124,58,237,0.55);
+      box-shadow: 0 0 0 3px rgba(124,58,237,0.1);
+    }
     select {
       cursor: pointer; appearance: none; -webkit-appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 10px center;
-      padding-right: 28px;
+      background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px;
     }
+    textarea { resize: vertical; min-height: 110px; font-size: 12px; line-height: 1.6; }
 
-    textarea { resize: vertical; min-height: 100px; font-size: 12px; line-height: 1.6; }
-
-    /* ── Provider Cards ──────────────────────────── */
-    .provider-list { display: flex; flex-direction: column; gap: 8px; }
+    /* ── Provider cards ────────────────────────────────────── */
+    .provider-list { display: flex; flex-direction: column; gap: 10px; }
 
     .provider-card {
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--r-sm);
       overflow: hidden;
-      transition: border-color 0.15s, box-shadow 0.15s;
+      transition: border-color 0.2s, box-shadow 0.2s;
       cursor: grab;
       user-select: none;
     }
-    .provider-card.dragging {
-      opacity: 0.5;
-      cursor: grabbing;
-    }
-    .provider-card.drag-over {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent);
-    }
-    .provider-card.enabled { border-color: rgba(59,130,246,0.25); }
+    .provider-card.dragging  { opacity: 0.45; cursor: grabbing; }
+    .provider-card.drag-over { border-color: var(--purple); box-shadow: 0 0 0 1px var(--purple); }
+    .provider-card.enabled   { border-color: var(--border2); background: rgba(124,58,237,0.05); }
     .provider-card.has-error { border-color: rgba(239,68,68,0.35); }
 
-    .card-header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 11px 14px;
-    }
-    .drag-handle {
-      color: var(--muted); font-size: 14px; cursor: grab; flex-shrink: 0;
-      opacity: 0.5;
-    }
+    .card-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+    .drag-handle  { color: var(--muted); font-size: 14px; cursor: grab; flex-shrink: 0; opacity: 0.4; }
     .drag-handle:hover { opacity: 1; }
 
-    .order-badge {
-      width: 20px; height: 20px; border-radius: 50%;
-      background: var(--surface); border: 1px solid var(--border2);
-      font-size: 10px; font-weight: 700; color: var(--muted);
+    .prov-avatar {
+      width: 36px; height: 36px; border-radius: 9px;
       display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
+      font-size: 17px; font-weight: 800; flex-shrink: 0;
     }
-    .provider-card.enabled .order-badge {
-      background: var(--accent-dim); border-color: rgba(59,130,246,0.3); color: #93c5fd;
+    .order-badge {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--surface3); border: 1px solid var(--border2);
+      font-size: 10px; font-weight: 800; color: var(--muted);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
+    .provider-card.enabled .order-badge { background: var(--purple-dim); border-color: var(--border3); color: #c4b5fd; }
 
-    .provider-info { flex: 1; min-width: 0; }
-    .provider-name { font-size: 13px; font-weight: 600; color: var(--text); }
-    .provider-sub { font-size: 11px; color: var(--muted); }
-
+    .prov-info  { flex: 1; min-width: 0; }
+    .prov-name  { font-size: 13px; font-weight: 700; }
+    .prov-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
     .card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-
-    .provider-body {
-      padding: 0 14px 14px;
-      display: flex; flex-direction: column; gap: 10px;
-    }
+    .card-body  { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
 
     .key-row { display: flex; gap: 6px; align-items: center; }
     .key-wrap { position: relative; flex: 1; }
-    .key-wrap input { padding-right: 56px; }
+    .key-wrap input { padding-right: 60px; }
     .key-toggle {
       position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
       background: none; border: none; color: var(--muted);
@@ -180,188 +220,219 @@
     .model-row { display: flex; gap: 6px; align-items: center; }
     .model-row select { flex: 1; }
 
-    /* ── Toggle switch ───────────────────────────── */
-    .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .key-pill {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 7px; border-radius: 20px;
+    }
+    .key-pill.has  { background: var(--green-dim); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
+    .key-pill.none { background: var(--red-dim);   color: #fca5a5; border: 1px solid rgba(239,68,68,0.2);  }
+
+    /* ── Toggle ────────────────────────────────────────────── */
+    .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
     .toggle-track {
       position: absolute; inset: 0;
-      background: var(--surface); border: 1px solid var(--border2);
-      border-radius: 20px; cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
+      background: var(--surface3); border: 1px solid var(--border2);
+      border-radius: 20px; cursor: pointer; transition: background 0.2s, border-color 0.2s;
     }
     .toggle-track::after {
-      content: ''; position: absolute; left: 2px; top: 2px;
+      content: ''; position: absolute; left: 3px; top: 3px;
       width: 14px; height: 14px; border-radius: 50%;
       background: var(--muted); transition: transform 0.2s, background 0.2s;
     }
-    .toggle input:checked + .toggle-track { background: var(--green-dim); border-color: rgba(34,197,94,0.4); }
+    .toggle input:checked + .toggle-track { background: rgba(34,197,94,0.18); border-color: rgba(34,197,94,0.45); }
     .toggle input:checked + .toggle-track::after { transform: translateX(16px); background: var(--green); }
 
-    /* ── Buttons ─────────────────────────────────── */
+    /* ── Buttons ───────────────────────────────────────────── */
     .btn {
-      border: none; border-radius: 7px; font-size: 12px;
-      font-family: inherit; font-weight: 500; cursor: pointer;
-      padding: 7px 13px; transition: opacity 0.15s, background 0.15s;
-      display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+      border: none; border-radius: var(--r-sm); font-size: 12px; font-weight: 600;
+      font-family: inherit; cursor: pointer; padding: 8px 14px;
+      transition: all 0.15s; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
     }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-primary { background: var(--accent); color: #fff; }
-    .btn-primary:not(:disabled):hover { opacity: 0.88; }
-    .btn-secondary { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); }
-    .btn-secondary:not(:disabled):hover { border-color: rgba(148,163,184,0.4); }
-    .btn-ghost { background: none; border: 1px solid var(--border2); color: var(--muted); }
-    .btn-ghost:hover { color: var(--text); border-color: var(--border2); }
-    .btn-success { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); color: #86efac; }
-    .btn-fail { background: var(--red-dim); border: 1px solid rgba(239,68,68,0.25); color: #fca5a5; }
-    .btn-sm { font-size: 11px; padding: 5px 10px; }
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #a855f7);
+      color: #fff; box-shadow: 0 2px 8px rgba(124,58,237,0.35);
+    }
+    .btn-primary:not(:disabled):hover { box-shadow: 0 4px 16px rgba(124,58,237,0.5); opacity: 0.92; }
+    .btn-secondary { background: var(--surface3); border: 1px solid var(--border2); color: var(--text); }
+    .btn-secondary:hover { border-color: var(--border3); }
+    .btn-ghost  { background: none; border: 1px solid var(--border2); color: var(--muted); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--border3); }
+    .btn-success { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.3); color: #86efac; }
+    .btn-fail    { background: var(--red-dim);   border: 1px solid rgba(239,68,68,0.3);  color: #fca5a5; }
+    .btn-sm { font-size: 11px; padding: 5px 10px; border-radius: 6px; }
 
-    /* ── Fallback chain indicator ─────────────────── */
+    /* ── Fallback chain ────────────────────────────────────── */
     .fallback-chain {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      padding: 8px 12px;
-      background: rgba(59,130,246,0.06); border: 1px solid rgba(59,130,246,0.15);
-      border-radius: 7px; font-size: 11px; color: #93c5fd;
+      padding: 10px 14px;
+      background: rgba(124,58,237,0.06); border: 1px solid rgba(124,58,237,0.15);
+      border-radius: var(--r-sm); font-size: 11px; color: #c4b5fd;
     }
-    .chain-badge {
-      background: rgba(59,130,246,0.15); border-radius: 4px;
-      padding: 2px 7px; font-weight: 600;
-    }
+    .chain-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .chain-badge { background: rgba(124,58,237,0.18); border-radius: 5px; padding: 2px 8px; font-weight: 700; border: 1px solid var(--border2); }
     .chain-arrow { color: var(--muted); }
 
-    /* ── Opacity slider ──────────────────────────── */
+    /* ── Opacity slider ────────────────────────────────────── */
     .slider-row { display: flex; align-items: center; gap: 10px; }
     input[type="range"] {
       flex: 1; -webkit-appearance: none; appearance: none;
-      height: 4px; border-radius: 2px;
-      background: linear-gradient(to right, var(--accent) 0%, var(--accent) var(--pct, 0%), var(--surface2) var(--pct, 0%));
-      outline: none; cursor: pointer;
+      height: 5px; border-radius: 3px; outline: none; cursor: pointer;
+      background: linear-gradient(to right, var(--purple) 0%, var(--purple) var(--pct,0%), var(--surface3) var(--pct,0%));
     }
     input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 16px; height: 16px;
-      border-radius: 50%; background: var(--accent);
-      cursor: pointer; box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+      -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+      background: var(--purple-l); cursor: pointer;
+      box-shadow: 0 0 0 3px rgba(124,58,237,0.2), 0 2px 6px rgba(0,0,0,0.3);
     }
-    .slider-val { min-width: 28px; text-align: right; font-size: 13px; font-weight: 600; }
+    .slider-val { min-width: 36px; text-align: right; font-size: 13px; font-weight: 700; color: var(--purple-l); }
 
-    /* ── STT tabs ────────────────────────────────── */
-    .stt-tabs {
-      display: flex; background: var(--surface2);
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 3px; gap: 3px;
-    }
+    /* ── STT tabs ──────────────────────────────────────────── */
+    .stt-tabs { display: flex; background: var(--surface3); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 3px; }
     .stt-tab {
-      flex: 1; padding: 7px 0; text-align: center;
-      font-size: 12px; font-weight: 500; color: var(--muted);
-      border-radius: 6px; cursor: pointer; border: none; background: none;
-      font-family: inherit; transition: background 0.15s, color 0.15s;
+      flex: 1; padding: 7px 0; text-align: center; font-size: 12px; font-weight: 600;
+      color: var(--muted); border-radius: 7px; cursor: pointer; border: none; background: none;
+      font-family: inherit; transition: all 0.2s;
     }
-    .stt-tab.active { background: var(--accent); color: #fff; }
+    .stt-tab.active { background: linear-gradient(135deg,#7c3aed,#a855f7); color: #fff; box-shadow: 0 2px 8px rgba(124,58,237,0.4); }
 
-    /* ── Banners ─────────────────────────────────── */
+    /* ── Banners ───────────────────────────────────────────── */
     .banner {
-      border-radius: 7px; padding: 9px 13px; font-size: 12px;
-      display: flex; align-items: flex-start; gap: 8px; line-height: 1.5;
+      border-radius: var(--r-sm); padding: 10px 14px; font-size: 12px;
+      display: flex; align-items: flex-start; gap: 8px; line-height: 1.55;
     }
-    .banner-warn { background: rgba(249,115,22,0.1); border: 1px solid rgba(249,115,22,0.28); color: #fdba74; }
-    .banner-info { background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.18); color: #93c5fd; }
+    .banner-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+    .banner-warn { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.22); color: #fcd34d; }
+    .banner-info { background: rgba(124,58,237,0.07); border: 1px solid rgba(124,58,237,0.18); color: #c4b5fd; }
     .banner-ok   { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); color: #86efac; }
 
-    /* ── Accordion (prompt preview) ──────────────── */
+    /* ── Accordion ─────────────────────────────────────────── */
     .accordion-btn {
-      display: flex; align-items: center; justify-content: space-between;
-      width: 100%; background: var(--surface2); border: 1px solid var(--border2);
-      border-radius: 7px; padding: 9px 13px; cursor: pointer;
-      font-size: 12px; font-weight: 500; color: #94a3b8; font-family: inherit;
-      transition: border-color 0.15s;
+      display: flex; align-items: center; justify-content: space-between; width: 100%;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r-sm);
+      padding: 10px 14px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text2);
+      font-family: inherit; transition: all 0.15s;
     }
-    .accordion-btn:hover { border-color: rgba(148,163,184,0.4); color: var(--text); }
-    .accordion-arrow { transition: transform 0.2s; font-size: 10px; }
+    .accordion-btn:hover { border-color: var(--border2); color: var(--text); }
+    .accordion-arrow { transition: transform 0.2s; font-size: 10px; color: var(--muted); }
     .accordion-body { display: none; margin-top: 8px; }
     .accordion-body.open { display: block; }
-    .prompt-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+    .prompt-tabs { display: flex; gap: 5px; margin-bottom: 8px; }
     .prompt-tab {
-      font-size: 11px; padding: 4px 10px; border-radius: 5px;
+      font-size: 11px; padding: 5px 12px; border-radius: 6px;
       border: 1px solid var(--border2); background: none; color: var(--muted);
-      cursor: pointer; font-family: inherit;
+      cursor: pointer; font-family: inherit; font-weight: 600; transition: all 0.15s;
     }
-    .prompt-tab.active { background: var(--accent-dim); border-color: rgba(59,130,246,0.3); color: #93c5fd; }
+    .prompt-tab.active { background: var(--purple-dim); border-color: var(--border3); color: #c4b5fd; }
 
-    /* ── Toast ───────────────────────────────────── */
+    /* ── Toast ─────────────────────────────────────────────── */
     .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: #1e293b; border: 1px solid var(--border2); border-radius: 8px;
-      padding: 10px 18px; font-size: 13px; color: var(--text);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-      opacity: 0; pointer-events: none;
-      transition: opacity 0.25s; z-index: 200; white-space: nowrap;
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+      background: var(--surface2); border: 1px solid var(--border2); border-radius: 10px;
+      padding: 11px 20px; font-size: 13px; font-weight: 500; color: var(--text);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5); opacity: 0; pointer-events: none;
+      transition: opacity 0.25s, transform 0.25s; z-index: 200; white-space: nowrap;
     }
-    .toast.show { opacity: 1; }
-    .toast.ok  { border-color: rgba(34,197,94,0.35); color: #86efac; }
-    .toast.err { border-color: rgba(239,68,68,0.35); color: #fca5a5; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.ok   { border-color: rgba(34,197,94,0.4);  color: #86efac; }
+    .toast.err  { border-color: rgba(239,68,68,0.4);  color: #fca5a5; }
 
-    code { font-family: 'SF Mono', 'Monaco', monospace; font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; }
-    hr.sep { border: none; border-top: 1px solid var(--border); }
+    code {
+      font-family: 'SF Mono','Monaco',monospace; font-size: 11px;
+      background: rgba(124,58,237,0.1); color: #c4b5fd;
+      padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border2);
+    }
   </style>
 </head>
 <body>
-<div class="layout">
 
-  <header class="header">
-    <div class="logo">SolveWatch <span>AI</span></div>
-    <div style="display:flex;align-items:center;gap:12px">
-      <div class="conn-badge">
-        <span class="conn-dot" id="connDot"></span>
-        <span id="connText">Connecting…</span>
-      </div>
+<!-- ── Top bar ──────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <a href="#" class="logo">
+      <div class="logo-icon">S</div>
+      <div class="logo-text">SolveWatch <span>AI</span></div>
+    </a>
+
+    <nav class="topnav">
+      <a href="#sec-providers">🤖 Providers</a>
+      <a href="#sec-role">🎯 Role</a>
+      <a href="#sec-screenshots">📸 Screenshots</a>
+      <a href="#sec-stt">🎙️ STT</a>
+      <a href="#sec-speaker">👤 Speaker ID</a>
+      <a href="#sec-hud">🖥️ HUD</a>
+    </nav>
+
+    <div class="conn-badge">
+      <span class="conn-dot" id="connDot"></span>
+      <span id="connText">Connecting…</span>
     </div>
-  </header>
+  </div>
+</header>
 
-  <!-- ── AI Providers ─────────────────────────────────────────── -->
-  <div class="section">
+<!-- ── Page ─────────────────────────────────────────────────────── -->
+<div class="page">
+  <div class="page-header">
+    <div class="page-title">Settings</div>
+    <div class="page-sub">Configure AI providers, transcription, and overlay preferences</div>
+  </div>
+
+  <!-- AI Providers -->
+  <div class="section" id="sec-providers">
     <div class="section-header">
-      <span class="section-title">AI Providers</span>
-      <div class="section-actions">
-        <span class="hint" style="font-size:10px;">Drag to reorder</span>
-        <span class="section-save-status" id="saveStatus-providers"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">🤖</div>
+        <div>
+          <div class="sec-title">AI Providers</div>
+          <div class="sec-desc">Drag cards to set fallback order · enable at least one</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-providers"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-providers" onclick="saveSectionSettings('providers')">Save</button>
       </div>
     </div>
-    <div class="section-body">
-      <div class="banner banner-info" style="font-size:11px">
-        Keys are stored in <code>config/api-keys.json</code> on your machine. Leave a key field blank to keep the existing value. Enable at least one provider.
+    <div class="sec-body">
+      <div class="banner banner-info">
+        <span class="banner-icon">🔑</span>
+        <span>Keys stored in <code>config/api-keys.json</code> on your machine. Leave blank to keep existing value.</span>
       </div>
-
-      <!-- Fallback chain -->
       <div id="fallbackChain" class="fallback-chain" style="display:none">
-        <span style="color:var(--muted);font-weight:500">Fallback chain:</span>
+        <span class="chain-label">Fallback chain</span>
         <span id="chainContent"></span>
       </div>
-
       <div class="provider-list" id="providerList"></div>
     </div>
   </div>
 
-  <!-- ── Interview Role ────────────────────────────────────────── -->
-  <div class="section">
+  <!-- Interview Role -->
+  <div class="section" id="sec-role">
     <div class="section-header">
-      <span class="section-title">Interview Role</span>
-      <div class="section-actions">
-        <span class="section-save-status" id="saveStatus-role"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">🎯</div>
+        <div>
+          <div class="sec-title">Interview Role</div>
+          <div class="sec-desc">Tailors AI answers to your domain and tech stack</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-role"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-role" onclick="saveSectionSettings('role')">Save</button>
       </div>
     </div>
-    <div class="section-body">
+    <div class="sec-body">
       <div class="field">
         <label>Your Interview Role</label>
         <input type="text" id="interviewRole" placeholder="e.g. Frontend Engineer, Android Developer, Platform Engineer…">
-        <span class="hint">When set, AI answers are tailored to your domain — using relevant frameworks, tools, and terminology. Leave blank for generic technical answers.</span>
+        <span class="hint">AI answers will use relevant frameworks, tools, and terminology for your role. Leave blank for generic answers.</span>
       </div>
-
       <div>
         <button class="accordion-btn" id="promptAccordionBtn">
-          <span>View Active Prompts</span>
+          <span>👁 View Active Prompts</span>
           <span class="accordion-arrow" id="promptArrow">▼</span>
         </button>
         <div class="accordion-body" id="promptAccordionBody">
@@ -369,887 +440,586 @@
             <button class="prompt-tab active" data-type="interview-answer">Answer Prompt</button>
             <button class="prompt-tab" data-type="transcription">Transcription Prompt</button>
           </div>
-          <textarea id="promptPreviewText" readonly rows="12" style="font-family:'SF Mono','Monaco',monospace;font-size:11px;line-height:1.6"></textarea>
-          <span class="hint" style="margin-top:4px">Read-only. Edit the <code>.txt</code> files in the <code>prompts/</code> folder to change the base prompts. Role context is injected automatically at the top.</span>
+          <textarea id="promptPreviewText" readonly rows="12" style="font-family:'SF Mono','Monaco',monospace;font-size:11px;line-height:1.6;margin-top:4px"></textarea>
+          <span class="hint" style="margin-top:6px;display:block">Read-only. Edit <code>.txt</code> files in <code>prompts/</code> to change base prompts.</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ── Screenshots ───────────────────────────────────────────── -->
-  <div class="section">
+  <!-- Screenshots -->
+  <div class="section" id="sec-screenshots">
     <div class="section-header">
-      <span class="section-title">Screenshots</span>
-      <div class="section-actions">
-        <span class="section-save-status" id="saveStatus-screenshots"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">📸</div>
+        <div>
+          <div class="sec-title">Screenshots</div>
+          <div class="sec-desc">Folder to watch for automatic OCR + AI analysis</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-screenshots"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-screenshots" onclick="saveSectionSettings('screenshots')">Save</button>
       </div>
     </div>
-    <div class="section-body">
+    <div class="sec-body">
       <div id="screenshotWarn" class="banner banner-warn" style="display:none">
-        ⚠ No screenshots folder configured — screenshot analysis is disabled. Set a path below to enable it.
+        <span class="banner-icon">⚠️</span>
+        <span>No screenshots folder configured — screenshot analysis is disabled.</span>
       </div>
       <div class="field">
         <label>Screenshots Folder</label>
         <input type="text" id="screenshotsPath" placeholder="/Users/you/Pictures/Screenshots">
         <span class="hint">
-          The folder where your screenshot tool saves files. SolveWatch watches this folder and automatically analyses new screenshots with AI.<br>
-          On macOS: <strong>Cmd+Shift+3</strong> saves to <code>~/Desktop</code> by default — change it in <strong>System Settings → Screenshots → Save to</strong>.
-          To disable the floating thumbnail: <strong>System Settings → Screenshots → uncheck "Show Floating Thumbnail"</strong>.
+          SolveWatch watches this folder and analyses new screenshots automatically.<br>
+          macOS: <strong>Cmd+Shift+3</strong> saves to <code>~/Desktop</code> by default.
+          Change in <strong>System Settings → Screenshots → Save to</strong>.
         </span>
       </div>
     </div>
   </div>
 
-  <!-- ── Speech-to-Text ────────────────────────────────────────── -->
-  <div class="section">
+  <!-- Speech-to-Text -->
+  <div class="section" id="sec-stt">
     <div class="section-header">
-      <span class="section-title">Speech-to-Text</span>
-      <div class="section-actions">
-        <span class="section-save-status" id="saveStatus-stt"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">🎙️</div>
+        <div>
+          <div class="sec-title">Speech-to-Text</div>
+          <div class="sec-desc">How mic audio is transcribed in real time</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-stt"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-stt" onclick="saveSectionSettings('stt')">Save</button>
       </div>
     </div>
-    <div class="section-body">
+    <div class="sec-body">
       <div class="field">
         <label>STT Mode</label>
         <div class="stt-tabs">
-          <button class="stt-tab active" id="tabSttLocal" data-mode="local">Local Whisper (MLX)</button>
-          <button class="stt-tab" id="tabSttApi"   data-mode="openai">OpenAI Whisper API</button>
+          <button class="stt-tab active" id="tabSttLocal">🖥 Local Whisper (MLX)</button>
+          <button class="stt-tab" id="tabSttApi">☁️ OpenAI Whisper API</button>
         </div>
-
-        <div id="sttLocalPanel">
+        <div id="sttLocalPanel" style="margin-top:10px">
           <select id="sttLocalModel">
-            <option value="tiny">tiny   — fastest, lowest accuracy</option>
-            <option value="base">base   — fast, decent accuracy</option>
-            <option value="small" selected>small  — balanced (recommended)</option>
+            <option value="tiny">tiny — fastest, lowest accuracy</option>
+            <option value="base">base — fast, decent accuracy</option>
+            <option value="small" selected>small — balanced (recommended)</option>
             <option value="medium">medium — slower, better accuracy</option>
-            <option value="large">large  — slowest, best accuracy</option>
+            <option value="large">large — slowest, best accuracy</option>
           </select>
-          <span class="hint" style="margin-top:4px">Runs on-device using Apple MLX. No API key required. Changing the model restarts the transcriber.</span>
+          <span class="hint" style="margin-top:6px;display:block">On-device via Apple MLX. No API key required. Changing model restarts the transcriber.</span>
         </div>
-
-        <div id="sttApiPanel" style="display:none">
-          <select id="sttApiModel">
-            <option value="whisper-1">whisper-1 (OpenAI API)</option>
-          </select>
+        <div id="sttApiPanel" style="display:none;margin-top:10px">
+          <select id="sttApiModel"><option value="whisper-1">whisper-1 (OpenAI API)</option></select>
           <div id="sttApiKeyWarn" class="banner banner-warn" style="display:none;margin-top:8px">
-            ⚠ OpenAI API key not configured. Add it in the AI Providers section above.
+            <span class="banner-icon">⚠️</span><span>OpenAI API key not configured. Add it in Providers above.</span>
           </div>
-          <span class="hint" style="margin-top:4px">Sends audio to OpenAI's Whisper API. Requires an OpenAI API key and internet.</span>
+          <span class="hint" style="margin-top:6px;display:block">Sends audio to OpenAI's Whisper API. Requires an OpenAI key and internet.</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ── Speaker Identification ──────────────────────────────── -->
-  <div class="section">
+  <!-- Speaker ID -->
+  <div class="section" id="sec-speaker">
     <div class="section-header">
-      <span class="section-title">Speaker Identification</span>
-      <div class="section-actions">
-        <span class="section-save-status" id="saveStatus-speaker"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">👤</div>
+        <div>
+          <div class="sec-title">Speaker Identification</div>
+          <div class="sec-desc">Filter your voice so only the interviewer triggers answers</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-speaker"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-speaker" onclick="saveSectionSettings('speaker')">Save</button>
       </div>
     </div>
-    <div class="section-body">
-
-      <!-- Enable toggle -->
-      <div class="field" style="flex-direction:row;align-items:center;gap:12px;">
+    <div class="sec-body">
+      <div class="field" style="flex-direction:row;align-items:center;gap:14px">
         <label class="toggle">
           <input type="checkbox" id="speakerIdEnabled">
           <span class="toggle-track"></span>
         </label>
         <div>
-          <div style="font-size:13px;font-weight:500;">Enable Speaker Identification</div>
-          <div class="hint" style="margin-top:2px;">
-            Filters out your voice so only the interviewer's questions trigger AI answers.
-            Uses pyannote (HuggingFace) — requires a free token.
-          </div>
+          <div style="font-size:13px;font-weight:600">Enable Speaker Identification</div>
+          <div class="hint" style="margin-top:2px">Uses pyannote (HuggingFace). Filters your voice — only the interviewer's questions trigger AI answers.</div>
         </div>
       </div>
-
-      <!-- Everything below hidden until enabled -->
-      <div id="speakerIdPanel" style="display:none;margin-top:4px;">
-
-        <!-- HuggingFace token -->
+      <div id="speakerIdPanel" style="display:none">
         <div class="field">
-          <label class="label">HuggingFace Token</label>
-          <span class="hint">
-            1. Accept model terms at
-            <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM"
-               target="_blank" style="color:var(--accent);">
-              huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
-            </a><br>
-            2. Create a token at
-            <a href="https://huggingface.co/settings/tokens" target="_blank"
-               style="color:var(--accent);">huggingface.co/settings/tokens</a>
-            and paste it below.
+          <label>HuggingFace Token</label>
+          <span class="hint" style="margin-bottom:6px;display:block">
+            1. Accept model terms at <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM" target="_blank" style="color:var(--purple-l)">pyannote/wespeaker-voxceleb-resnet34-LM</a><br>
+            2. Create a token at <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--purple-l)">huggingface.co/settings/tokens</a>
           </span>
           <div class="key-row">
             <div class="key-wrap">
-              <input type="password" id="hfTokenInput" class="input" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+              <input type="password" id="hfTokenInput" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
               <button class="key-toggle" id="hfTokenToggle" type="button">Show</button>
             </div>
-            <button class="btn btn-secondary" id="btnLoadSpeakerId" style="white-space:nowrap;">Load Model</button>
+            <button class="btn btn-secondary btn-sm" id="btnLoadSpeakerId">Load Model</button>
           </div>
-          <div id="hfTokenStatus" style="font-size:12px;margin-top:6px;color:var(--muted);"></div>
+          <div id="hfTokenStatus" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
         </div>
-
-        <!-- Threshold -->
         <div class="field">
-          <label class="label">Similarity Threshold
-            <span class="hint" style="display:inline;margin-left:6px;">
-              Higher = stricter. Lower = looser. Default: 0.70
-            </span>
-          </label>
-          <input type="number" id="speakerThreshold" class="input"
-                 min="0.50" max="0.95" step="0.01" value="0.70"
-                 style="width:90px;" />
+          <label>Similarity Threshold <span class="hint" style="display:inline;margin-left:6px">Higher = stricter. Default: 0.70</span></label>
+          <input type="number" id="speakerThreshold" min="0.50" max="0.95" step="0.01" value="0.70" style="width:90px">
         </div>
-
-        <!-- Status banner: loading / error / pending -->
-        <div id="speakerIdLoading" style="display:none;margin-top:8px;">
-          <div class="banner banner-info" style="font-size:12px;">
-            <span id="speakerIdLoadingText">Downloading pyannote model from HuggingFace…</span>
-          </div>
+        <div id="speakerIdLoading" style="display:none">
+          <div class="banner banner-info"><span class="banner-icon">⏳</span><span id="speakerIdLoadingText">Downloading…</span></div>
         </div>
-        <div id="speakerIdError" style="display:none;margin-top:8px;">
-          <div class="banner" style="font-size:12px;background:var(--red-dim);border-color:rgba(239,68,68,0.3);">
-            <span id="speakerIdErrorText"></span>
-          </div>
+        <div id="speakerIdError" style="display:none">
+          <div class="banner banner-warn"><span class="banner-icon">⚠️</span><span id="speakerIdErrorText"></span></div>
         </div>
-
-        <!-- Reading script — shown as soon as loading starts so user can prepare -->
-        <div id="enrollScript" style="
-          display:none;
-          margin: 12px 0 0;
-          padding: 14px 16px;
-          background: rgba(255,255,255,0.04);
-          border: 1px solid var(--border2);
-          border-radius: 8px;
-          font-size: 13px;
-          line-height: 1.8;
-          color: var(--text);
-        ">
-          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">
-            Read this aloud when recording starts
-          </div>
+        <div id="enrollScript" style="display:none;margin-top:10px;padding:14px;background:rgba(255,255,255,0.03);border:1px solid var(--border2);border-radius:var(--r-sm);font-size:13px;line-height:1.8;color:var(--text2)">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px">📖 Read aloud when recording starts</div>
           I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
           <br><br>
           Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
-          <br><br>
-          When collaborating on a team, I prioritize clear communication and thorough code reviews. I'm looking forward to discussing my technical background and how I can contribute to your engineering team today.
         </div>
-
-        <!-- Voice enrollment panel — shown once model is ready -->
-        <div id="enrollPanel" style="display:none;margin-top:12px;">
-          <!-- Progress bar (shown during recording) -->
-          <div id="enrollProgress" style="display:none;margin-bottom:10px;">
-            <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
-              Recording… <span id="enrollCountdown">30</span>s remaining — read the script above
-            </div>
-            <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
-              <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
-                   border-radius:2px;transition:width 1s linear;"></div>
+        <div id="enrollPanel" style="display:none;margin-top:12px">
+          <div id="enrollProgress" style="display:none;margin-bottom:10px">
+            <div style="font-size:12px;color:var(--yellow);margin-bottom:6px">🔴 Recording… <span id="enrollCountdown">30</span>s remaining</div>
+            <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">
+              <div id="enrollBar" style="height:100%;width:0%;background:var(--yellow);border-radius:3px;transition:width 1s linear"></div>
             </div>
           </div>
-          <!-- Enroll button + status -->
-          <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
-            <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <button class="btn btn-secondary" id="btnEnrollVoice">🎤 Enroll My Voice</button>
             <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Not enrolled</span>
           </div>
         </div>
 
-      </div><!-- /speakerIdPanel -->
+        <!-- Interviewer enrollment status -->
+        <div id="interviewerEnrollPanel" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border2)">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Interviewer Voice</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+            When the HUD detects an unknown speaker, it shows a popup. Tap "Enroll as interviewer" and the voice is saved here.
+            More taps = higher accuracy (up to 5 snippets averaged).
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <span id="interviewerEnrollStatus" style="font-size:12px;color:var(--muted)">Not enrolled</span>
+            <button class="btn btn-ghost btn-sm" id="btnClearInterviewer" style="display:none">Clear</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- ── HUD Appearance ────────────────────────────────────────── -->
-  <div class="section">
+  <!-- HUD Appearance -->
+  <div class="section" id="sec-hud">
     <div class="section-header">
-      <span class="section-title">HUD Appearance</span>
-      <div class="section-actions">
-        <span class="section-save-status" id="saveStatus-hud"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+      <div class="sh-left">
+        <div class="sec-icon">🖥️</div>
+        <div>
+          <div class="sec-title">HUD Appearance</div>
+          <div class="sec-desc">Overlay opacity — changes apply live to the open window</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span class="save-status" id="saveStatus-hud"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
         <button class="btn btn-primary btn-sm" id="saveBtn-hud" onclick="saveSectionSettings('hud')">Save</button>
       </div>
     </div>
-    <div class="section-body">
+    <div class="sec-body">
       <div class="field">
         <label>Window Opacity</label>
-        <div class="slider-row">
-          <span style="font-size:11px;color:var(--muted)">Opaque</span>
+        <div class="slider-row" style="margin-top:6px">
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Opaque</span>
           <input type="range" id="opacitySlider" min="0" max="90" value="0">
-          <span style="font-size:11px;color:var(--muted)">Transparent</span>
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Transparent</span>
           <span class="slider-val" id="opacityVal">0%</span>
         </div>
-        <span class="hint">0 = fully opaque, 90 = near-invisible. Changes apply live to the open HUD window.</span>
+        <span class="hint">0 = fully opaque · 90 = near-invisible. Updates the HUD in real time.</span>
       </div>
-      <div class="banner banner-info" style="font-size:11px">
-        The HUD is <strong>invisible in screen sharing</strong> by default — only you can see it. Shortcut keys: <strong>⌘⇧H</strong> toggle HUD · <strong>⌘⇧X</strong> push-to-talk.
+      <div class="banner banner-info">
+        <span class="banner-icon">🛡️</span>
+        <span>HUD is <strong>invisible in screenshare</strong> by default. Shortcuts: <strong>⌘⇧H</strong> toggle · <strong>⌘⇧X</strong> listen</span>
       </div>
     </div>
   </div>
 
-</div><!-- /layout -->
+</div><!-- /page -->
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Socket
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const socket = io('/data-updates', { transports: ['websocket'] });
+// ── Socket ─────────────────────────────────────────────────────────────────
+const socket   = io('/data-updates', { transports: ['websocket'] });
 const connDot  = document.getElementById('connDot');
 const connText = document.getElementById('connText');
-socket.on('connect', () => {
-  connDot.className='conn-dot ok';
-  connText.textContent='Connected';
-  socket.emit('get_enrollment_status');
-});
+socket.on('connect',       () => { connDot.className='conn-dot ok';  connText.textContent='Connected';    socket.emit('get_enrollment_status'); });
 socket.on('disconnect',    () => { connDot.className='conn-dot err'; connText.textContent='Disconnected'; });
 socket.on('connect_error', () => { connDot.className='conn-dot err'; connText.textContent='Error'; });
 
-// ── Speaker Identification ────────────────────────────────────────────────────
-let _sidLoading   = false;
-let _hfTokenSaved = false;
-
-function setHfStatus(msg, color) {
-  const el = document.getElementById('hfTokenStatus');
-  if (el) { el.textContent = msg; el.style.color = color || 'var(--muted)'; }
-}
-
-function updateSpeakerIdPanel() {
-  const enabled = document.getElementById('speakerIdEnabled')?.checked;
-  document.getElementById('speakerIdPanel').style.display = enabled ? '' : 'none';
-}
-document.getElementById('speakerIdEnabled').addEventListener('change', updateSpeakerIdPanel);
-
-document.getElementById('hfTokenToggle')?.addEventListener('click', () => {
-  const inp = document.getElementById('hfTokenInput');
-  const btn = document.getElementById('hfTokenToggle');
-  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Hide'; }
-  else { inp.type = 'password'; btn.textContent = 'Show'; }
-});
-
-document.getElementById('btnLoadSpeakerId')?.addEventListener('click', () => {
-  const token     = document.getElementById('hfTokenInput').value.trim();
-  const threshold = parseFloat(document.getElementById('speakerThreshold').value) || 0.70;
-  if (!token || token === '***') { showToast('Paste a HuggingFace token first', 'err'); return; }
-  socket.emit('load_speaker_id', { hf_token: token, threshold });
-});
-
-function applyEnrollmentStatus(data) {
-  if (_sidLoading) return;
-
-  const enrollPanel  = document.getElementById('enrollPanel');
-  const enrollScript = document.getElementById('enrollScript');
-  const statusEl     = document.getElementById('enrollStatus');
-  const btn          = document.getElementById('btnEnrollVoice');
-  if (!enrollPanel) return;
-
-  document.getElementById('speakerIdLoading').style.display = 'none';
-  document.getElementById('speakerIdError').style.display   = 'none';
-
-  if (data.model_loaded) {
-    enrollScript.style.display = '';
-    enrollPanel.style.display  = '';
-    setHfStatus('Model ready ✓', '#22c55e');
-    if (data.enrolled) {
-      statusEl.textContent = 'Enrolled ✓';  statusEl.style.color = '#22c55e';
-      btn.textContent = 'Re-enroll Voice';  btn.disabled = false;
-    } else {
-      statusEl.textContent = 'Not enrolled — read the script above then click Enroll';
-      statusEl.style.color = 'var(--muted)';
-      btn.textContent = 'Enroll My Voice';  btn.disabled = false;
-    }
-  } else {
-    enrollPanel.style.display  = 'none';
-    enrollScript.style.display = 'none';
-    if (_hfTokenSaved) setHfStatus('Token saved — click Load Model to activate', 'var(--muted)');
-  }
-}
-socket.on('enrollment_status', applyEnrollmentStatus);
-
-socket.on('speaker_id_loading', () => {
-  _sidLoading = true;
-  document.getElementById('speakerIdLoading').style.display = '';
-  document.getElementById('speakerIdError').style.display   = 'none';
-  document.getElementById('enrollPanel').style.display      = 'none';
-  document.getElementById('enrollScript').style.display     = '';
-  document.getElementById('speakerIdLoadingText').textContent =
-    'Downloading pyannote model from HuggingFace… this may take a minute on first run.';
-  setHfStatus('Downloading model…', '#f59e0b');
-});
-
-socket.on('speaker_id_loaded', (data) => {
-  _sidLoading = false;
-  document.getElementById('speakerIdLoading').style.display = 'none';
-  if (data.success) {
-    _hfTokenSaved = true;
-    document.getElementById('speakerIdError').style.display = 'none';
-    showToast('Model ready — click Enroll My Voice to register your voice', 'ok');
-  } else {
-    document.getElementById('enrollScript').style.display  = 'none';
-    document.getElementById('speakerIdError').style.display = '';
-    document.getElementById('speakerIdErrorText').textContent =
-      `Failed: ${data.error || 'unknown error'} — check token and accept model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM`;
-    setHfStatus('Load failed — check token and model terms', '#ef4444');
-  }
-});
-
-document.getElementById('btnEnrollVoice')?.addEventListener('click', () => socket.emit('enroll_voice'));
-
-let _enrollTimer = null;
-socket.on('enrollment_started', (data) => {
-  const btn = document.getElementById('btnEnrollVoice');
-  if (!btn) return;
-  btn.disabled = true; btn.textContent = 'Recording…';
-  document.getElementById('enrollProgress').style.display = 'block';
-  document.getElementById('enrollStatus').textContent = 'Read the script above aloud…';
-  document.getElementById('enrollStatus').style.color  = '#f59e0b';
-  const script = document.getElementById('enrollScript');
-  if (script) { script.style.borderColor = '#f59e0b'; script.style.background = 'rgba(245,158,11,0.06)'; }
-
-  const total = data.seconds || 30; let remaining = total;
-  document.getElementById('enrollCountdown').textContent = remaining;
-  const bar = document.getElementById('enrollBar');
-  bar.style.transition = 'none'; bar.style.width = '0%';
-  void bar.offsetWidth;
-  bar.style.transition = `width ${total}s linear`;
-  clearInterval(_enrollTimer);
-  _enrollTimer = setInterval(() => {
-    remaining--;
-    document.getElementById('enrollCountdown').textContent = Math.max(0, remaining);
-    bar.style.width = `${((total - remaining) / total) * 100}%`;
-    if (remaining <= 0) clearInterval(_enrollTimer);
-  }, 1000);
-});
-
-socket.on('enrollment_complete', (data) => {
-  clearInterval(_enrollTimer);
-  const btn = document.getElementById('btnEnrollVoice');
-  if (!btn) return;
-  btn.disabled = false;
-  document.getElementById('enrollProgress').style.display = 'none';
-  const script = document.getElementById('enrollScript');
-  if (script) { script.style.borderColor = ''; script.style.background = ''; }
-  if (data.success) {
-    btn.textContent = 'Re-enroll Voice';
-    document.getElementById('enrollStatus').textContent = 'Enrolled ✓';
-    document.getElementById('enrollStatus').style.color  = '#22c55e';
-  } else {
-    btn.textContent = 'Enroll My Voice';
-    document.getElementById('enrollStatus').textContent = `Failed: ${data.error || data.detail || 'unknown error'}`;
-    document.getElementById('enrollStatus').style.color  = '#ef4444';
-  }
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Helpers
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ── Helpers ────────────────────────────────────────────────────────────────
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-
 let toastTimer;
-function showToast(msg, type = 'ok') {
+function showToast(msg, type='ok') {
   const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = `toast show ${type}`;
+  t.textContent = msg; t.className = `toast show ${type}`;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.className = 'toast', 2800);
 }
-
-function setSlider(id, val, maxVal) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.value = val;
-  const pct = (val / maxVal * 100).toFixed(1);
-  el.style.setProperty('--pct', pct + '%');
+function setSlider(id, val, max) {
+  const el = document.getElementById(id); if (!el) return;
+  el.value = val; el.style.setProperty('--pct', (val/max*100).toFixed(1)+'%');
+}
+function setSectionStatus(id, msg, type) {
+  const el = document.getElementById(`saveStatus-${id}`); if (!el) return;
+  el.textContent = msg; el.className = `save-status${type?' '+type:''}`;
+  if (type==='ok') setTimeout(()=>{ el.textContent=''; el.className='save-status'; }, 2500);
 }
 
-function setSectionStatus(sectionId, msg, type) {
-  const el = document.getElementById(`saveStatus-${sectionId}`);
-  if (!el) return;
-  el.textContent = msg;
-  el.className = `section-save-status${type ? ' ' + type : ''}`;
-  if (type === 'ok') {
-    setTimeout(() => {
-      el.textContent = '';
-      el.className = 'section-save-status';
-    }, 2500);
-  }
-}
+// ── State ──────────────────────────────────────────────────────────────────
+let providers=[], modelCache={}, currentPromptType='interview-answer';
+let _sidLoading=false, _hfTokenSaved=false;
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// State
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-let providers = [];
-let modelCache = {};
-let currentPromptType = 'interview-answer';
-
-const PROVIDER_META = {
-  openai: { label: 'OpenAI',            ph: 'sk-…',     icon: '🟢' },
-  grok:   { label: 'Groq',               ph: 'gsk_…',    icon: '🟣' },
-  gemini: { label: 'Gemini',             ph: 'AIzaSy…',  icon: '🔵' },
-  claude: { label: 'Claude (Anthropic)', ph: 'sk-ant-…', icon: '🟠' },
+const PROV_META = {
+  openai: { label:'OpenAI',    ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)', char:'O' },
+  grok:   { label:'Groq',      ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',  char:'G' },
+  gemini: { label:'Gemini',    ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)', char:'G' },
+  claude: { label:'Anthropic', ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)', char:'A' },
 };
+function getMeta(id) { return PROV_META[id]||{label:id,ph:'API key…',color:'#6366f1',bg:'rgba(99,102,241,0.15)',char:'?'}; }
 
-function getMeta(id) {
-  return PROVIDER_META[id] || { label: id, ph: 'API key…', icon: '⚪' };
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Load config
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ── Load config ────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
-    const res = await fetch('/api/config/full');
+    const res  = await fetch('/api/config/full');
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
 
-    providers = (data.providers || []).map(p => ({ ...p, newKey: '' }));
+    providers = (data.providers||[]).map(p=>({...p,newKey:''}));
 
-    // STT
     const sttVal = data.stt_model || 'small';
-    if (sttVal === 'whisper-1') {
-      setTabActive('tabSttApi');
-      document.getElementById('sttApiPanel').style.display = '';
-      document.getElementById('sttLocalPanel').style.display = 'none';
-    } else {
-      setTabActive('tabSttLocal');
-      const sel = document.getElementById('sttLocalModel');
-      if ([...sel.options].some(o => o.value === sttVal)) sel.value = sttVal;
-    }
+    if (sttVal === 'whisper-1') { setTabActive('tabSttApi'); document.getElementById('sttApiPanel').style.display=''; document.getElementById('sttLocalPanel').style.display='none'; }
+    else { setTabActive('tabSttLocal'); const s=document.getElementById('sttLocalModel'); if([...s.options].some(o=>o.value===sttVal)) s.value=sttVal; }
 
-    // HUD opacity
     const op = data.hud_opacity ?? 0;
     setSlider('opacitySlider', op, 90);
-    document.getElementById('opacityVal').textContent = op + '%';
+    document.getElementById('opacityVal').textContent = op+'%';
 
-    // Screenshots path
-    const sp = data.screenshots_path || '';
+    const sp = data.screenshots_path||'';
     document.getElementById('screenshotsPath').value = sp;
     document.getElementById('screenshotWarn').style.display = sp ? 'none' : 'flex';
 
-    // Interview role
-    document.getElementById('interviewRole').value = data.interview_role || '';
+    document.getElementById('interviewRole').value = data.interview_role||'';
 
-    // Speaker ID
-    const sidEnabled = !!(data.speaker_id_enabled);
-    document.getElementById('speakerIdEnabled').checked = sidEnabled;
+    const sidOn = !!(data.speaker_id_enabled);
+    document.getElementById('speakerIdEnabled').checked = sidOn;
     updateSpeakerIdPanel();
-    document.getElementById('speakerThreshold').value = data.speaker_id_threshold ?? 0.70;
+    document.getElementById('speakerThreshold').value = data.speaker_id_threshold??0.70;
 
-    // HF token
     _hfTokenSaved = !!(data.hf_token_set);
     document.getElementById('hfTokenInput').value = _hfTokenSaved ? '***' : '';
-    if (!_hfTokenSaved) setHfStatus('Paste your token and click Load Model', 'var(--muted)');
+    if (!_hfTokenSaved) setHfStatus('Paste your token and click Load Model','var(--muted)');
 
-    renderProviders();
-    updateFallbackChain();
-
-    for (const p of providers) {
-      if (p.hasKey) loadModelsForProvider(p.id);
-    }
-
+    renderProviders(); updateFallbackChain();
+    for (const p of providers) { if (p.hasKey) loadModelsForProvider(p.id); }
     updateSttApiKeyWarn();
-  } catch (err) {
-    console.error('Failed to load config:', err);
-    showToast('Failed to load settings', 'err');
-  }
+  } catch(err) { console.error(err); showToast('Failed to load settings','err'); }
 }
+function reloadSection() { loadConfig(); }
 
-function reloadSection() {
-  loadConfig();
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Provider rendering
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ── Render providers ───────────────────────────────────────────────────────
 function renderProviders() {
   const list = document.getElementById('providerList');
-  list.innerHTML = '';
-  let enabledOrder = 0;
-
+  list.innerHTML = ''; let enabledOrder = 0;
   providers.forEach((p, idx) => {
-    const meta = getMeta(p.id);
+    const m = getMeta(p.id);
     if (p.enabled) enabledOrder++;
     const orderNum = p.enabled ? enabledOrder : '—';
+    const models   = modelCache[p.id]||[];
+    const opts     = models.length > 0
+      ? models.map(md=>`<option value="${esc(md.id)}"${md.id===p.model?' selected':''}>${esc(md.name)}</option>`).join('')
+      : `<option value="${esc(p.model||'')}">${esc(p.model||'Loading…')}</option>`;
+    const pill = p.hasKey
+      ? `<span class="key-pill has">🔑 key saved</span>`
+      : `<span class="key-pill none">no key</span>`;
 
     const card = document.createElement('div');
-    card.className = `provider-card${p.enabled ? ' enabled' : ''}`;
-    card.dataset.idx = idx;
-    card.draggable = true;
-
-    const models = modelCache[p.id] || [];
-    const modelOptions = models.length > 0
-      ? models.map(m => `<option value="${esc(m.id)}" ${m.id === p.model ? 'selected' : ''}>${esc(m.name)}</option>`).join('')
-      : `<option value="${esc(p.model || '')}">${esc(p.model || 'Loading…')}</option>`;
-
+    card.className = `provider-card${p.enabled?' enabled':''}`;
+    card.dataset.idx = idx; card.draggable = true;
     card.innerHTML = `
       <div class="card-header">
         <span class="drag-handle" title="Drag to reorder">⠿</span>
         <span class="order-badge">${orderNum}</span>
-        <div class="provider-info">
-          <div class="provider-name">${esc(meta.label)}</div>
-          <div class="provider-sub">${esc(p.id)} · ${p.hasKey ? '🔑 key saved' : 'no key'}</div>
+        <div class="prov-avatar" style="background:${m.bg};color:${m.color}">${m.char}</div>
+        <div class="prov-info">
+          <div class="prov-name">${esc(m.label)}</div>
+          <div class="prov-sub"><span style="font-size:10px">${esc(p.id)}</span>${pill}</div>
         </div>
         <div class="card-actions">
-          <label class="toggle" title="${p.enabled ? 'Enabled' : 'Disabled'}">
-            <input type="checkbox" class="prov-toggle" ${p.enabled ? 'checked' : ''} data-idx="${idx}">
+          <label class="toggle">
+            <input type="checkbox" class="prov-toggle" ${p.enabled?'checked':''} data-idx="${idx}">
             <span class="toggle-track"></span>
           </label>
         </div>
       </div>
-      <div class="provider-body">
+      <div class="card-body">
         <div class="key-row">
           <div class="key-wrap">
             <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
-              placeholder="${p.hasKey ? '•••  leave blank to keep existing key' : meta.ph}">
+              placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
             <button class="key-toggle" data-idx="${idx}">Show</button>
           </div>
-          <button class="btn btn-ghost test-btn" data-idx="${idx}" title="Test connection">Test</button>
+          <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
         </div>
         <div class="model-row">
-          <select class="prov-model-select" data-idx="${idx}" title="Model to use">
-            ${modelOptions}
-          </select>
-          <button class="btn btn-ghost reload-models-btn" data-idx="${idx}" title="Refresh model list" style="flex-shrink:0">↻</button>
+          <select class="prov-model-select" data-idx="${idx}">${opts}</select>
+          <button class="btn btn-ghost btn-sm reload-models-btn" data-idx="${idx}" title="Refresh models">↻</button>
         </div>
       </div>`;
-
     list.appendChild(card);
   });
-
-  bindProviderEvents();
-  setupDragDrop();
+  bindProviderEvents(); setupDragDrop();
 }
 
 function bindProviderEvents() {
   document.querySelectorAll('.prov-toggle').forEach(cb => {
-    cb.addEventListener('change', e => {
-      const idx = +e.target.dataset.idx;
-      providers[idx].enabled = e.target.checked;
-      renderProviders();
-      updateFallbackChain();
-    });
+    cb.addEventListener('change', e => { providers[+e.target.dataset.idx].enabled=e.target.checked; renderProviders(); updateFallbackChain(); });
   });
-
   document.querySelectorAll('.prov-key-input').forEach(inp => {
-    inp.addEventListener('input', e => {
-      const idx = +e.target.dataset.idx;
-      providers[idx].newKey = e.target.value;
-    });
+    inp.addEventListener('input', e => { providers[+e.target.dataset.idx].newKey=e.target.value; });
   });
-
   document.querySelectorAll('.key-toggle').forEach(btn => {
     btn.addEventListener('click', e => {
-      const idx = +e.target.dataset.idx;
-      const input = document.querySelector(`.prov-key-input[data-idx="${idx}"]`);
-      const isPass = input.type === 'password';
-      input.type = isPass ? 'text' : 'password';
-      e.target.textContent = isPass ? 'Hide' : 'Show';
+      const inp=document.querySelector(`.prov-key-input[data-idx="${e.target.dataset.idx}"]`);
+      const isPass=inp.type==='password'; inp.type=isPass?'text':'password'; e.target.textContent=isPass?'Hide':'Show';
     });
   });
-
   document.querySelectorAll('.prov-model-select').forEach(sel => {
-    sel.addEventListener('change', e => {
-      const idx = +e.target.dataset.idx;
-      providers[idx].model = e.target.value;
-    });
+    sel.addEventListener('change', e => { providers[+e.target.dataset.idx].model=e.target.value; });
   });
-
   document.querySelectorAll('.reload-models-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
-      const idx = +e.target.dataset.idx;
-      loadModelsForProvider(providers[idx].id, true);
-    });
+    btn.addEventListener('click', e => { loadModelsForProvider(providers[+e.target.dataset.idx].id, true); });
   });
-
   document.querySelectorAll('.test-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
-      const idx = +e.target.dataset.idx;
-      const p = providers[idx];
-      const keyToTest = p.newKey || null;
-      if (!keyToTest && !p.hasKey) {
-        showToast(`No API key for ${getMeta(p.id).label}`, 'err');
-        return;
-      }
-
-      const origText = e.target.textContent;
-      e.target.textContent = '…';
-      e.target.disabled = true;
-
+      const idx=+e.target.dataset.idx; const p=providers[idx];
+      const key=p.newKey||null;
+      if (!key&&!p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
+      const orig=e.target.textContent; e.target.textContent='…'; e.target.disabled=true;
       try {
-        const body = keyToTest
-          ? { providerId: p.id, key: keyToTest }
-          : { providerId: p.id, key: '***STORED***' };
-
-        const res = await fetch('/api/config/test-provider', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (data.success) {
-          e.target.textContent = '✓';
-          e.target.className = 'btn btn-success test-btn';
-          showToast(data.message, 'ok');
-        } else {
-          e.target.textContent = '✗';
-          e.target.className = 'btn btn-fail test-btn';
-          showToast(data.error || 'Connection failed', 'err');
-        }
-      } catch (err) {
-        e.target.textContent = '✗';
-        e.target.className = 'btn btn-fail test-btn';
-        showToast('Connection test failed', 'err');
-      }
-
-      e.target.disabled = false;
-      setTimeout(() => {
-        e.target.textContent = origText;
-        e.target.className = 'btn btn-ghost test-btn';
-      }, 3000);
+        const body=key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'};
+        const res=await fetch('/api/config/test-provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        const d=await res.json();
+        if (d.success) { e.target.textContent='✓'; e.target.className='btn btn-success btn-sm test-btn'; showToast(d.message,'ok'); }
+        else           { e.target.textContent='✗'; e.target.className='btn btn-fail btn-sm test-btn';    showToast(d.error||'Failed','err'); }
+      } catch { e.target.textContent='✗'; e.target.className='btn btn-fail btn-sm test-btn'; showToast('Test failed','err'); }
+      e.target.disabled=false;
+      setTimeout(()=>{ e.target.textContent=orig; e.target.className='btn btn-ghost btn-sm test-btn'; },3000);
     });
   });
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Drag & Drop reorder
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-let dragSrcIdx = null;
-
+let dragSrcIdx=null;
 function setupDragDrop() {
-  const cards = document.querySelectorAll('.provider-card');
-  cards.forEach(card => {
-    card.addEventListener('dragstart', e => {
-      dragSrcIdx = +card.dataset.idx;
-      card.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    card.addEventListener('dragend', () => {
-      card.classList.remove('dragging');
-      document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('drag-over'));
-    });
-    card.addEventListener('dragover', e => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      document.querySelectorAll('.provider-card').forEach(c => c.classList.remove('drag-over'));
-      card.classList.add('drag-over');
-    });
-    card.addEventListener('drop', e => {
-      e.preventDefault();
-      const targetIdx = +card.dataset.idx;
-      if (dragSrcIdx === null || dragSrcIdx === targetIdx) return;
-      const moved = providers.splice(dragSrcIdx, 1)[0];
-      providers.splice(targetIdx, 0, moved);
-      dragSrcIdx = null;
-      renderProviders();
-      updateFallbackChain();
-    });
+  document.querySelectorAll('.provider-card').forEach(card => {
+    card.addEventListener('dragstart', e => { dragSrcIdx=+card.dataset.idx; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    card.addEventListener('dragend',   () => { card.classList.remove('dragging'); document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('drag-over')); });
+    card.addEventListener('dragover',  e => { e.preventDefault(); e.dataTransfer.dropEffect='move'; document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('drag-over')); card.classList.add('drag-over'); });
+    card.addEventListener('drop',      e => { e.preventDefault(); const t=+card.dataset.idx; if(dragSrcIdx===null||dragSrcIdx===t)return; const m=providers.splice(dragSrcIdx,1)[0]; providers.splice(t,0,m); dragSrcIdx=null; renderProviders(); updateFallbackChain(); });
   });
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Fallback chain
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function updateFallbackChain() {
-  const enabled = providers.filter(p => p.enabled && (p.hasKey || p.newKey));
-  const chain   = document.getElementById('fallbackChain');
-  const content = document.getElementById('chainContent');
-
-  if (enabled.length === 0) {
-    chain.style.display = 'none';
-    return;
-  }
-  chain.style.display = 'flex';
-  content.innerHTML = enabled.map((p, i) =>
-    (i > 0 ? '<span class="chain-arrow">→</span>' : '') +
-    `<span class="chain-badge">${esc(getMeta(p.id).label)}</span>`
-  ).join('');
+  const en=providers.filter(p=>p.enabled&&(p.hasKey||p.newKey));
+  const chain=document.getElementById('fallbackChain');
+  if (!en.length) { chain.style.display='none'; return; }
+  chain.style.display='flex';
+  document.getElementById('chainContent').innerHTML=en.map((p,i)=>(i?'<span class="chain-arrow">→</span>':'')+`<span class="chain-badge">${esc(getMeta(p.id).label)}</span>`).join('');
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Model loading
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async function loadModelsForProvider(providerId, forceReload = false) {
-  if (modelCache[providerId] && !forceReload) return;
-
+async function loadModelsForProvider(id, force=false) {
+  if (modelCache[id]&&!force) return;
   try {
-    const res = await fetch(`/api/config/models/${providerId}`);
-    const data = await res.json();
-    if (data.success && data.models.length > 0) {
-      modelCache[providerId] = data.models;
-
-      const idx = providers.findIndex(p => p.id === providerId);
-      if (idx !== -1) {
-        const sel = document.querySelector(`.prov-model-select[data-idx="${idx}"]`);
-        if (sel) {
-          const currentVal = providers[idx].model;
-          sel.innerHTML = data.models.map(m =>
-            `<option value="${esc(m.id)}" ${m.id === currentVal ? 'selected' : ''}>${esc(m.name)}</option>`
-          ).join('');
-        }
-      }
+    const res=await fetch(`/api/config/models/${id}`);
+    const d=await res.json();
+    if (d.success&&d.models.length) {
+      modelCache[id]=d.models;
+      const idx=providers.findIndex(p=>p.id===id); if(idx===-1)return;
+      const sel=document.querySelector(`.prov-model-select[data-idx="${idx}"]`); if(!sel)return;
+      const cur=providers[idx].model;
+      sel.innerHTML=d.models.map(m=>`<option value="${esc(m.id)}"${m.id===cur?' selected':''}>${esc(m.name)}</option>`).join('');
     }
   } catch {}
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// STT tabs
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function setTabActive(id) {
-  ['tabSttLocal','tabSttApi'].forEach(t => {
-    document.getElementById(t).classList.toggle('active', t === id);
-  });
-}
-
-['tabSttLocal','tabSttApi'].forEach(id => {
-  document.getElementById(id).addEventListener('click', () => {
-    setTabActive(id);
-    const isLocal = id === 'tabSttLocal';
-    document.getElementById('sttLocalPanel').style.display = isLocal ? '' : 'none';
-    document.getElementById('sttApiPanel').style.display   = isLocal ? 'none' : '';
-    if (!isLocal) updateSttApiKeyWarn();
+// ── STT tabs ───────────────────────────────────────────────────────────────
+function setTabActive(id) { ['tabSttLocal','tabSttApi'].forEach(t=>document.getElementById(t).classList.toggle('active',t===id)); }
+['tabSttLocal','tabSttApi'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',()=>{
+    setTabActive(id); const local=id==='tabSttLocal';
+    document.getElementById('sttLocalPanel').style.display=local?'':'none';
+    document.getElementById('sttApiPanel').style.display=local?'none':'';
+    if(!local) updateSttApiKeyWarn();
   });
 });
-
 function updateSttApiKeyWarn() {
-  const hasOpenAI = providers.some(p => p.id === 'openai' && (p.hasKey || p.newKey));
-  document.getElementById('sttApiKeyWarn').style.display = hasOpenAI ? 'none' : 'flex';
+  document.getElementById('sttApiKeyWarn').style.display=providers.some(p=>p.id==='openai'&&(p.hasKey||p.newKey))?'none':'flex';
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// HUD opacity slider
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const opacitySlider = document.getElementById('opacitySlider');
-const opacityVal    = document.getElementById('opacityVal');
-opacitySlider.addEventListener('input', () => {
-  const v = +opacitySlider.value;
-  opacityVal.textContent = v + '%';
-  opacitySlider.style.setProperty('--pct', (v / 90 * 100).toFixed(1) + '%');
-  socket.emit('set_hud_opacity', v);
+// ── HUD opacity ────────────────────────────────────────────────────────────
+document.getElementById('opacitySlider').addEventListener('input',function(){
+  const v=+this.value;
+  document.getElementById('opacityVal').textContent=v+'%';
+  this.style.setProperty('--pct',(v/90*100).toFixed(1)+'%');
+  socket.emit('set_hud_opacity',v);
+});
+socket.on('hud_opacity_saved',v=>{ setSlider('opacitySlider',v,90); document.getElementById('opacityVal').textContent=v+'%'; });
+
+// ── Screenshots path ───────────────────────────────────────────────────────
+document.getElementById('screenshotsPath').addEventListener('input',e=>{
+  document.getElementById('screenshotWarn').style.display=e.target.value.trim()?'none':'flex';
 });
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Screenshots path warning
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-document.getElementById('screenshotsPath').addEventListener('input', e => {
-  document.getElementById('screenshotWarn').style.display = e.target.value.trim() ? 'none' : 'flex';
+// ── Prompt accordion ───────────────────────────────────────────────────────
+document.getElementById('promptAccordionBtn').addEventListener('click',()=>{
+  const body=document.getElementById('promptAccordionBody');
+  const open=body.classList.toggle('open');
+  document.getElementById('promptArrow').textContent=open?'▲':'▼';
+  if(open) loadPromptPreview(currentPromptType);
 });
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Prompt accordion
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-document.getElementById('promptAccordionBtn').addEventListener('click', () => {
-  const body  = document.getElementById('promptAccordionBody');
-  const arrow = document.getElementById('promptArrow');
-  const open  = body.classList.toggle('open');
-  arrow.textContent = open ? '▲' : '▼';
-  if (open) loadPromptPreview(currentPromptType);
-});
-
-document.querySelectorAll('.prompt-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.prompt-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    currentPromptType = tab.dataset.type;
-    loadPromptPreview(currentPromptType);
+document.querySelectorAll('.prompt-tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.prompt-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active'); currentPromptType=tab.dataset.type; loadPromptPreview(currentPromptType);
   });
 });
-
 async function loadPromptPreview(type) {
-  const ta = document.getElementById('promptPreviewText');
-  ta.value = 'Loading…';
-  try {
-    const res = await fetch(`/api/config/prompt-preview?type=${type}`);
-    const data = await res.json();
-    ta.value = data.success ? data.prompt : `Error: ${data.error}`;
-  } catch {
-    ta.value = 'Failed to load prompt.';
-  }
+  const ta=document.getElementById('promptPreviewText'); ta.value='Loading…';
+  try { const r=await fetch(`/api/config/prompt-preview?type=${type}`); const d=await r.json(); ta.value=d.success?d.prompt:`Error: ${d.error}`; }
+  catch { ta.value='Failed to load.'; }
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Per-section save
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function buildPayload() {
-  const isLocalStt = document.getElementById('tabSttLocal').classList.contains('active');
-  const sttModel = isLocalStt
-    ? document.getElementById('sttLocalModel').value
-    : document.getElementById('sttApiModel').value;
+// ── Speaker ID ─────────────────────────────────────────────────────────────
+function setHfStatus(msg,color) { const el=document.getElementById('hfTokenStatus'); if(el){el.textContent=msg;el.style.color=color||'var(--muted)';} }
+function updateSpeakerIdPanel() { document.getElementById('speakerIdPanel').style.display=document.getElementById('speakerIdEnabled').checked?'':'none'; }
+document.getElementById('speakerIdEnabled').addEventListener('change',updateSpeakerIdPanel);
+document.getElementById('hfTokenToggle').addEventListener('click',()=>{
+  const inp=document.getElementById('hfTokenInput'); const isPass=inp.type==='password';
+  inp.type=isPass?'text':'password'; document.getElementById('hfTokenToggle').textContent=isPass?'Hide':'Show';
+});
+document.getElementById('btnLoadSpeakerId').addEventListener('click',()=>{
+  const token=document.getElementById('hfTokenInput').value.trim();
+  const thr=parseFloat(document.getElementById('speakerThreshold').value)||0.70;
+  if(!token||token==='***'){showToast('Paste a HuggingFace token first','err');return;}
+  socket.emit('load_speaker_id',{hf_token:token,threshold:thr});
+});
+socket.on('speaker_id_loading',()=>{
+  _sidLoading=true;
+  document.getElementById('speakerIdLoading').style.display='';
+  document.getElementById('speakerIdError').style.display='none';
+  document.getElementById('enrollPanel').style.display='none';
+  document.getElementById('enrollScript').style.display='';
+  document.getElementById('speakerIdLoadingText').textContent='Downloading pyannote model from HuggingFace…';
+  setHfStatus('Downloading…','var(--yellow)');
+});
+socket.on('speaker_id_loaded',data=>{
+  _sidLoading=false;
+  document.getElementById('speakerIdLoading').style.display='none';
+  if(data.success){_hfTokenSaved=true;document.getElementById('speakerIdError').style.display='none';showToast('Model ready — click Enroll My Voice','ok');}
+  else{document.getElementById('enrollScript').style.display='none';document.getElementById('speakerIdError').style.display='';document.getElementById('speakerIdErrorText').textContent=`Failed: ${data.error||'unknown'}`;setHfStatus('Failed','var(--red)');}
+});
+function applyEnrollmentStatus(data) {
+  if(_sidLoading)return;
+  const ep=document.getElementById('enrollPanel');const es=document.getElementById('enrollScript');const st=document.getElementById('enrollStatus');const btn=document.getElementById('btnEnrollVoice');if(!ep)return;
+  document.getElementById('speakerIdLoading').style.display='none';document.getElementById('speakerIdError').style.display='none';
+  if(data.model_loaded){
+    es.style.display='';ep.style.display='';setHfStatus('Model ready ✓','var(--green)');
+    if(data.enrolled){st.textContent='Enrolled ✓';st.style.color='var(--green)';btn.textContent='🔄 Re-enroll';btn.disabled=false;}
+    else{st.textContent='Not enrolled — click Enroll to start';st.style.color='var(--muted)';btn.textContent='🎤 Enroll My Voice';btn.disabled=false;}
+    // Interviewer enrollment panel
+    const ip=document.getElementById('interviewerEnrollPanel');
+    const is_=document.getElementById('interviewerEnrollStatus');
+    const clrBtn=document.getElementById('btnClearInterviewer');
+    if(ip){ip.style.display='';}
+    if(is_&&clrBtn){
+      if(data.interviewer_enrolled){
+        const n=data.interviewer_snippets||1;
+        is_.textContent=`Enrolled ✓ (${n} snippet${n!==1?'s':''})`;
+        is_.style.color='var(--green)';clrBtn.style.display='';
+      } else {
+        is_.textContent='Not enrolled — use HUD popup during interview';
+        is_.style.color='var(--muted)';clrBtn.style.display='none';
+      }
+    }
+  } else {ep.style.display='none';es.style.display='none';if(_hfTokenSaved)setHfStatus('Token saved — click Load Model','var(--muted)');}
+}
+socket.on('enrollment_status',applyEnrollmentStatus);
+// Clear interviewer enrollment
+(function(){
+  const btn=document.getElementById('btnClearInterviewer');
+  if(btn) btn.addEventListener('click',()=>{
+    socket.emit('clear_interviewer');
+    btn.style.display='none';
+    const is_=document.getElementById('interviewerEnrollStatus');
+    if(is_){is_.textContent='Cleared';is_.style.color='var(--muted)';}
+  });
+})();
+document.getElementById('btnEnrollVoice').addEventListener('click',()=>socket.emit('enroll_voice'));
+let _et=null;
+socket.on('enrollment_started',data=>{
+  const btn=document.getElementById('btnEnrollVoice'); if(!btn)return;
+  btn.disabled=true;btn.textContent='⏺ Recording…';
+  document.getElementById('enrollProgress').style.display='block';
+  document.getElementById('enrollStatus').textContent='Read the script above aloud…';
+  document.getElementById('enrollStatus').style.color='var(--yellow)';
+  const sc=document.getElementById('enrollScript');if(sc){sc.style.borderColor='var(--yellow)';sc.style.background='rgba(245,158,11,0.06)';}
+  const total=data.seconds||30;let rem=total;
+  document.getElementById('enrollCountdown').textContent=rem;
+  const bar=document.getElementById('enrollBar');bar.style.transition='none';bar.style.width='0%';void bar.offsetWidth;bar.style.transition=`width ${total}s linear`;
+  clearInterval(_et);_et=setInterval(()=>{rem--;document.getElementById('enrollCountdown').textContent=Math.max(0,rem);bar.style.width=`${((total-rem)/total)*100}%`;if(rem<=0)clearInterval(_et);},1000);
+});
+socket.on('enrollment_complete',data=>{
+  clearInterval(_et);const btn=document.getElementById('btnEnrollVoice');if(!btn)return;
+  btn.disabled=false;document.getElementById('enrollProgress').style.display='none';
+  const sc=document.getElementById('enrollScript');if(sc){sc.style.borderColor='';sc.style.background='';}
+  if(data.success){btn.textContent='🔄 Re-enroll';document.getElementById('enrollStatus').textContent='✅ Enrolled';document.getElementById('enrollStatus').style.color='var(--green)';}
+  else{btn.textContent='🎤 Enroll My Voice';document.getElementById('enrollStatus').textContent=`Failed: ${data.error||'unknown'}`;document.getElementById('enrollStatus').style.color='var(--red)';}
+});
 
+// ── Save ───────────────────────────────────────────────────────────────────
+function buildPayload() {
+  const local=document.getElementById('tabSttLocal').classList.contains('active');
   return {
-    providers: providers.map(p => ({
-      id:      p.id,
-      key:     p.newKey || '',
-      enabled: p.enabled,
-      model:   p.model || '',
-    })),
-    stt_model:            sttModel,
-    hud_opacity:          +document.getElementById('opacitySlider').value,
-    screenshots_path:     document.getElementById('screenshotsPath').value.trim(),
-    interview_role:       document.getElementById('interviewRole').value.trim(),
-    speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value) || 0.70,
-    speaker_id_enabled:   document.getElementById('speakerIdEnabled').checked,
-    hf_token: (() => {
-      const v = document.getElementById('hfTokenInput').value.trim();
-      return (v && v !== '***') ? v : '';
-    })(),
+    providers: providers.map(p=>({id:p.id,key:p.newKey||'',enabled:p.enabled,model:p.model||''})),
+    stt_model: local?document.getElementById('sttLocalModel').value:document.getElementById('sttApiModel').value,
+    hud_opacity: +document.getElementById('opacitySlider').value,
+    screenshots_path: document.getElementById('screenshotsPath').value.trim(),
+    interview_role: document.getElementById('interviewRole').value.trim(),
+    speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value)||0.70,
+    speaker_id_enabled: document.getElementById('speakerIdEnabled').checked,
+    hf_token:(()=>{ const v=document.getElementById('hfTokenInput').value.trim(); return(v&&v!=='***')?v:''; })(),
   };
 }
-
-async function saveSectionSettings(sectionId) {
-  const btn = document.getElementById(`saveBtn-${sectionId}`);
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-  setSectionStatus(sectionId, '', '');
-
+async function saveSectionSettings(id) {
+  const btn=document.getElementById(`saveBtn-${id}`);
+  if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  setSectionStatus(id,'','');
   try {
-    const res = await fetch('/api/config/full', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildPayload()),
-    });
-    const data = await res.json();
-
-    if (data.success) {
-      setSectionStatus(sectionId, '✓ Saved', 'ok');
-
-      // If speaker ID enabled and new token entered, trigger model load
-      const newToken       = document.getElementById('hfTokenInput').value.trim();
-      const speakerEnabled = document.getElementById('speakerIdEnabled').checked;
-      if (speakerEnabled && newToken && newToken !== '***') {
-        socket.emit('load_speaker_id');
-      }
-
-      setTimeout(() => loadConfig(), 300);
-    } else {
-      setSectionStatus(sectionId, '✗ ' + (data.error || 'Error'), 'err');
-    }
-  } catch {
-    setSectionStatus(sectionId, '✗ Network error', 'err');
-  }
-
-  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    const res=await fetch('/api/config/full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildPayload())});
+    const d=await res.json();
+    if(d.success){
+      setSectionStatus(id,'✓ Saved','ok');
+      const nt=document.getElementById('hfTokenInput').value.trim();
+      if(document.getElementById('speakerIdEnabled').checked&&nt&&nt!=='***') socket.emit('load_speaker_id');
+      setTimeout(loadConfig,300);
+    } else { setSectionStatus(id,'✗ '+(d.error||'Error'),'err'); }
+  } catch { setSectionStatus(id,'✗ Network error','err'); }
+  if(btn){btn.disabled=false;btn.textContent='Save';}
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// HUD opacity live relay via socket
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-socket.on('hud_opacity_saved', (v) => {
-  setSlider('opacitySlider', v, 90);
-  opacityVal.textContent = v + '%';
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Boot
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 loadConfig();
 </script>
 </body>

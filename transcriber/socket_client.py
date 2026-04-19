@@ -232,6 +232,20 @@ class SocketClient:
         except Exception as e:
             logger.error(f"Error sending stt_final: {e}")
 
+    def send_possible_interviewer(self, audio_id: str, text_excerpt: str):
+        """Emit possible_interviewer_speech — Node will relay to HUD for enrollment popup."""
+        if not self.connected:
+            return
+        try:
+            self.sio.emit('possible_interviewer_speech', {
+                'audio_id': audio_id,
+                'text': text_excerpt,
+                'timestamp': time.time(),
+            }, namespace=self.endpoint)
+            logger.debug("Sent possible_interviewer_speech: %s", text_excerpt[:50])
+        except Exception as e:
+            logger.error("Error sending possible_interviewer_speech: %s", e)
+
     def send_listen_state(self, listening: bool):
         """Notify Node.js that the always-on listener was toggled via keyboard."""
         if not self.connected:
