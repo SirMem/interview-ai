@@ -159,29 +159,6 @@ Microphone
 
 ---
 
-## Settings
-
-### AI Providers
-
-<img src="web/public/aiproviders.png" alt="AI Providers" width="600" />
-
-Each provider card lets you:
-- Toggle the provider on/off
-- Enter your API key (stored locally in `config/api-keys.json`, never transmitted)
-- Test the key before your interview
-- Pick a model from the dropdown
-- Drag to reorder the fallback chain
-
-### HUD & STT
-
-<img src="web/public/hud-appearance.png" alt="HUD Appearance" width="600" />
-
-- **Window Opacity** — adjust live with a slider
-- **Whisper model** — `tiny` / `small` / `medium` / `large` (medium is a good balance)
-- **Speaker diarization** — filters out the interviewer's voice so only your side triggers answers
-
----
-
 ## How the overlay stays invisible
 
 `setContentProtection(true)` is an OS-level API — the same one used by banking apps and DRM video players.
