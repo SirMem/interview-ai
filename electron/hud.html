@@ -834,6 +834,10 @@
       if (html) {
         liveStrip.innerHTML = html;
         liveStrip.className = 'live-strip active';
+      } else {
+        // Empty partial = candidate voice discarded — clear the strip
+        liveStrip.innerHTML = '';
+        liveStrip.className = 'live-strip';
       }
     });
 

@@ -163,6 +163,8 @@ class StreamingSTT:
             self._held_results.pop(utterance_id, None)
         logger.debug("StreamingSTT: discarding uid=%.8s (candidate voice)", utterance_id)
         self._reset()
+        # Clear the HUD live strip — candidate speech should not show
+        self.on_partial('', '')
 
     # ── Audio callback interface (must be O(1)) ───────────────────────────────
 

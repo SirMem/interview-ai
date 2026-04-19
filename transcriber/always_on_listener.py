@@ -343,8 +343,8 @@ class AlwaysOnListener:
 
         # Interviewer enrollment popup — only offer for long enough utterances so
         # we don't spam the user on short filler words from an unknown speaker.
-        # 10 words ≈ ~7s of speech — enough to be a real interviewer question.
-        _POPUP_MIN_WORDS = 10
+        # 5 words ≈ ~3-4s of speech.
+        _POPUP_MIN_WORDS = 5
         if (utterance_id
                 and utterance_id in self._pending_popup_uids
                 and len(words) >= _POPUP_MIN_WORDS

@@ -200,9 +200,9 @@ class SpeakerIdentifier:
         self._interviewer_embedding: Optional[np.ndarray] = None
         self._interviewer_snippets:  list = []   # list of 512-dim embeddings
 
-        # Load previously saved embeddings from disk (survive app restarts)
+        # Load previously saved candidate embedding from disk (survives restarts)
         self._load_stored_embedding()
-        self._load_interviewer_embedding()
+        # Interviewer embedding is session-only — not loaded from disk
 
     # ── Model loading ─────────────────────────────────────────────────────────
 
@@ -309,32 +309,16 @@ class SpeakerIdentifier:
             return False
 
     def _finalize_interviewer_embedding(self):
-        """Average all stored interviewer snippets, L2-normalize, and save to disk."""
+        """Average all stored interviewer snippets and L2-normalize. In-memory only."""
         stacked = np.stack(self._interviewer_snippets)
         avg = stacked.mean(axis=0)
         norm = np.linalg.norm(avg)
         self._interviewer_embedding = avg / (norm + 1e-8)
-        INTERVIEWER_EMBEDDING_PATH.parent.mkdir(parents=True, exist_ok=True)
-        np.save(INTERVIEWER_EMBEDDING_PATH, self._interviewer_embedding)
-
-    def _load_interviewer_embedding(self):
-        if INTERVIEWER_EMBEDDING_PATH.exists():
-            try:
-                self._interviewer_embedding = np.load(INTERVIEWER_EMBEDDING_PATH)
-                logger.info(
-                    "SpeakerIdentifier: loaded interviewer embedding from %s",
-                    INTERVIEWER_EMBEDDING_PATH,
-                )
-            except Exception as e:
-                logger.warning("SpeakerIdentifier: could not load interviewer embedding — %s", e)
-                self._interviewer_embedding = None
 
     def clear_interviewer_enrollment(self):
-        """Remove the stored interviewer embedding."""
+        """Clear the in-session interviewer embedding."""
         self._interviewer_embedding = None
         self._interviewer_snippets = []
-        if INTERVIEWER_EMBEDDING_PATH.exists():
-            INTERVIEWER_EMBEDDING_PATH.unlink()
         logger.info("SpeakerIdentifier: interviewer enrollment cleared")
 
     # ── Identification ────────────────────────────────────────────────────────

@@ -495,7 +495,8 @@ class DataHandler extends EventEmitter {
   // The HUD handler at hud.html:809 displays committed (bright) + tentative (dim).
   handleSttPartial(data) {
     const { committed, tentative } = data || {};
-    if (!committed && !tentative) return;
+    // Allow empty strings through — they signal "clear the live strip" (e.g. candidate voice discarded)
+    if (committed === undefined && tentative === undefined) return;
     this.namespace.emit('stt_partial', {
       committed: committed || '',
       tentative: tentative || '',
