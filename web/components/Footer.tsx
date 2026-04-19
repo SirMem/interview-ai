@@ -17,22 +17,11 @@ export default function Footer() {
       >
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: "0.5rem",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "0.875rem",
-              fontWeight: 700,
-              background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-              color: "#fff",
-            }}
-          >
-            S
-          </div>
+          <img
+            src="/logo.png"
+            alt="SolveWatch AI"
+            style={{ width: 32, height: 32, borderRadius: "0.5rem", objectFit: "cover" }}
+          />
           <span style={{ fontWeight: 600, color: "#fff", fontSize: "0.875rem" }}>
             SolveWatch <span className="gradient-text">AI</span>
           </span>

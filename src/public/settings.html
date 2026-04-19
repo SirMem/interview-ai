@@ -499,8 +499,9 @@
     <div class="sec-body">
       <div class="field">
         <label>STT Mode</label>
+        <div id="platformBadge" style="display:none;margin-bottom:8px;font-size:11px;color:var(--muted);background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:5px 10px;width:fit-content"></div>
         <div class="stt-tabs">
-          <button class="stt-tab active" id="tabSttLocal">🖥 Local Whisper (MLX)</button>
+          <button class="stt-tab active" id="tabSttLocal">🖥 Local Whisper</button>
           <button class="stt-tab" id="tabSttApi">☁️ OpenAI Whisper API</button>
         </div>
         <div id="sttLocalPanel" style="margin-top:10px">
@@ -511,7 +512,13 @@
             <option value="medium">medium — slower, better accuracy</option>
             <option value="large">large — slowest, best accuracy</option>
           </select>
-          <span class="hint" style="margin-top:6px;display:block">On-device via Apple MLX. No API key required. Changing model restarts the transcriber.</span>
+          <span id="sttLocalHint" class="hint" style="margin-top:6px;display:block">On-device Whisper — detecting your platform…</span>
+          <!-- Windows/Linux: model download panel -->
+          <div id="whisperDownloadPanel" style="display:none;margin-top:12px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:8px">Model Download Status</div>
+            <div id="whisperModelList" style="display:flex;flex-direction:column;gap:6px"></div>
+            <div id="whisperDownloadMsg" style="display:none;margin-top:8px;font-size:12px;color:var(--green)"></div>
+          </div>
         </div>
         <div id="sttApiPanel" style="display:none;margin-top:10px">
           <select id="sttApiModel"><option value="whisper-1">whisper-1 (OpenAI API)</option></select>
@@ -554,10 +561,25 @@
       <div id="speakerIdPanel" style="display:none">
         <div class="field">
           <label>HuggingFace Token</label>
-          <span class="hint" style="margin-bottom:6px;display:block">
-            1. Accept model terms at <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM" target="_blank" style="color:var(--purple-l)">pyannote/wespeaker-voxceleb-resnet34-LM</a><br>
-            2. Create a token at <a href="https://huggingface.co/settings/tokens" target="_blank" style="color:var(--purple-l)">huggingface.co/settings/tokens</a>
-          </span>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">Setup — 2 steps required</div>
+            <div style="font-size:12px;color:var(--text2);line-height:1.7">
+              <div style="display:flex;gap:8px;align-items:flex-start">
+                <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">1.</span>
+                <span>Accept the model licence on HuggingFace:<br>
+                  <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM" target="_blank" style="color:var(--purple-l);word-break:break-all">pyannote/wespeaker-voxceleb-resnet34-LM</a>
+                </span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">2.</span>
+                <span>Create a <strong>read</strong> access token and paste it below:</span>
+                <a href="https://huggingface.co/settings/tokens" target="_blank"
+                   style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--purple-dim);border:1px solid var(--border2);border-radius:5px;color:var(--purple-l);font-size:11px;font-weight:600;text-decoration:none;flex-shrink:0">
+                  Open HF Tokens ↗
+                </a>
+              </div>
+            </div>
+          </div>
           <div class="key-row">
             <div class="key-wrap">
               <input type="password" id="hfTokenInput" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
@@ -855,6 +877,78 @@ async function loadModelsForProvider(id, force=false) {
   } catch {}
 }
 
+// ── Platform detection & STT backend ──────────────────────────────────────
+let _platformInfo = null;
+
+async function loadPlatformInfo() {
+  try {
+    const r = await fetch('/api/config/platform');
+    const d = await r.json();
+    if (!d.success) return;
+    _platformInfo = d;
+
+    const badge = document.getElementById('platformBadge');
+    const isApple = d.isAppleSilicon;
+    const osLabel = d.platform === 'win32' ? 'Windows' : d.platform === 'darwin' ? 'macOS' : 'Linux';
+    badge.textContent = `${osLabel} · ${d.arch} · Backend: ${isApple ? 'MLX (Apple Silicon GPU)' : 'openai-whisper (CPU)'}`;
+    badge.style.display = 'block';
+
+    const localTab = document.getElementById('tabSttLocal');
+    const localHint = document.getElementById('sttLocalHint');
+
+    if (isApple) {
+      localTab.textContent = '🖥 Local Whisper (MLX)';
+      localHint.textContent = 'On-device via Apple MLX — uses your M-chip GPU. Free, no internet.';
+      document.getElementById('whisperDownloadPanel').style.display = 'none';
+    } else {
+      localTab.textContent = '🖥 Local Whisper (CPU)';
+      localHint.textContent = 'On-device via openai-whisper — runs on CPU (or CUDA GPU on Windows). Free, no internet after download.';
+      loadWhisperModelStatus();
+    }
+  } catch (e) { console.warn('platform fetch failed', e); }
+}
+
+async function loadWhisperModelStatus() {
+  try {
+    const r = await fetch('/api/config/whisper-models');
+    const d = await r.json();
+    if (!d.success) return;
+
+    const panel = document.getElementById('whisperDownloadPanel');
+    const list = document.getElementById('whisperModelList');
+    panel.style.display = 'block';
+    list.innerHTML = '';
+
+    (d.models || []).forEach(m => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:12px';
+      const dot = m.downloaded === true ? '🟢' : m.downloaded === false ? '⬜' : '❓';
+      const status = m.downloaded === true ? '<span style="color:var(--green)">Downloaded</span>' : m.downloaded === false ? '<span style="color:var(--muted)">Not downloaded</span>' : '<span style="color:var(--muted)">Unknown</span>';
+      const dlBtn = m.downloaded === false
+        ? `<button onclick="downloadModel('${m.name}')" style="font-size:11px;padding:2px 8px;background:var(--purple-dim);border:1px solid var(--border2);border-radius:4px;color:var(--purple-l);cursor:pointer">Download ${m.sizeLabel}</button>`
+        : '';
+      row.innerHTML = `<span>${dot}</span><span style="width:60px;font-weight:600">${m.name}</span><span style="color:var(--muted);width:55px">${m.sizeLabel}</span>${status}${dlBtn ? '<span style="flex:1"></span>'+dlBtn : ''}`;
+      list.appendChild(row);
+    });
+
+    if (d.transcriber_offline) {
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:11px;color:var(--muted);margin-top:6px';
+      note.textContent = 'Transcriber offline — start the app to see live download status.';
+      list.appendChild(note);
+    }
+  } catch (e) { console.warn('whisper-models fetch failed', e); }
+}
+
+async function downloadModel(name) {
+  document.getElementById('whisperDownloadMsg').style.display = 'block';
+  document.getElementById('whisperDownloadMsg').textContent = `Downloading ${name}… this may take a few minutes. Check logs/transcriber.log for progress.`;
+  try {
+    await fetch('/api/config/whisper-download', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({model:name}) });
+    setTimeout(loadWhisperModelStatus, 3000);
+  } catch(e) { document.getElementById('whisperDownloadMsg').textContent = 'Failed: ' + e.message; }
+}
+
 // ── STT tabs ───────────────────────────────────────────────────────────────
 function setTabActive(id) { ['tabSttLocal','tabSttApi'].forEach(t=>document.getElementById(t).classList.toggle('active',t===id)); }
 ['tabSttLocal','tabSttApi'].forEach(id=>{
@@ -868,6 +962,8 @@ function setTabActive(id) { ['tabSttLocal','tabSttApi'].forEach(t=>document.getE
 function updateSttApiKeyWarn() {
   document.getElementById('sttApiKeyWarn').style.display=providers.some(p=>p.id==='openai'&&(p.hasKey||p.newKey))?'none':'flex';
 }
+
+loadPlatformInfo();
 
 // ── HUD opacity ────────────────────────────────────────────────────────────
 document.getElementById('opacitySlider').addEventListener('input',function(){

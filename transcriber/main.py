@@ -791,6 +791,58 @@ async def clear_interviewer_enrollment():
     return {"status": "ok"}
 
 
+# ── Whisper model management (local CPU backend) ──────────────────────────────
+
+@app.get("/whisper-models")
+async def list_whisper_models():
+    """Return download status for each openai-whisper model on this machine."""
+    import platform as _platform
+    import pathlib
+
+    model_sizes = {
+        "tiny":   "~75 MB",
+        "base":   "~145 MB",
+        "small":  "~465 MB",
+        "medium": "~1.5 GB",
+        "large":  "~2.9 GB",
+    }
+
+    if _platform.system() == "Windows":
+        cache_dir = pathlib.Path.home() / ".cache" / "whisper"
+    else:
+        cache_dir = pathlib.Path.home() / ".cache" / "whisper"
+
+    models = []
+    for name, size in model_sizes.items():
+        # openai-whisper downloads files named e.g. "small.pt"
+        downloaded = (cache_dir / f"{name}.pt").exists()
+        models.append({"name": name, "downloaded": downloaded, "sizeLabel": size})
+
+    return {"models": models, "cache_dir": str(cache_dir)}
+
+
+@app.post("/download-whisper-model")
+async def download_whisper_model(body: dict):
+    """Download an openai-whisper model in the background."""
+    model = (body or {}).get("model", "")
+    valid = {"tiny", "base", "small", "medium", "large"}
+    if model not in valid:
+        raise HTTPException(status_code=400, detail=f"model must be one of {sorted(valid)}")
+
+    def _do_download():
+        try:
+            import whisper as _w
+            logger.info("Downloading openai-whisper model: %s", model)
+            _w.load_model(model)
+            logger.info("openai-whisper model downloaded: %s", model)
+        except Exception as e:
+            logger.error("Failed to download whisper model %s: %s", model, e)
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _do_download)
+    return {"status": "downloading", "model": model, "message": f"Downloading {model} in background — check transcriber.log"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=API_HOST, port=API_PORT)

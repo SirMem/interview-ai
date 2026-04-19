@@ -6,7 +6,7 @@ const steps = [
     n: "01",
     title: "Interviewer speaks",
     desc: "Your microphone captures audio continuously. Silero VAD filters silence so only real speech is processed.",
-    detail: "On-device · Apple MLX Whisper · No API key",
+    detail: "On-device · MLX (macOS) / CPU Whisper (Windows) · No API key",
   },
   {
     n: "02",
@@ -23,7 +23,7 @@ const steps = [
   {
     n: "04",
     title: "HUD shows it — only to you",
-    desc: "Answer bullet points appear in a frameless macOS overlay. Screenshare, recording, and screenshots cannot capture it.",
+    desc: "Answer bullet points appear in a frameless invisible overlay. Screenshare, recording, and screenshots cannot capture it — on macOS and Windows.",
     detail: "setContentProtection(true)",
   },
 ];
@@ -44,7 +44,7 @@ export default function HowItWorks() {
               How it works
             </h2>
             <p style={{ fontSize: "1rem", color: "#64748b", maxWidth: "36rem", margin: "0 auto" }}>
-              Four stages, all running locally on your Mac. From mic to HUD in under two seconds.
+              Four stages, all running locally on your machine. From mic to HUD in under two seconds.
             </p>
           </div>
         </FadeIn>
@@ -126,7 +126,7 @@ export default function HowItWorks() {
             </div>
             <div style={{ padding: "1.5rem 1.75rem", overflowX: "auto" }}>
               <pre style={{ fontSize: "0.8rem", lineHeight: 1.9, color: "#c4b5fd", margin: 0, fontFamily: "'SF Mono','Fira Code','Courier New',monospace" }}>
-{`Mic ──► Python Whisper (MLX)
+{`Mic ──► Python Whisper (MLX on macOS · CPU on Windows)
            │  stt_partial (300ms) / stt_final (silence)
            ▼
      Node.js Backend (Express + Socket.IO)

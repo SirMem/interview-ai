@@ -136,7 +136,7 @@ export default function Hero() {
               }}
             >
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", display: "inline-block" }} />
-              Open Source · macOS · MIT License
+              Open Source · macOS & Windows · MIT License
             </div>
           </div>
 

@@ -14,11 +14,14 @@ CHUNK_DURATION: float = 2.0  # 2 seconds per chunk
 CHANNELS: int = 1  # Mono audio
 BLOCK_SIZE: int = int(SAMPLE_RATE * CHUNK_DURATION)  # Samples per chunk
 
-# Whisper Model Configuration (MLX Whisper - optimized for Apple Silicon)
-WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # base, small, medium, large
+# Whisper Model Configuration
+WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # tiny, base, small, medium, large
 LANGUAGE: Optional[str] = os.getenv("LANGUAGE", "en")  # None for auto-detect
-VAD_FILTER: bool = True  # Voice Activity Detection filter (handled by Whisper internally)
-# Note: MLX automatically uses Apple Silicon GPU, no device selection needed
+VAD_FILTER: bool = True  # Voice Activity Detection filter
+
+# Whisper backend: "mlx" (Apple Silicon), "local" (openai-whisper CPU/CUDA), "api" (OpenAI cloud)
+# Leave empty for auto-detection: Apple Silicon → mlx, everything else → local
+WHISPER_BACKEND: str = os.getenv("WHISPER_BACKEND", "")
 
 # Question Detection Configuration
 QUESTION_PATTERN_CONFIDENCE_THRESHOLD: float = 0.7

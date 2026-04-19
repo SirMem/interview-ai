@@ -395,6 +395,65 @@ class ConfigController {
       res.status(400).json({ success: false, error: err.message });
     }
   }
+
+  // ── Platform info ──────────────────────────────────────────────────
+
+  getPlatformInfo(req, res) {
+    const os = process.platform;   // 'darwin', 'win32', 'linux'
+    const arch = process.arch;     // 'arm64', 'x64', etc.
+    const isAppleSilicon = os === 'darwin' && arch === 'arm64';
+    const backend = isAppleSilicon ? 'mlx' : 'local';
+
+    res.json({
+      success: true,
+      platform: os,
+      arch,
+      isAppleSilicon,
+      recommendedBackend: backend,
+      whisperCacheDir: os === 'win32'
+        ? '%USERPROFILE%\\.cache\\whisper'
+        : os === 'darwin'
+          ? '~/.cache/whisper'
+          : '~/.cache/whisper',
+    });
+  }
+
+  // ── Whisper model management ───────────────────────────────────────
+
+  async getWhisperModels(req, res) {
+    try {
+      const resp = await fetch('http://localhost:8000/whisper-models', { signal: AbortSignal.timeout(3000) });
+      const data = await resp.json();
+      return res.json({ success: true, models: data.models || [] });
+    } catch {
+      // Transcriber not running — return static list with unknown status
+      const models = ['tiny', 'base', 'small', 'medium', 'large'].map(name => ({
+        name,
+        downloaded: null,
+        sizeLabel: { tiny: '~75 MB', base: '~145 MB', small: '~465 MB', medium: '~1.5 GB', large: '~2.9 GB' }[name],
+      }));
+      return res.json({ success: true, models, transcriber_offline: true });
+    }
+  }
+
+  async downloadWhisperModel(req, res) {
+    const { model } = req.body;
+    if (!['tiny', 'base', 'small', 'medium', 'large'].includes(model)) {
+      return res.status(400).json({ success: false, error: 'Invalid model name' });
+    }
+    try {
+      const resp = await fetch('http://localhost:8000/download-whisper-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await resp.json();
+      return res.json({ success: true, ...data });
+    } catch {
+      return res.status(503).json({ success: false, error: 'Transcriber not running. Start the app first.' });
+    }
+  }
 }
 
 export default new ConfigController();

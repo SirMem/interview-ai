@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  SolveWatch AI — start script
+#  SolveWatch AI — macOS/Linux start script
 #  Installs deps, sets up Ollama, then starts Node + Python + Electron.
+#
+#  macOS (Apple Silicon): uses MLX Whisper (GPU-accelerated, fastest)
+#  macOS (Intel) / Linux: uses openai-whisper (CPU)
+#  Windows: use start.bat or start.ps1 instead
 #
 #  Usage:
 #    ./start.sh              # uses whisper model from config, default: small
@@ -87,9 +91,18 @@ if $DO_SETUP; then
   echo -e "${BOLD}  SolveWatch AI — First-Time Setup${RESET}"
   echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 
-  # ── macOS check ──────────────────────────────────────────────────────────────
-  if [[ "$OSTYPE" != "darwin"* ]]; then
-    die "This script currently targets macOS (Apple Silicon recommended). Adjust for your OS."
+  # ── OS check ─────────────────────────────────────────────────────────────────
+  if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ "$OSTYPE" == "win"* ]]; then
+    die "Windows detected. Use start.bat or start.ps1 instead of start.sh."
+  fi
+  IS_APPLE_SILICON=false
+  if [[ "$OSTYPE" == "darwin"* ]] && [[ "$(uname -m)" == "arm64" ]]; then
+    IS_APPLE_SILICON=true
+    info "Apple Silicon detected — will use MLX Whisper (GPU-accelerated)."
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    warn "Intel Mac detected — will use openai-whisper (CPU). MLX is not available."
+  else
+    warn "Linux detected — will use openai-whisper (CPU). MLX is not available."
   fi
 
   # ── Homebrew ─────────────────────────────────────────────────────────────────
@@ -186,9 +199,16 @@ except: pass
     log "Creating Python virtual environment..."
     python3 -m venv "$TRANSCRIBER_DIR/venv"
   fi
-  log "Installing/updating Python dependencies..."
+  # Apple Silicon → requirements.txt (includes MLX)
+  # Intel Mac / Linux → requirements-windows.txt (openai-whisper, no MLX)
+  if $IS_APPLE_SILICON; then
+    REQ_FILE="$TRANSCRIBER_DIR/requirements.txt"
+  else
+    REQ_FILE="$TRANSCRIBER_DIR/requirements-windows.txt"
+  fi
+  log "Installing/updating Python dependencies ($REQ_FILE)..."
   "$TRANSCRIBER_DIR/venv/bin/pip" install -q --upgrade pip
-  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$TRANSCRIBER_DIR/requirements.txt"
+  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$REQ_FILE"
   ok "Python venv ready."
 
   # ── Config reminder ───────────────────────────────────────────────────────────
@@ -326,21 +346,34 @@ wait_for_port "$NODE_PORT" "Node.js backend" "$APP_JSON_LOG"
 TRANSCRIBER_DIR="$SCRIPT_DIR/transcriber"
 [ -d "$TRANSCRIBER_DIR" ] || die "transcriber/ directory not found."
 
+# Choose requirements file based on platform
+_IS_APPLE_SILICON=false
+if [[ "$(uname)" == "Darwin" ]] && [[ "$(uname -m)" == "arm64" ]]; then
+  _IS_APPLE_SILICON=true
+fi
+if $_IS_APPLE_SILICON; then
+  _REQ_FILE="$TRANSCRIBER_DIR/requirements.txt"
+  _WHISPER_BACKEND="mlx"
+else
+  _REQ_FILE="$TRANSCRIBER_DIR/requirements-windows.txt"
+  _WHISPER_BACKEND="local"
+fi
+
 if [ ! -d "$TRANSCRIBER_DIR/venv" ]; then
   log "Creating Python virtual environment (first time)..."
   python3 -m venv "$TRANSCRIBER_DIR/venv"
   "$TRANSCRIBER_DIR/venv/bin/pip" install -q --upgrade pip
-  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$TRANSCRIBER_DIR/requirements.txt"
+  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$_REQ_FILE"
   ok "Python venv ready."
 else
-  # Sync any newly added packages (fast no-op when nothing changed)
-  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$TRANSCRIBER_DIR/requirements.txt"
+  "$TRANSCRIBER_DIR/venv/bin/pip" install -q -r "$_REQ_FILE"
 fi
 
-log "Starting Python transcriber (STT model: $WHISPER_MODEL)..."
+log "Starting Python transcriber (model: $WHISPER_MODEL, backend: $_WHISPER_BACKEND)..."
 PYTHON_LOG_LEVEL="INFO"
 $DEBUG_MODE && PYTHON_LOG_LEVEL="DEBUG"
-WHISPER_MODEL="$WHISPER_MODEL" AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" LOG_LEVEL="$PYTHON_LOG_LEVEL" \
+WHISPER_MODEL="$WHISPER_MODEL" WHISPER_BACKEND="$_WHISPER_BACKEND" \
+  AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" LOG_LEVEL="$PYTHON_LOG_LEVEL" \
   "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
   >"$PYTHON_LOG" 2>&1 &
 PYTHON_PID=$!

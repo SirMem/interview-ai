@@ -2,6 +2,8 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+const IS_WINDOWS = process.platform === 'win32';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -122,8 +124,9 @@ function ensureNotifWindow() {
   notifWindow = new BrowserWindow({
     width:  NOTIF_WIDTH,
     height: NOTIF_HEIGHT,
-    transparent: true,
-    backgroundColor: '#00000000',
+    // Windows: transparent frameless windows can render incorrectly — use solid bg instead
+    transparent: !IS_WINDOWS,
+    backgroundColor: IS_WINDOWS ? '#12121a' : '#00000000',
     frame: false,
     hasShadow: true,
     thickFrame: false,

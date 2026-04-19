@@ -266,6 +266,16 @@ class StreamingSTT:
     # ── Whisper call ─────────────────────────────────────────────────────────
 
     def _decode_with_timestamps(self, audio: np.ndarray, buf_start: float):
+        backend = getattr(self._transcriber, 'backend', 'mlx')
+        if backend == 'mlx':
+            return self._decode_mlx(audio, buf_start)
+        elif backend == 'local':
+            return self._decode_local_cpu(audio, buf_start)
+        else:
+            # API backend: no word timestamps — split text into fake-timestamped words
+            return self._decode_api_fallback(audio, buf_start)
+
+    def _decode_mlx(self, audio: np.ndarray, buf_start: float):
         from mlx_whisper import transcribe
         from transcriber import _mlx_lock
 
@@ -287,6 +297,36 @@ class StreamingSTT:
                 if word:
                     words.append((word, buf_start + w.get('start', 0), buf_start + w.get('end', 0)))
         return words
+
+    def _decode_local_cpu(self, audio: np.ndarray, buf_start: float):
+        from transcriber import _mlx_lock
+
+        with _mlx_lock:
+            result = self._transcriber._local_model.transcribe(
+                audio,
+                word_timestamps=True,
+                condition_on_previous_text=False,
+                language='en',
+                verbose=False,
+                no_speech_threshold=0.6,
+                fp16=False,
+            )
+
+        words = []
+        for seg in (result.get('segments') or []):
+            for w in (seg.get('words') or []):
+                word = (w.get('word') or '').strip()
+                if word:
+                    words.append((word, buf_start + w.get('start', 0), buf_start + w.get('end', 0)))
+        return words
+
+    def _decode_api_fallback(self, audio: np.ndarray, buf_start: float):
+        text = self._transcriber.transcribe_audio(audio, 16000)
+        if not text:
+            return []
+        # No real timestamps from API — use 0 so LocalAgreement-2 falls back to text-only matching
+        word_list = text.split()
+        return [(w, 0.0, 0.0) for w in word_list]
 
     # ── LocalAgreement-2 ─────────────────────────────────────────────────────
 

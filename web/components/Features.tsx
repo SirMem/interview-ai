@@ -7,10 +7,10 @@ const features = [
     icon: EyeOff,
     title: "Invisible by design",
     description:
-      "The HUD uses macOS setContentProtection(true) — the same API used by banking apps. Your overlay is completely excluded from Zoom, Meet, and any screenshare or recording tool.",
+      "The HUD uses setContentProtection(true) — the same OS API used by banking apps. Your overlay is completely excluded from Zoom, Meet, and any screenshare or recording tool. Works on macOS and Windows.",
     size: "large",
   },
-  { icon: Mic,         title: "On-device STT",           description: "Whisper runs locally via Apple MLX. Zero API keys required for transcription. Works fully offline.",                                        size: "small" },
+  { icon: Mic,         title: "On-device STT",           description: "Whisper runs locally — MLX on Apple Silicon, openai-whisper on Windows. Zero API keys required for transcription. Works fully offline.",  size: "small" },
   { icon: Brain,       title: "Conversation memory",      description: "Remembers the last 3–5 Q&A pairs. Follow-up questions like 'what are its features?' work correctly.",                                      size: "small" },
   { icon: MessageSquare,title: "Streaming AI overlay",    description: "Answers stream as bullet points in real time into a frameless, always-on-top Electron window — right when you need them.",               size: "small" },
   { icon: Camera,      title: "Screenshot analysis",      description: "Drop a screenshot and the app OCRs it with Tesseract + AI for instant analysis. Great for coding problems on screen.",                    size: "small" },

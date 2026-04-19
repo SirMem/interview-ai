@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link2, Check } from "lucide-react";
 
 const SITE_TITLE = "SolveWatch AI — Invisible AI for Interviews";
@@ -90,7 +90,8 @@ const onLeave = (e: React.MouseEvent<HTMLElement>, active = false) => {
 
 export default function ShareButtons() {
   const [copied, setCopied] = useState(false);
-  const siteUrl = typeof window !== "undefined" ? window.location.origin : "https://solvewatchai.vercel.app";
+  const [siteUrl, setSiteUrl] = useState("https://solvewatchai.vercel.app");
+  useEffect(() => { setSiteUrl(window.location.origin); }, []);
 
   const copyLink = async () => {
     await navigator.clipboard.writeText(siteUrl);
