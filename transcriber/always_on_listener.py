@@ -341,17 +341,25 @@ class AlwaysOnListener:
             logger.debug("STT final is gibberish, skipping: %r", text)
             return
 
-        # Interviewer enrollment popup — fired when:
-        #   • SpeakerIDWorker flagged this utterance as UNKNOWN (uid in popup set)
-        #   • Candidate is enrolled but interviewer is not yet enrolled
+        # Interviewer enrollment popup — only offer for long enough utterances so
+        # we don't spam the user on short filler words from an unknown speaker.
+        # 10 words ≈ ~7s of speech — enough to be a real interviewer question.
+        _POPUP_MIN_WORDS = 10
         if (utterance_id
                 and utterance_id in self._pending_popup_uids
+                and len(words) >= _POPUP_MIN_WORDS
                 and self._socket_client
                 and self._socket_client.is_connected()):
             self._pending_popup_uids.discard(utterance_id)
             excerpt = text.strip()[:80]
             self._socket_client.send_possible_interviewer(utterance_id, excerpt)
-            logger.info("Offered interviewer enrollment for uid=%.8s: %r", utterance_id, excerpt)
+            logger.info(
+                "Offered interviewer enrollment for uid=%.8s (%d words): %r",
+                utterance_id, len(words), excerpt,
+            )
+        elif utterance_id in self._pending_popup_uids:
+            # Too short — discard the uid so the audio store can evict it
+            self._pending_popup_uids.discard(utterance_id)
 
         logger.info("STT Final: %s", text)
         print(f"Interviewer (streaming): {text}")

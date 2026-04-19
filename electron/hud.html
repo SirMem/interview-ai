@@ -451,75 +451,6 @@
     .committed-text { color: #94a3b8; }
     .tentative-text { color: #94a3b8; opacity: 0.45; font-style: italic; }
 
-    /* ── Interviewer enrollment toast ───────────────────────────────── */
-    .interviewer-toast {
-      position: absolute;
-      bottom: 52px;
-      left: 8px;
-      right: 8px;
-      background: rgba(22, 24, 35, 0.97);
-      border: 1px solid rgba(168, 85, 247, 0.45);
-      border-radius: 8px;
-      padding: 9px 11px;
-      z-index: 100;
-      -webkit-app-region: no-drag;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      transition: opacity 0.2s;
-    }
-
-    .interviewer-toast.hidden { display: none; }
-
-    .interviewer-toast-label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      color: #a78bfa;
-      margin-bottom: 4px;
-    }
-
-    .interviewer-toast-excerpt {
-      font-size: 11px;
-      color: #94a3b8;
-      line-height: 1.4;
-      margin-bottom: 7px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .interviewer-toast-btns {
-      display: flex;
-      gap: 6px;
-    }
-
-    .toast-btn-enroll {
-      flex: 1;
-      padding: 4px 0;
-      border-radius: 5px;
-      border: 1px solid rgba(168, 85, 247, 0.6);
-      background: rgba(168, 85, 247, 0.15);
-      color: #c4b5fd;
-      font-size: 11px;
-      cursor: pointer;
-      transition: background 0.12s;
-    }
-
-    .toast-btn-enroll:hover { background: rgba(168, 85, 247, 0.28); }
-
-    .toast-btn-skip {
-      padding: 4px 10px;
-      border-radius: 5px;
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      background: transparent;
-      color: #64748b;
-      font-size: 11px;
-      cursor: pointer;
-      transition: color 0.12s;
-    }
-
-    .toast-btn-skip:hover { color: #94a3b8; }
-
     /* ── Action bar ──────────────────────────────────────────────────── */
     .action-bar {
       flex-shrink: 0;
@@ -607,16 +538,6 @@
       <div class="ai-response-label"></div>
       <div class="qa-viewer" id="qaViewer">
         <div class="qa-empty">Press Cmd+Shift+X to start recording…</div>
-      </div>
-    </div>
-
-    <!-- Interviewer enrollment toast -->
-    <div class="interviewer-toast hidden" id="interviewerToast">
-      <div class="interviewer-toast-label">Interviewer detected</div>
-      <div class="interviewer-toast-excerpt" id="toastExcerpt"></div>
-      <div class="interviewer-toast-btns">
-        <button class="toast-btn-enroll" id="toastBtnEnroll">Enroll as interviewer</button>
-        <button class="toast-btn-skip"   id="toastBtnSkip">Skip</button>
       </div>
     </div>
 
@@ -1107,49 +1028,14 @@
     }
     initDrag();
 
-    // ── Interviewer enrollment toast ──────────────────────────────────
-    (function () {
-      const toast      = document.getElementById('interviewerToast');
-      const excerptEl  = document.getElementById('toastExcerpt');
-      const btnEnroll  = document.getElementById('toastBtnEnroll');
-      const btnSkip    = document.getElementById('toastBtnSkip');
-      let toastTimer   = null;
-      let pendingAudioId = null;
-
-      function showToast(audioId, text) {
-        pendingAudioId = audioId;
-        excerptEl.textContent = text.length > 70 ? text.slice(0, 70) + '…' : text;
-        toast.classList.remove('hidden');
-        clearTimeout(toastTimer);
-        // Auto-dismiss after 15 seconds
-        toastTimer = setTimeout(hideToast, 15000);
+    // Interviewer enrollment feedback — the popup lives in its own window
+    // (electron/interviewer-notification.html). Just update the status bar here.
+    socket.on('interviewer_enrollment_complete', ({ success, snippet_count }) => {
+      if (success) {
+        setActionStatus(`Interviewer enrolled (${snippet_count || 1} snippet${snippet_count !== 1 ? 's' : ''})`);
+        setTimeout(() => setActionStatus(''), 4000);
       }
-
-      function hideToast() {
-        clearTimeout(toastTimer);
-        toast.classList.add('hidden');
-        pendingAudioId = null;
-      }
-
-      btnEnroll.addEventListener('click', () => {
-        if (!pendingAudioId) return;
-        socket.emit('enroll_interviewer', { audio_id: pendingAudioId });
-        hideToast();
-      });
-
-      btnSkip.addEventListener('click', hideToast);
-
-      socket.on('possible_interviewer_speech', ({ audio_id, text }) => {
-        if (audio_id && text) showToast(audio_id, text);
-      });
-
-      socket.on('interviewer_enrollment_complete', ({ success, snippet_count }) => {
-        if (success) {
-          setActionStatus(`Interviewer enrolled (${snippet_count || 1} snippet${snippet_count !== 1 ? 's' : ''})`);
-          setTimeout(() => setActionStatus(''), 4000);
-        }
-      });
-    })();
+    });
   </script>
 </body>
 </html>
