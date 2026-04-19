@@ -23,6 +23,7 @@ from config import (
     VAD_MIN_WORD_COUNT,
 )
 from vad.metrics import VADMetrics
+from streaming_stt import StreamingSTT
 import log_writer
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ _CHUNK_LOG_SAMPLE_RATE = 0.1
 class AlwaysOnListener:
     """Continuously listens to the microphone and emits detected utterances."""
 
-    def __init__(self, transcriber, socket_client):
+    def __init__(self, transcriber, socket_client, speaker_id=None):
         self._transcriber = transcriber
         self._socket_client = socket_client
 
@@ -63,8 +64,19 @@ class AlwaysOnListener:
         self._min_speech_samples = int(ALWAYS_ON_MIN_SPEECH_DURATION * SAMPLE_RATE)
         self._max_speech_samples = int(ALWAYS_ON_MAX_UTTERANCE_DURATION * SAMPLE_RATE)
 
+        # Optional speaker identification — filters out the candidate's own voice
+        self._speaker_id = speaker_id
+
         # Metrics
         self.metrics = VADMetrics()
+
+        # Streaming STT — rolling buffer + LocalAgreement-2 decoder.
+        # Replaces the old flush-on-silence transcription path for always-on mode.
+        self._streaming_stt = StreamingSTT(
+            transcriber=self._transcriber,
+            on_partial=self._on_stt_partial,
+            on_final=self._on_stt_final,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -85,6 +97,7 @@ class AlwaysOnListener:
             callback=self._audio_callback,
         )
         self._stream.start()
+        self._streaming_stt.start()
         logger.info(
             f"AlwaysOnListener started "
             f"(silence_threshold={ALWAYS_ON_SILENCE_THRESHOLD}s, "
@@ -98,6 +111,11 @@ class AlwaysOnListener:
 
     def stop(self):
         self._running = False
+        # Force-emit stt_final with whatever is buffered so that a question
+        # spoken right before the user pressed stop still gets answered,
+        # even if the 700ms silence timer hasn't fired yet.
+        self._streaming_stt.force_final()
+        self._streaming_stt.stop()
         if self._stream:
             try:
                 self._stream.stop()
@@ -188,6 +206,11 @@ class AlwaysOnListener:
                     self._flush_utterance()
             # If already in silence state, do nothing
 
+        # Feed every chunk into StreamingSTT — it manages its own rolling buffer.
+        # set_vad_silent drives the final-emission timer (700ms silence → stt_final).
+        self._streaming_stt.feed(chunk)
+        self._streaming_stt.set_vad_silent(not is_speech)
+
     def _get_threshold(self) -> float:
         """Get the speech threshold for the current engine."""
         vad = self._transcriber.vad
@@ -201,28 +224,11 @@ class AlwaysOnListener:
     # ------------------------------------------------------------------
 
     def _flush_utterance(self):
-        if not self._speech_buffer:
-            self._reset_vad()
-            return
-
-        if self._speech_samples < self._min_speech_samples:
-            # Too short — likely noise, discard
-            self._reset_vad()
-            return
-
-        audio = np.concatenate(self._speech_buffer)
-        probs = list(self._probability_buffer)
-        silent_frames = self._silent_frames
-        force_flushed = self._force_flushed
-        chunk_count = len(probs)
-        duration_s = self._speech_samples / SAMPLE_RATE
+        # StreamingSTT now handles all transcription and emission via stt_partial /
+        # stt_final events. The old flush path (executor.submit → _transcribe_and_emit)
+        # is disabled to prevent double-emission.
+        # VAD state is still reset so the silence/speech state machine stays clean.
         self._reset_vad()
-
-        # Transcribe in thread pool (MLX is slow, don't block audio callback)
-        self._executor.submit(
-            self._transcribe_and_emit,
-            audio, probs, chunk_count, duration_s, silent_frames, force_flushed,
-        )
 
     def _reset_vad(self):
         self._state = 'silence'
@@ -266,68 +272,61 @@ class AlwaysOnListener:
                 return True
         return False
 
-    def _transcribe_and_emit(self, audio: np.ndarray, probs: list,
-                              chunk_count: int, duration_s: float,
-                              silent_frames: int, force_flushed: bool):
-        try:
-            text = self._transcriber.transcribe_chunk(audio, SAMPLE_RATE)
+    # ── StreamingSTT callbacks ────────────────────────────────────────────────
 
-            # Determine filter outcome
-            was_filtered = False
-            filter_reason = None
+    def _on_stt_partial(self, committed: str, tentative: str):
+        """Called by StreamingSTT every ~300ms with the latest partial transcript."""
+        if self._socket_client and self._socket_client.is_connected():
+            self._socket_client.send_stt_partial(committed, tentative)
 
-            if not text or not text.strip():
-                was_filtered = True
-                filter_reason = 'empty'
+    def _on_stt_final(self, text: str, audio: np.ndarray):
+        """Called by StreamingSTT once VAD silence ≥ 1s (or force_final on stop).
+        Applies hallucination/length filters then speaker ID before emitting.
+        audio: float32 array at 16000 Hz — empty array when called via force_final.
+        """
+        words = text.strip().split()
+        if len(words) < self._min_word_count:
+            logger.debug(f"STT final too short ({len(words)} words), skipping: {text!r}")
+            return
+        if text.strip().lower().rstrip('.!?,') in self._HALLUCINATIONS:
+            logger.debug(f"STT final matched hallucination list, skipping: {text!r}")
+            return
+        if self._is_gibberish(text):
+            logger.debug(f"STT final is gibberish, skipping: {text!r}")
+            return
+
+        # Speaker identification — skip utterances that sound like the candidate
+        if self._speaker_id:
+            sid = self._speaker_id
+            if not sid.is_model_loaded:
+                logger.debug("SpeakerID: model not loaded — identification skipped")
+            elif not sid.has_enrollment:
+                logger.debug("SpeakerID: no enrollment — identification skipped")
+            elif len(audio) == 0:
+                logger.debug("SpeakerID: empty audio — identification skipped")
             else:
-                words = text.strip().split()
-                if len(words) < self._min_word_count:
-                    was_filtered = True
-                    filter_reason = 'too_short'
-                    logger.debug(f"Skipping short/hallucinated output: {text!r}")
-                elif text.strip().lower().rstrip('.!?,') in self._HALLUCINATIONS:
-                    was_filtered = True
-                    filter_reason = 'hallucination'
-                    logger.debug(f"Skipping hallucination: {text!r}")
-                elif self._is_gibberish(text):
-                    was_filtered = True
-                    filter_reason = 'gibberish'
-                    logger.debug(f"Skipping gibberish/repetitive output: {text!r}")
+                duration_s = len(audio) / SAMPLE_RATE
+                is_user, similarity = sid.identify(audio)
+                decision = "CANDIDATE (skip)" if is_user else "INTERVIEWER (pass)"
+                logger.info(
+                    "SpeakerID: similarity=%.3f threshold=%.2f → %s | %.1fs | %r",
+                    similarity, sid.threshold, decision, duration_s, text[:60],
+                )
+                log_writer.log(
+                    'speaker_id_decision',
+                    similarity=round(similarity, 4),
+                    threshold=sid.threshold,
+                    decision="candidate_skipped" if is_user else "interviewer_passed",
+                    audio_duration_s=round(duration_s, 2),
+                    text=text[:60],
+                )
+                if is_user:
+                    return
 
-            # Compute probability stats
-            speech_probs = [p for p in probs if p > 0]
-            avg_prob = sum(speech_probs) / len(speech_probs) if speech_probs else 0.0
-            min_prob = min(speech_probs) if speech_probs else 0.0
-            max_prob = max(speech_probs) if speech_probs else 0.0
+        logger.info(f"STT Final: {text}")
+        print(f"Interviewer (streaming): {text}")
+        log_writer.log('stt_final_emitted', text=text, word_count=len(words))
 
-            # Record utterance metrics
-            engine = self._transcriber.vad.engine_name
-            utterance_record = self.metrics.record_utterance(
-                engine=engine,
-                utterance_duration_s=duration_s,
-                chunk_count=chunk_count,
-                avg_speech_probability=avg_prob,
-                min_speech_probability=min_prob,
-                max_speech_probability=max_prob,
-                silent_frames_at_end=silent_frames,
-                force_flushed=force_flushed,
-                transcription_result=text or '',
-                was_filtered=was_filtered,
-                filter_reason=filter_reason,
-            )
+        if self._socket_client and self._socket_client.is_connected():
+            self._socket_client.send_stt_final(text)
 
-            # Log every utterance (these are infrequent and high-value)
-            log_writer.log('vad_utterance', **utterance_record)
-
-            if was_filtered:
-                return
-
-            logger.info(f"Interviewer: {text}")
-            print(f"Interviewer: {text}")
-            log_writer.log('interviewer_speech', text=text, engine=engine,
-                           avg_probability=round(avg_prob, 4),
-                           duration_s=round(duration_s, 3))
-            if self._socket_client and self._socket_client.is_connected():
-                self._socket_client.send_interviewer_speech(text)
-        except Exception as e:
-            logger.error(f"AlwaysOnListener transcription error: {e}")

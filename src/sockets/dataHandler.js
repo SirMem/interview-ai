@@ -15,6 +15,8 @@
  *    - Streams tokens to HUD via question_answer_token events
  */
 import { EventEmitter } from 'events';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import logger from '../utils/logger.js';
 import { logEvent } from '../utils/file-logger.js';
 import aiService from '../services/ai.service.js';
@@ -99,6 +101,11 @@ class DataHandler extends EventEmitter {
     socket.on('process_transcription', () => this.handleProcessTranscription(socket));
     socket.on('toggle_listen_mode', (data) => this.handleToggleListenMode(socket, data));
     socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
+    socket.on('stt_partial', (data) => this.handleSttPartial(data));
+    socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
+    socket.on('enroll_voice',         () => this.handleEnrollVoice());
+    socket.on('get_enrollment_status', () => this.handleGetEnrollmentStatus(socket));
+    socket.on('load_speaker_id',       (data) => this.handleLoadSpeakerId(socket, data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -295,19 +302,13 @@ class DataHandler extends EventEmitter {
     this.namespace.emit('interviewer_question', { questionId, questionText: fullTranscription });
     this.namespace.emit('question_answer_started', { questionId });
 
-    let fullResponse = '';
     try {
-      for await (const { token } of aiService.answerInterviewQuestion(fullTranscription, transcriptContext, memoryContext)) {
-        fullResponse += token;
-        this.namespace.emit('question_answer_token', { token, questionId });
-      }
-
-      this.namespace.emit('question_answer_complete', { questionId, response: fullResponse });
-      log.info('Manual question answered', { questionId, responseLength: fullResponse.length });
-      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: fullResponse.length });
-
-      if (fullTranscription && fullResponse) {
-        this.transcriptBuffer.addQAPair(fullTranscription, fullResponse);
+      const answerText = await this._streamInterviewAnswer(fullTranscription, questionId, transcriptContext, memoryContext);
+      this.namespace.emit('question_answer_complete', { questionId, response: answerText });
+      log.info('Manual question answered', { questionId, responseLength: answerText.length });
+      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+      if (fullTranscription && answerText) {
+        this.transcriptBuffer.addQAPair(fullTranscription, answerText);
       }
     } catch (err) {
       log.error('Error answering manual question', { questionId, error: err.message });
@@ -483,6 +484,178 @@ class DataHandler extends EventEmitter {
       error: errorMessage,
       message: `Error during ${stage} processing`,
     });
+  }
+
+  // ==================== Streaming STT (always-on mode) ====================
+
+  // Relay stt_partial directly to all HUD clients.
+  // The HUD handler at hud.html:809 displays committed (bright) + tentative (dim).
+  handleSttPartial(data) {
+    const { committed, tentative } = data || {};
+    if (!committed && !tentative) return;
+    this.namespace.emit('stt_partial', {
+      committed: committed || '',
+      tentative: tentative || '',
+    });
+  }
+
+  // Streams an AI answer for an interview question.
+  // Buffers tokens until the AI outputs the "Q: ...\nA:" prefix, then:
+  //   - emits question_text_updated with the extracted question
+  //   - streams remaining tokens as question_answer_token
+  // Returns the answer-only text (Q: line stripped) for memory storage.
+  async _streamInterviewAnswer(rawText, questionId, transcriptContext, memoryContext) {
+    let buffer = '';
+    let answerText = '';
+    let questionExtracted = false;
+
+    for await (const { token } of aiService.answerInterviewQuestion(rawText, transcriptContext, memoryContext)) {
+      if (!questionExtracted) {
+        buffer += token;
+        // Match the required format: Q: <question>\nA: (with optional extra newlines)
+        const match = buffer.match(/^Q:\s*(.+?)\n+A:\s*/s);
+        if (match) {
+          questionExtracted = true;
+          this.namespace.emit('question_text_updated', { questionId, questionText: match[1].trim() });
+          // Emit any answer text already buffered after the A: line
+          const answerStart = buffer.slice(match[0].length);
+          if (answerStart) {
+            answerText += answerStart;
+            this.namespace.emit('question_answer_token', { token: answerStart, questionId });
+          }
+        }
+        // else keep buffering — don't emit Q: line tokens to HUD
+      } else {
+        answerText += token;
+        this.namespace.emit('question_answer_token', { token, questionId });
+      }
+    }
+
+    // Fallback: AI didn't follow the Q:/A: format — emit everything as the answer
+    if (!questionExtracted) {
+      answerText = buffer;
+      if (buffer) this.namespace.emit('question_answer_token', { token: buffer, questionId });
+    }
+
+    return answerText;
+  }
+
+  // stt_final fires from Python when StreamingSTT detects ≥700ms of VAD silence.
+  // Replaces the old interviewer_speech + process_transcription chain for always-on mode.
+  async handleSttFinal(socket, data) {
+    const { text } = data || {};
+    if (!text || !text.trim()) return;
+
+    const questionId        = `q-${Date.now()}`;
+    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
+    const memoryContext     = this.transcriptBuffer.getMemoryContext();
+    this.transcriptBuffer.addUtterance(text);
+
+    log.info('Processing stt_final as interview question', { questionId, textLength: text.length });
+    logEvent('stt_final_received', 'INFO', { module: 'DataHandler', questionId });
+
+    this.namespace.emit('interviewer_question', { questionId, questionText: text });
+    this.namespace.emit('question_answer_started', { questionId });
+
+    try {
+      const answerText = await this._streamInterviewAnswer(text, questionId, transcriptContext, memoryContext);
+      this.namespace.emit('question_answer_complete', { questionId, response: answerText });
+      log.info('stt_final question answered', { questionId, responseLength: answerText.length });
+      logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+      if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
+    } catch (err) {
+      log.error('Error answering stt_final question', { questionId, error: err.message });
+      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+    }
+  }
+
+  // ==================== Voice Enrollment ====================
+
+  // Trigger 30-second voice enrollment recording in Python transcriber.
+  // Broadcasts enrollment_started to all clients (settings page shows countdown).
+  async handleEnrollVoice() {
+    log.info('Voice enrollment triggered');
+    this.namespace.emit('enrollment_started', { seconds: 30 });
+    try {
+      const res  = await fetch('http://localhost:8000/enroll-voice', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      const result = { success: res.ok, ...body };
+      log.info('Voice enrollment complete', result);
+      logEvent('voice_enrolled', 'INFO', { module: 'DataHandler', success: res.ok });
+      this.namespace.emit('enrollment_complete', result);
+    } catch (err) {
+      log.warn('Enrollment request failed', { error: err.message });
+      this.namespace.emit('enrollment_complete', { success: false, error: err.message });
+    }
+  }
+
+  async handleGetEnrollmentStatus(socket) {
+    try {
+      const res  = await fetch('http://localhost:8000/enrollment-status');
+      const body = await res.json().catch(() => ({}));
+      this.emitToSocket(socket, 'enrollment_status', body);
+    } catch (_) {
+      this.emitToSocket(socket, 'enrollment_status', { model_loaded: false, enrolled: false });
+    }
+  }
+
+  // Dynamically load the pyannote speaker ID model using the token already saved
+  // in config/api-keys.json. Emits speaker_id_loading while downloading (can be
+  // slow on first run — model is ~200MB from HuggingFace), then speaker_id_loaded
+  // with success/failure. On success also broadcasts fresh enrollment_status.
+  async handleLoadSpeakerId(socket, data = {}) {
+    // Token may come directly from the UI (user just typed it), or fall back to config
+    let hfToken   = (data.hf_token || '').trim();
+    let threshold = data.threshold ?? 0.70;
+
+    const configPath = join(process.cwd(), 'config', 'api-keys.json');
+    if (!hfToken) {
+      // Fall back to whatever is already saved
+      try {
+        const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+        hfToken   = cfg.hf_token || '';
+        threshold = cfg.speaker_id_threshold ?? threshold;
+      } catch (_) {}
+    }
+
+    if (!hfToken) {
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: 'No HF token provided' });
+      return;
+    }
+
+    // Persist the token + enable flag to config so it survives restarts
+    try {
+      const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+      cfg.hf_token           = hfToken;
+      cfg.speaker_id_enabled = true;
+      cfg.speaker_id_threshold = threshold;
+      writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+    } catch (e) {
+      log.warn('Could not save hf_token to config', { error: e.message });
+    }
+
+    this.emitToSocket(socket, 'speaker_id_loading', {});
+    log.info('Loading speaker ID model on-demand via /load-speaker-id');
+
+    try {
+      const res  = await fetch('http://localhost:8000/load-speaker-id', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ hf_token: hfToken, threshold }),
+      });
+      const body = await res.json().catch(() => ({}));
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: res.ok, ...body });
+
+      if (res.ok) {
+        // Broadcast fresh enrollment status to all connected clients
+        const statusRes  = await fetch('http://localhost:8000/enrollment-status');
+        const statusBody = await statusRes.json().catch(() => ({}));
+        this.namespace.emit('enrollment_status', statusBody);
+      }
+    } catch (err) {
+      log.error('handleLoadSpeakerId error', { error: err.message });
+      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: err.message });
+    }
   }
 
   // ==================== Manual Listen Mode ====================

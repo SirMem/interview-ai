@@ -34,7 +34,7 @@
       min-height: 100vh;
     }
 
-    .layout { max-width: 740px; margin: 0 auto; padding: 0 24px 100px; }
+    .layout { max-width: 740px; margin: 0 auto; padding: 0 24px 40px; }
 
     /* ── Header ─────────────────────────────────── */
     .header {
@@ -67,9 +67,21 @@
       padding: 14px 20px 12px;
       border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
     }
-    .section-title { font-size: 13px; font-weight: 600; }
+    .section-title { font-size: 13px; font-weight: 600; flex-shrink: 0; }
     .section-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    /* ── Section actions (per-section save/reload) ── */
+    .section-actions {
+      display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+    }
+    .section-save-status {
+      font-size: 11px; min-width: 48px; text-align: right;
+      transition: opacity 0.3s;
+    }
+    .section-save-status.ok  { color: var(--green); }
+    .section-save-status.err { color: var(--red); }
 
     /* ── Field ───────────────────────────────────── */
     .field { display: flex; flex-direction: column; gap: 5px; }
@@ -193,7 +205,7 @@
       display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
     }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-primary { background: var(--accent); color: #fff; font-size: 13px; padding: 8px 18px; }
+    .btn-primary { background: var(--accent); color: #fff; }
     .btn-primary:not(:disabled):hover { opacity: 0.88; }
     .btn-secondary { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); }
     .btn-secondary:not(:disabled):hover { border-color: rgba(148,163,184,0.4); }
@@ -201,6 +213,7 @@
     .btn-ghost:hover { color: var(--text); border-color: var(--border2); }
     .btn-success { background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); color: #86efac; }
     .btn-fail { background: var(--red-dim); border: 1px solid rgba(239,68,68,0.25); color: #fca5a5; }
+    .btn-sm { font-size: 11px; padding: 5px 10px; }
 
     /* ── Fallback chain indicator ─────────────────── */
     .fallback-chain {
@@ -273,23 +286,9 @@
     }
     .prompt-tab.active { background: var(--accent-dim); border-color: rgba(59,130,246,0.3); color: #93c5fd; }
 
-    /* ── Save bar ────────────────────────────────── */
-    .save-bar {
-      position: fixed; bottom: 0; left: 0; right: 0;
-      display: flex; align-items: center; justify-content: flex-end; gap: 10px;
-      padding: 12px 28px;
-      background: rgba(15,17,23,0.96);
-      border-top: 1px solid var(--border);
-      backdrop-filter: blur(12px);
-      z-index: 100;
-    }
-    .save-status { font-size: 12px; flex: 1; }
-    .save-status.ok  { color: var(--green); }
-    .save-status.err { color: var(--red); }
-
     /* ── Toast ───────────────────────────────────── */
     .toast {
-      position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
       background: #1e293b; border: 1px solid var(--border2); border-radius: 8px;
       padding: 10px 18px; font-size: 13px; color: var(--text);
       box-shadow: 0 8px 24px rgba(0,0,0,0.4);
@@ -321,7 +320,12 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">AI Providers</span>
-      <span style="font-size:11px;color:var(--muted)">Drag to reorder fallback chain</span>
+      <div class="section-actions">
+        <span class="hint" style="font-size:10px;">Drag to reorder</span>
+        <span class="section-save-status" id="saveStatus-providers"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-providers" onclick="saveSectionSettings('providers')">Save</button>
+      </div>
     </div>
     <div class="section-body">
       <div class="banner banner-info" style="font-size:11px">
@@ -342,6 +346,11 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">Interview Role</span>
+      <div class="section-actions">
+        <span class="section-save-status" id="saveStatus-role"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-role" onclick="saveSectionSettings('role')">Save</button>
+      </div>
     </div>
     <div class="section-body">
       <div class="field">
@@ -371,6 +380,11 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">Screenshots</span>
+      <div class="section-actions">
+        <span class="section-save-status" id="saveStatus-screenshots"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-screenshots" onclick="saveSectionSettings('screenshots')">Save</button>
+      </div>
     </div>
     <div class="section-body">
       <div id="screenshotWarn" class="banner banner-warn" style="display:none">
@@ -392,6 +406,11 @@
   <div class="section">
     <div class="section-header">
       <span class="section-title">Speech-to-Text</span>
+      <div class="section-actions">
+        <span class="section-save-status" id="saveStatus-stt"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-stt" onclick="saveSectionSettings('stt')">Save</button>
+      </div>
     </div>
     <div class="section-body">
       <div class="field">
@@ -425,10 +444,138 @@
     </div>
   </div>
 
+  <!-- ── Speaker Identification ──────────────────────────────── -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Speaker Identification</span>
+      <div class="section-actions">
+        <span class="section-save-status" id="saveStatus-speaker"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-speaker" onclick="saveSectionSettings('speaker')">Save</button>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <!-- Enable toggle -->
+      <div class="field" style="flex-direction:row;align-items:center;gap:12px;">
+        <label class="toggle">
+          <input type="checkbox" id="speakerIdEnabled">
+          <span class="toggle-track"></span>
+        </label>
+        <div>
+          <div style="font-size:13px;font-weight:500;">Enable Speaker Identification</div>
+          <div class="hint" style="margin-top:2px;">
+            Filters out your voice so only the interviewer's questions trigger AI answers.
+            Uses pyannote (HuggingFace) — requires a free token.
+          </div>
+        </div>
+      </div>
+
+      <!-- Everything below hidden until enabled -->
+      <div id="speakerIdPanel" style="display:none;margin-top:4px;">
+
+        <!-- HuggingFace token -->
+        <div class="field">
+          <label class="label">HuggingFace Token</label>
+          <span class="hint">
+            1. Accept model terms at
+            <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM"
+               target="_blank" style="color:var(--accent);">
+              huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+            </a><br>
+            2. Create a token at
+            <a href="https://huggingface.co/settings/tokens" target="_blank"
+               style="color:var(--accent);">huggingface.co/settings/tokens</a>
+            and paste it below.
+          </span>
+          <div class="key-row">
+            <div class="key-wrap">
+              <input type="password" id="hfTokenInput" class="input" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+              <button class="key-toggle" id="hfTokenToggle" type="button">Show</button>
+            </div>
+            <button class="btn btn-secondary" id="btnLoadSpeakerId" style="white-space:nowrap;">Load Model</button>
+          </div>
+          <div id="hfTokenStatus" style="font-size:12px;margin-top:6px;color:var(--muted);"></div>
+        </div>
+
+        <!-- Threshold -->
+        <div class="field">
+          <label class="label">Similarity Threshold
+            <span class="hint" style="display:inline;margin-left:6px;">
+              Higher = stricter. Lower = looser. Default: 0.70
+            </span>
+          </label>
+          <input type="number" id="speakerThreshold" class="input"
+                 min="0.50" max="0.95" step="0.01" value="0.70"
+                 style="width:90px;" />
+        </div>
+
+        <!-- Status banner: loading / error / pending -->
+        <div id="speakerIdLoading" style="display:none;margin-top:8px;">
+          <div class="banner banner-info" style="font-size:12px;">
+            <span id="speakerIdLoadingText">Downloading pyannote model from HuggingFace…</span>
+          </div>
+        </div>
+        <div id="speakerIdError" style="display:none;margin-top:8px;">
+          <div class="banner" style="font-size:12px;background:var(--red-dim);border-color:rgba(239,68,68,0.3);">
+            <span id="speakerIdErrorText"></span>
+          </div>
+        </div>
+
+        <!-- Reading script — shown as soon as loading starts so user can prepare -->
+        <div id="enrollScript" style="
+          display:none;
+          margin: 12px 0 0;
+          padding: 14px 16px;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid var(--border2);
+          border-radius: 8px;
+          font-size: 13px;
+          line-height: 1.8;
+          color: var(--text);
+        ">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px;">
+            Read this aloud when recording starts
+          </div>
+          I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
+          <br><br>
+          Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
+          <br><br>
+          When collaborating on a team, I prioritize clear communication and thorough code reviews. I'm looking forward to discussing my technical background and how I can contribute to your engineering team today.
+        </div>
+
+        <!-- Voice enrollment panel — shown once model is ready -->
+        <div id="enrollPanel" style="display:none;margin-top:12px;">
+          <!-- Progress bar (shown during recording) -->
+          <div id="enrollProgress" style="display:none;margin-bottom:10px;">
+            <div style="font-size:12px;color:#f59e0b;margin-bottom:6px;">
+              Recording… <span id="enrollCountdown">30</span>s remaining — read the script above
+            </div>
+            <div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">
+              <div id="enrollBar" style="height:100%;width:0%;background:#f59e0b;
+                   border-radius:2px;transition:width 1s linear;"></div>
+            </div>
+          </div>
+          <!-- Enroll button + status -->
+          <div class="field" style="flex-direction:row;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn-secondary" id="btnEnrollVoice">Enroll My Voice</button>
+            <span id="enrollStatus" style="font-size:12px;color:var(--muted)">Not enrolled</span>
+          </div>
+        </div>
+
+      </div><!-- /speakerIdPanel -->
+    </div>
+  </div>
+
   <!-- ── HUD Appearance ────────────────────────────────────────── -->
   <div class="section">
     <div class="section-header">
       <span class="section-title">HUD Appearance</span>
+      <div class="section-actions">
+        <span class="section-save-status" id="saveStatus-hud"></span>
+        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻ Reload</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-hud" onclick="saveSectionSettings('hud')">Save</button>
+      </div>
     </div>
     <div class="section-body">
       <div class="field">
@@ -449,13 +596,6 @@
 
 </div><!-- /layout -->
 
-<!-- Save bar -->
-<div class="save-bar">
-  <span class="save-status" id="saveStatus"></span>
-  <button class="btn btn-secondary" id="btnReload">Reload</button>
-  <button class="btn btn-primary"   id="btnSave">Save Settings</button>
-</div>
-
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -467,9 +607,148 @@
 const socket = io('/data-updates', { transports: ['websocket'] });
 const connDot  = document.getElementById('connDot');
 const connText = document.getElementById('connText');
-socket.on('connect',       () => { connDot.className='conn-dot ok';  connText.textContent='Connected'; });
+socket.on('connect', () => {
+  connDot.className='conn-dot ok';
+  connText.textContent='Connected';
+  socket.emit('get_enrollment_status');
+});
 socket.on('disconnect',    () => { connDot.className='conn-dot err'; connText.textContent='Disconnected'; });
 socket.on('connect_error', () => { connDot.className='conn-dot err'; connText.textContent='Error'; });
+
+// ── Speaker Identification ────────────────────────────────────────────────────
+let _sidLoading   = false;
+let _hfTokenSaved = false;
+
+function setHfStatus(msg, color) {
+  const el = document.getElementById('hfTokenStatus');
+  if (el) { el.textContent = msg; el.style.color = color || 'var(--muted)'; }
+}
+
+function updateSpeakerIdPanel() {
+  const enabled = document.getElementById('speakerIdEnabled')?.checked;
+  document.getElementById('speakerIdPanel').style.display = enabled ? '' : 'none';
+}
+document.getElementById('speakerIdEnabled').addEventListener('change', updateSpeakerIdPanel);
+
+document.getElementById('hfTokenToggle')?.addEventListener('click', () => {
+  const inp = document.getElementById('hfTokenInput');
+  const btn = document.getElementById('hfTokenToggle');
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Hide'; }
+  else { inp.type = 'password'; btn.textContent = 'Show'; }
+});
+
+document.getElementById('btnLoadSpeakerId')?.addEventListener('click', () => {
+  const token     = document.getElementById('hfTokenInput').value.trim();
+  const threshold = parseFloat(document.getElementById('speakerThreshold').value) || 0.70;
+  if (!token || token === '***') { showToast('Paste a HuggingFace token first', 'err'); return; }
+  socket.emit('load_speaker_id', { hf_token: token, threshold });
+});
+
+function applyEnrollmentStatus(data) {
+  if (_sidLoading) return;
+
+  const enrollPanel  = document.getElementById('enrollPanel');
+  const enrollScript = document.getElementById('enrollScript');
+  const statusEl     = document.getElementById('enrollStatus');
+  const btn          = document.getElementById('btnEnrollVoice');
+  if (!enrollPanel) return;
+
+  document.getElementById('speakerIdLoading').style.display = 'none';
+  document.getElementById('speakerIdError').style.display   = 'none';
+
+  if (data.model_loaded) {
+    enrollScript.style.display = '';
+    enrollPanel.style.display  = '';
+    setHfStatus('Model ready ✓', '#22c55e');
+    if (data.enrolled) {
+      statusEl.textContent = 'Enrolled ✓';  statusEl.style.color = '#22c55e';
+      btn.textContent = 'Re-enroll Voice';  btn.disabled = false;
+    } else {
+      statusEl.textContent = 'Not enrolled — read the script above then click Enroll';
+      statusEl.style.color = 'var(--muted)';
+      btn.textContent = 'Enroll My Voice';  btn.disabled = false;
+    }
+  } else {
+    enrollPanel.style.display  = 'none';
+    enrollScript.style.display = 'none';
+    if (_hfTokenSaved) setHfStatus('Token saved — click Load Model to activate', 'var(--muted)');
+  }
+}
+socket.on('enrollment_status', applyEnrollmentStatus);
+
+socket.on('speaker_id_loading', () => {
+  _sidLoading = true;
+  document.getElementById('speakerIdLoading').style.display = '';
+  document.getElementById('speakerIdError').style.display   = 'none';
+  document.getElementById('enrollPanel').style.display      = 'none';
+  document.getElementById('enrollScript').style.display     = '';
+  document.getElementById('speakerIdLoadingText').textContent =
+    'Downloading pyannote model from HuggingFace… this may take a minute on first run.';
+  setHfStatus('Downloading model…', '#f59e0b');
+});
+
+socket.on('speaker_id_loaded', (data) => {
+  _sidLoading = false;
+  document.getElementById('speakerIdLoading').style.display = 'none';
+  if (data.success) {
+    _hfTokenSaved = true;
+    document.getElementById('speakerIdError').style.display = 'none';
+    showToast('Model ready — click Enroll My Voice to register your voice', 'ok');
+  } else {
+    document.getElementById('enrollScript').style.display  = 'none';
+    document.getElementById('speakerIdError').style.display = '';
+    document.getElementById('speakerIdErrorText').textContent =
+      `Failed: ${data.error || 'unknown error'} — check token and accept model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM`;
+    setHfStatus('Load failed — check token and model terms', '#ef4444');
+  }
+});
+
+document.getElementById('btnEnrollVoice')?.addEventListener('click', () => socket.emit('enroll_voice'));
+
+let _enrollTimer = null;
+socket.on('enrollment_started', (data) => {
+  const btn = document.getElementById('btnEnrollVoice');
+  if (!btn) return;
+  btn.disabled = true; btn.textContent = 'Recording…';
+  document.getElementById('enrollProgress').style.display = 'block';
+  document.getElementById('enrollStatus').textContent = 'Read the script above aloud…';
+  document.getElementById('enrollStatus').style.color  = '#f59e0b';
+  const script = document.getElementById('enrollScript');
+  if (script) { script.style.borderColor = '#f59e0b'; script.style.background = 'rgba(245,158,11,0.06)'; }
+
+  const total = data.seconds || 30; let remaining = total;
+  document.getElementById('enrollCountdown').textContent = remaining;
+  const bar = document.getElementById('enrollBar');
+  bar.style.transition = 'none'; bar.style.width = '0%';
+  void bar.offsetWidth;
+  bar.style.transition = `width ${total}s linear`;
+  clearInterval(_enrollTimer);
+  _enrollTimer = setInterval(() => {
+    remaining--;
+    document.getElementById('enrollCountdown').textContent = Math.max(0, remaining);
+    bar.style.width = `${((total - remaining) / total) * 100}%`;
+    if (remaining <= 0) clearInterval(_enrollTimer);
+  }, 1000);
+});
+
+socket.on('enrollment_complete', (data) => {
+  clearInterval(_enrollTimer);
+  const btn = document.getElementById('btnEnrollVoice');
+  if (!btn) return;
+  btn.disabled = false;
+  document.getElementById('enrollProgress').style.display = 'none';
+  const script = document.getElementById('enrollScript');
+  if (script) { script.style.borderColor = ''; script.style.background = ''; }
+  if (data.success) {
+    btn.textContent = 'Re-enroll Voice';
+    document.getElementById('enrollStatus').textContent = 'Enrolled ✓';
+    document.getElementById('enrollStatus').style.color  = '#22c55e';
+  } else {
+    btn.textContent = 'Enroll My Voice';
+    document.getElementById('enrollStatus').textContent = `Failed: ${data.error || data.detail || 'unknown error'}`;
+    document.getElementById('enrollStatus').style.color  = '#ef4444';
+  }
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helpers
@@ -493,11 +772,24 @@ function setSlider(id, val, maxVal) {
   el.style.setProperty('--pct', pct + '%');
 }
 
+function setSectionStatus(sectionId, msg, type) {
+  const el = document.getElementById(`saveStatus-${sectionId}`);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = `section-save-status${type ? ' ' + type : ''}`;
+  if (type === 'ok') {
+    setTimeout(() => {
+      el.textContent = '';
+      el.className = 'section-save-status';
+    }, 2500);
+  }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // State
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-let providers = [];   // [{ id, label, hasKey, enabled, model, newKey }]
-let modelCache = {};  // { providerId: [{id, name}] }
+let providers = [];
+let modelCache = {};
 let currentPromptType = 'interview-answer';
 
 const PROVIDER_META = {
@@ -547,20 +839,33 @@ async function loadConfig() {
     // Interview role
     document.getElementById('interviewRole').value = data.interview_role || '';
 
+    // Speaker ID
+    const sidEnabled = !!(data.speaker_id_enabled);
+    document.getElementById('speakerIdEnabled').checked = sidEnabled;
+    updateSpeakerIdPanel();
+    document.getElementById('speakerThreshold').value = data.speaker_id_threshold ?? 0.70;
+
+    // HF token
+    _hfTokenSaved = !!(data.hf_token_set);
+    document.getElementById('hfTokenInput').value = _hfTokenSaved ? '***' : '';
+    if (!_hfTokenSaved) setHfStatus('Paste your token and click Load Model', 'var(--muted)');
+
     renderProviders();
     updateFallbackChain();
 
-    // Pre-load models for providers that have keys
     for (const p of providers) {
       if (p.hasKey) loadModelsForProvider(p.id);
     }
 
-    // Check OpenAI key for STT warning
     updateSttApiKeyWarn();
   } catch (err) {
     console.error('Failed to load config:', err);
     showToast('Failed to load settings', 'err');
   }
+}
+
+function reloadSection() {
+  loadConfig();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -626,7 +931,6 @@ function renderProviders() {
 }
 
 function bindProviderEvents() {
-  // Toggle enable/disable
   document.querySelectorAll('.prov-toggle').forEach(cb => {
     cb.addEventListener('change', e => {
       const idx = +e.target.dataset.idx;
@@ -636,7 +940,6 @@ function bindProviderEvents() {
     });
   });
 
-  // Key input
   document.querySelectorAll('.prov-key-input').forEach(inp => {
     inp.addEventListener('input', e => {
       const idx = +e.target.dataset.idx;
@@ -644,7 +947,6 @@ function bindProviderEvents() {
     });
   });
 
-  // Show/hide key
   document.querySelectorAll('.key-toggle').forEach(btn => {
     btn.addEventListener('click', e => {
       const idx = +e.target.dataset.idx;
@@ -655,7 +957,6 @@ function bindProviderEvents() {
     });
   });
 
-  // Model select
   document.querySelectorAll('.prov-model-select').forEach(sel => {
     sel.addEventListener('change', e => {
       const idx = +e.target.dataset.idx;
@@ -663,7 +964,6 @@ function bindProviderEvents() {
     });
   });
 
-  // Reload models
   document.querySelectorAll('.reload-models-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       const idx = +e.target.dataset.idx;
@@ -671,7 +971,6 @@ function bindProviderEvents() {
     });
   });
 
-  // Test connection
   document.querySelectorAll('.test-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       const idx = +e.target.dataset.idx;
@@ -687,15 +986,9 @@ function bindProviderEvents() {
       e.target.disabled = true;
 
       try {
-        // If there's a new key, save config first so test uses correct key
-        let body;
-        if (keyToTest) {
-          body = { providerId: p.id, key: keyToTest };
-        } else {
-          // Use saved key — we need to send a signal; controller will use stored key
-          // We'll do a mini-save of just this provider's key via test endpoint
-          body = { providerId: p.id, key: '***STORED***' };
-        }
+        const body = keyToTest
+          ? { providerId: p.id, key: keyToTest }
+          : { providerId: p.id, key: '***STORED***' };
 
         const res = await fetch('/api/config/test-provider', {
           method: 'POST',
@@ -794,7 +1087,6 @@ async function loadModelsForProvider(providerId, forceReload = false) {
     if (data.success && data.models.length > 0) {
       modelCache[providerId] = data.models;
 
-      // Update the dropdown if card exists
       const idx = providers.findIndex(p => p.id === providerId);
       if (idx !== -1) {
         const sel = document.querySelector(`.prov-model-select[data-idx="${idx}"]`);
@@ -885,67 +1177,66 @@ async function loadPromptPreview(type) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Save
+// Per-section save
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-document.getElementById('btnSave').addEventListener('click', saveSettings);
-document.getElementById('btnReload').addEventListener('click', () => location.reload());
-
-async function saveSettings() {
-  const btn = document.getElementById('btnSave');
-  const status = document.getElementById('saveStatus');
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
-  status.textContent = '';
-  status.className = 'save-status';
-
+function buildPayload() {
   const isLocalStt = document.getElementById('tabSttLocal').classList.contains('active');
   const sttModel = isLocalStt
     ? document.getElementById('sttLocalModel').value
     : document.getElementById('sttApiModel').value;
 
-  const opVal = +document.getElementById('opacitySlider').value;
-
-  const payload = {
+  return {
     providers: providers.map(p => ({
       id:      p.id,
       key:     p.newKey || '',
       enabled: p.enabled,
       model:   p.model || '',
     })),
-    stt_model:        sttModel,
-    answer_mode:      'auto',
-    hud_opacity:      opVal,
-    screenshots_path: document.getElementById('screenshotsPath').value.trim(),
-    interview_role:   document.getElementById('interviewRole').value.trim(),
+    stt_model:            sttModel,
+    hud_opacity:          +document.getElementById('opacitySlider').value,
+    screenshots_path:     document.getElementById('screenshotsPath').value.trim(),
+    interview_role:       document.getElementById('interviewRole').value.trim(),
+    speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value) || 0.70,
+    speaker_id_enabled:   document.getElementById('speakerIdEnabled').checked,
+    hf_token: (() => {
+      const v = document.getElementById('hfTokenInput').value.trim();
+      return (v && v !== '***') ? v : '';
+    })(),
   };
+}
+
+async function saveSectionSettings(sectionId) {
+  const btn = document.getElementById(`saveBtn-${sectionId}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  setSectionStatus(sectionId, '', '');
 
   try {
     const res = await fetch('/api/config/full', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(buildPayload()),
     });
     const data = await res.json();
 
     if (data.success) {
-      status.textContent = '✓ Saved';
-      status.className = 'save-status ok';
-      showToast('Settings saved successfully', 'ok');
-      // Clear newKey and reload
+      setSectionStatus(sectionId, '✓ Saved', 'ok');
+
+      // If speaker ID enabled and new token entered, trigger model load
+      const newToken       = document.getElementById('hfTokenInput').value.trim();
+      const speakerEnabled = document.getElementById('speakerIdEnabled').checked;
+      if (speakerEnabled && newToken && newToken !== '***') {
+        socket.emit('load_speaker_id');
+      }
+
       setTimeout(() => loadConfig(), 300);
     } else {
-      status.textContent = '✗ ' + data.error;
-      status.className = 'save-status err';
-      showToast(data.error || 'Save failed', 'err');
+      setSectionStatus(sectionId, '✗ ' + (data.error || 'Error'), 'err');
     }
-  } catch (err) {
-    status.textContent = '✗ Network error';
-    status.className = 'save-status err';
-    showToast('Save failed — check server', 'err');
+  } catch {
+    setSectionStatus(sectionId, '✗ Network error', 'err');
   }
 
-  btn.disabled = false;
-  btn.textContent = 'Save Settings';
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

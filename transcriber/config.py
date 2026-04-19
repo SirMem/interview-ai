@@ -91,6 +91,11 @@ VAD_ENERGY_GATE_THRESHOLD: float = float(os.getenv("VAD_ENERGY_GATE_THRESHOLD", 
 VAD_SPEECH_FRAME_RATIO: float = float(os.getenv("VAD_SPEECH_FRAME_RATIO", str(_vad_cfg.get("speech_frame_ratio", 0.7))))
 VAD_MIN_WORD_COUNT: int = int(os.getenv("VAD_MIN_WORD_COUNT", str(_vad_cfg.get("min_word_count", 3))))
 
+# Speaker identification (pyannote)
+HF_TOKEN: str = _app_cfg.get("hf_token", os.getenv("HF_TOKEN", ""))
+SPEAKER_ID_THRESHOLD: float = float(_app_cfg.get("speaker_id_threshold", 0.70))
+SPEAKER_ID_ENABLED: bool = bool(_app_cfg.get("speaker_id_enabled", False))
+
 # Silero VAD parameters
 VAD_SILERO_THRESHOLD: float = float(os.getenv("VAD_SILERO_THRESHOLD", str(_vad_cfg.get("silero_threshold", 0.5))))
 VAD_SILERO_MIN_SPEECH_MS: int = int(os.getenv("VAD_SILERO_MIN_SPEECH_MS", str(_vad_cfg.get("silero_min_speech_duration_ms", 250))))

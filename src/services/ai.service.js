@@ -107,6 +107,23 @@ class AIService {
     return this.config?.models?.[providerId] || DEFAULT_MODELS[providerId] || undefined;
   }
 
+  // o1/o3/o4-series models use max_completion_tokens and don't support temperature
+  _isOModel(model) {
+    return /^o\d/.test(model || '');
+  }
+
+  _openAIParams(model, messages, options, stream = false) {
+    const base = { model, messages };
+    if (stream) base.stream = true;
+    if (this._isOModel(model)) {
+      base.max_completion_tokens = options.max_tokens || 2048;
+    } else {
+      base.temperature = options.temperature || 0.7;
+      base.max_tokens = options.max_tokens || 2048;
+    }
+    return base;
+  }
+
   // ==================== Prompt Cache ====================
 
   _loadAllPrompts() {
@@ -237,12 +254,10 @@ class AIService {
     const apiKey = this.config?.keys?.openai;
     if (!apiKey) throw new Error('OpenAI API key not configured');
     const openai = new OpenAI({ apiKey });
-    const completion = await openai.chat.completions.create({
-      model: options.model || this._getModel('openai'),
-      messages,
-      temperature: options.temperature || 0.7,
-      max_tokens: options.max_tokens || 2048,
-    });
+    const model = options.model || this._getModel('openai');
+    const completion = await openai.chat.completions.create(
+      this._openAIParams(model, messages, options),
+    );
     return completion.choices[0]?.message?.content || 'No response generated';
   }
 
@@ -284,10 +299,14 @@ class AIService {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: m.content }));
 
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
     const response = await client.messages.create({
       model: options.model || this._getModel('claude'),
       max_tokens: options.max_tokens || 2048,
-      system: systemMsg || undefined,
+      system: systemBlock,
       messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
     });
     return response.content[0]?.text || 'No response generated';
@@ -346,13 +365,10 @@ class AIService {
     const apiKey = this.config?.keys?.openai;
     if (!apiKey) throw new Error('OpenAI API key not configured');
     const openai = new OpenAI({ apiKey });
-    const stream = await openai.chat.completions.create({
-      model: options.model || this._getModel('openai'),
-      messages,
-      temperature: options.temperature || 0.7,
-      max_tokens: options.max_tokens || 2048,
-      stream: true,
-    });
+    const model = options.model || this._getModel('openai');
+    const stream = await openai.chat.completions.create(
+      this._openAIParams(model, messages, options, true),
+    );
     for await (const chunk of stream) {
       const token = chunk.choices[0]?.delta?.content || '';
       if (token) yield token;
@@ -403,10 +419,18 @@ class AIService {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // cache_control marks the system prompt as cacheable (ephemeral, 5-min TTL).
+    // Anthropic caches any prefix seen twice within 5 min — ~90% input-token
+    // discount + ~100-200ms TTFT improvement on question 2+ in a session.
+    // Requires prompt >= 1024 tokens to qualify; smaller prompts are ignored silently.
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
     const stream = await client.messages.stream({
       model: options.model || this._getModel('claude'),
       max_tokens: options.max_tokens || 2048,
-      system: systemMsg || undefined,
+      system: systemBlock,
       messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
     });
 

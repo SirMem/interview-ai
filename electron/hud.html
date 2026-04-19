@@ -102,10 +102,11 @@
       font-size: 10px;
       color: #334155;
       line-height: 1.4;
-      min-height: 28px;
+      height: 28px;
       font-style: italic;
       -webkit-app-region: no-drag;
-      word-break: break-word;
+      white-space: nowrap;
+      overflow: hidden;
     }
 
     .live-strip.active {
@@ -187,6 +188,20 @@
 
     .nav-btn:hover:not(:disabled) { background: rgba(60, 65, 90, 0.9); color: #e2e8f0; }
     .nav-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+
+    /* New answer available while viewing an older question */
+    .nav-btn.new-answer {
+      background: rgba(34, 197, 94, 0.15);
+      border-color: rgba(34, 197, 94, 0.8);
+      color: #22c55e;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+      animation: pulse-green 1.5s ease-in-out infinite;
+    }
+
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 8px rgba(34, 197, 94, 0.4); }
+      50%       { box-shadow: 0 0 14px rgba(34, 197, 94, 0.8); }
+    }
 
     /* ── Content ─────────────────────────────────────────────────────── */
     .content {
@@ -389,6 +404,53 @@
       30% { transform: translateY(-4px); opacity: 1; }
     }
 
+    /* ── Thinking placeholder ────────────────────────────────────────── */
+    .thinking-placeholder {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475569;
+      font-style: italic;
+      font-size: 11px;
+      padding: 4px 0;
+    }
+
+    .thinking-placeholder .thinking-dots span {
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: #475569;
+      margin: 0 1px;
+      animation: bounce 1.2s infinite;
+    }
+    .thinking-placeholder .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-placeholder .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    /* ── Streaming text + caret ──────────────────────────────────────── */
+    .stream-text {
+      color: #cbd5e1;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+    }
+
+    .stream-caret {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: #22c55e;
+      margin-left: 1px;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Confidence-weighted live strip ──────────────────────────────── */
+    .committed-text { color: #94a3b8; }
+    .tentative-text { color: #94a3b8; opacity: 0.45; font-style: italic; }
+
     /* ── Action bar ──────────────────────────────────────────────────── */
     .action-bar {
       flex-shrink: 0;
@@ -574,7 +636,7 @@
         liveStrip.textContent = screenshotStatus;
         liveStrip.className = 'live-strip active';
       } else if (saved) {
-        liveStrip.textContent = saved;
+        liveStrip.textContent = saved.length > 100 ? '\u2026' + saved.slice(-100) : saved;
         liveStrip.className = 'live-strip persisted';
       } else {
         liveStrip.textContent = 'No real-time transcription';
@@ -717,6 +779,8 @@
       if (next < 0 || next >= allQAs.length) return;
       viewIndex = next;
       isLocked = viewIndex < allQAs.length - 1;
+      // Clear new-answer highlight once they reach the latest question
+      if (!isLocked) btnNext.classList.remove('new-answer');
       renderNav();
       renderCurrentQA(); // calls updateLiveStrip internally
     }
@@ -753,8 +817,24 @@
         liveLines.push(data.text.trim());
         if (liveLines.length > 3) liveLines.shift();
       }
-      liveStrip.textContent = liveLines.join(' ');
+      const joined = liveLines.join(' ');
+      liveStrip.textContent = joined.length > 100 ? '\u2026' + joined.slice(-100) : joined;
       liveStrip.className = 'live-strip active';
+    });
+
+    // Confidence-weighted live strip — committed words bright, tentative dim.
+    // Wired up now; will fire once streaming STT (phase 5) is built.
+    socket.on('stt_partial', (data) => {
+      const { committed, tentative } = data || {};
+      // Sliding window: show only the tail of committed so the strip stays one line
+      const tail = committed && committed.length > 80 ? '\u2026' + committed.slice(-80) : (committed || '');
+      let html = '';
+      if (tail) html += `<span class="committed-text">${escapeHtml(tail)}</span>`;
+      if (tentative) html += ` <span class="tentative-text">${escapeHtml(tentative)}</span>`;
+      if (html) {
+        liveStrip.innerHTML = html;
+        liveStrip.className = 'live-strip active';
+      }
     });
 
     // Screenshot pipeline status
@@ -839,43 +919,93 @@
     // Interview Q&A
     socket.on('interviewer_question', (data) => {
       // Use the server's authoritative full transcription for the strip display.
-      // liveLines may have been partially cleared by the stop event before this
-      // event arrives, so it can miss leading chunks (e.g. shows only "database."
-      // instead of "ok so tell me what is a database? database.").
       transcriptionMap[data.questionId] = data.questionText || liveLines.join(' ').trim();
-      allQAs.push({ questionId: data.questionId, questionText: data.questionText, answer: '', done: false });
+      allQAs.push({ questionId: data.questionId, questionText: data.questionText, answer: '', done: false, _textNode: null });
       if (!isLocked) {
         viewIndex = allQAs.length - 1;
         renderCurrentQA();
       }
       renderNav();
-    });
 
-    socket.on('question_answer_started', (data) => {
-      const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (qa) { qa.answer = ''; qa.done = false; }
-      if (!isLocked && qa && allQAs.indexOf(qa) === viewIndex) renderCurrentQA();
-    });
-
-    socket.on('question_answer_token', (data) => {
-      const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (!qa) return;
-      qa.answer += data.token;
-      if (allQAs.indexOf(qa) === viewIndex) {
-        let aEl = qaViewer.querySelector('.qa-answer');
-        if (!aEl) {
-          renderCurrentQA();
-        } else {
-          aEl.innerHTML = renderMarkdown(qa.answer);
-          qaViewer.scrollTop = qaViewer.scrollHeight;
+      // Show thinking placeholder immediately — the LLM hasn't fired yet but
+      // the user's question is known. Replaces blank gap with visible feedback.
+      if (!isLocked) {
+        const aEl = qaViewer.querySelector('.qa-answer');
+        if (aEl) {
+          aEl.innerHTML = '<div class="thinking-placeholder">Thinking… <span class="thinking-dots"><span></span><span></span><span></span></span></div>';
         }
       }
     });
 
+    // AI extracted the core question from the raw transcript — update the question card.
+    socket.on('question_text_updated', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.questionText = data.questionText;
+      // Update the live question card if currently visible
+      if (viewIndex >= 0 && allQAs[viewIndex].questionId === data.questionId) {
+        const qEl = qaViewer.querySelector('.qa-question');
+        if (qEl) qEl.textContent = data.questionText;
+      }
+    });
+
+    socket.on('question_answer_started', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.answer = '';
+      qa.done = false;
+      qa._textNode = null;
+      // Thinking placeholder is already showing from interviewer_question — no re-render needed
+    });
+
+    // ── Raw token streaming — appendData instead of innerHTML re-render ──
+    // Previously: aEl.innerHTML = renderMarkdown(qa.answer) on every token
+    // — that re-parses the full accumulated string and replaces the entire DOM
+    // subtree, causing visible jitter on long answers.
+    // Now: append directly to a Text node (no parsing, no reflow per token).
+    // Full markdown render happens once on question_answer_complete.
+    socket.on('question_answer_token', (data) => {
+      const qa = allQAs.find(q => q.questionId === data.questionId);
+      if (!qa) return;
+      qa.answer += data.token;
+
+      if (allQAs.indexOf(qa) !== viewIndex) return;
+
+      let aEl = qaViewer.querySelector('.qa-answer');
+      if (!aEl) { renderCurrentQA(); return; }
+
+      if (!qa._textNode) {
+        // First token: clear thinking placeholder, set up text node + caret
+        aEl.innerHTML = '';
+        const pre = document.createElement('div');
+        pre.className = 'stream-text';
+        qa._textNode = document.createTextNode('');
+        pre.appendChild(qa._textNode);
+        aEl.appendChild(pre);
+
+        const caret = document.createElement('span');
+        caret.className = 'stream-caret';
+        caret.id = `caret-${data.questionId}`;
+        aEl.appendChild(caret);
+      }
+
+      qa._textNode.appendData(data.token);
+      qaViewer.scrollTop = qaViewer.scrollHeight;
+    });
+
     socket.on('question_answer_complete', (data) => {
       const qa = allQAs.find(q => q.questionId === data.questionId);
-      if (qa) qa.done = true;
-      if (qa && allQAs.indexOf(qa) === viewIndex) renderCurrentQA();
+      if (!qa) return;
+      qa.done = true;
+      qa._textNode = null;
+      if (allQAs.indexOf(qa) === viewIndex) {
+        // Viewing this answer — do the full markdown render
+        renderCurrentQA();
+      } else {
+        // Answer completed while user is reading an older question —
+        // highlight the → button green so they know a new answer is ready
+        btnNext.classList.add('new-answer');
+      }
     });
 
     // ── Drag (original working implementation) ────────────────────────
