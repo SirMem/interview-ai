@@ -85,7 +85,7 @@ export default function Navbar() {
         {/* Right CTA */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }} className="hide-mobile">
           <a
-            href="https://github.com/your-username/solveWatchAi"
+            href="https://github.com/parmeet10/solveWatchAi"
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -159,7 +159,7 @@ export default function Navbar() {
             </a>
           ))}
           <a
-            href="https://github.com/your-username/solveWatchAi"
+            href="https://github.com/parmeet10/solveWatchAi"
             target="_blank"
             rel="noopener noreferrer"
             className="btn-primary"

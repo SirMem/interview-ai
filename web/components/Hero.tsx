@@ -200,7 +200,7 @@ export default function Hero() {
               Get Started <ArrowRight size={16} />
             </a>
             <a
-              href="https://github.com/your-username/solveWatchAi"
+              href="https://github.com/parmeet10/solveWatchAi"
               target="_blank"
               rel="noopener noreferrer"
               style={{

@@ -834,6 +834,10 @@
       if (html) {
         liveStrip.innerHTML = html;
         liveStrip.className = 'live-strip active';
+      } else {
+        // Empty partial = candidate voice discarded — clear the strip
+        liveStrip.innerHTML = '';
+        liveStrip.className = 'live-strip';
       }
     });
 
@@ -1027,6 +1031,15 @@
       });
     }
     initDrag();
+
+    // Interviewer enrollment feedback — the popup lives in its own window
+    // (electron/interviewer-notification.html). Just update the status bar here.
+    socket.on('interviewer_enrollment_complete', ({ success, snippet_count }) => {
+      if (success) {
+        setActionStatus(`Interviewer enrolled (${snippet_count || 1} snippet${snippet_count !== 1 ? 's' : ''})`);
+        setTimeout(() => setActionStatus(''), 4000);
+      }
+    });
   </script>
 </body>
 </html>

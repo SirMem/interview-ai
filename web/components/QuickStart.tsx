@@ -72,7 +72,7 @@ const steps = [
     n: "1",
     title: "Clone & first-time setup",
     desc: "Installs Homebrew, Node.js, Python, Ollama, and all dependencies automatically.",
-    code: `git clone https://github.com/your-username/solveWatchAi.git
+    code: `git clone https://github.com/parmeet10/solveWatchAi.git
 cd solveWatchAi
 ./start.sh --setup`,
     label: "terminal",
