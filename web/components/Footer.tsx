@@ -86,7 +86,7 @@ export default function Footer() {
             <Mail size={13} /> Contact
           </a>
           <a
-            href="https://github.com/your-username/solveWatchAi"
+            href="https://github.com/parmeet10/solveWatchAi"
             target="_blank"
             rel="noopener noreferrer"
             style={{
