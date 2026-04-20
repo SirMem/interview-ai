@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, feat/**]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  node:
+    name: Node.js install & syntax check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Syntax check — server entry point
+        run: node --check src/server.js
+
+      - name: Syntax check — app
+        run: node --check src/app.js
+
+      - name: Syntax check — AI service
+        run: node --check src/services/ai.service.js
+
+      - name: Syntax check — Electron main
+        run: node --check electron/main.js
+
+  python:
+    name: Python syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax check — transcriber
+        run: |
+          python -m py_compile transcriber/main.py
+          python -m py_compile transcriber/transcriber.py
+          python -m py_compile transcriber/streaming_stt.py
+          python -m py_compile transcriber/always_on_listener.py
+          python -m py_compile transcriber/socket_client.py
+          python -m py_compile transcriber/config.py

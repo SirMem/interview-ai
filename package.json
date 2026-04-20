@@ -13,12 +13,21 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
-    "Ai",
-    "extractor",
-    "text",
-    "snap",
-    "GPT",
-    "code"
+    "interview-assistant",
+    "ai-interview",
+    "whisper",
+    "speech-to-text",
+    "electron",
+    "real-time-transcription",
+    "coding-interview",
+    "hud-overlay",
+    "openai",
+    "groq",
+    "gemini",
+    "anthropic",
+    "ocr",
+    "stealth-overlay",
+    "local-llm"
   ],
   "author": "Parmeet Singh",
   "license": "ISC",

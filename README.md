@@ -8,12 +8,24 @@
 
 Live transcription → instant AI answers → stealth HUD overlay
 
+[![CI](https://github.com/parmeet10/solveWatchAi/actions/workflows/ci.yml/badge.svg)](https://github.com/parmeet10/solveWatchAi/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-a855f7.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/parmeet10/solveWatchAi?color=a855f7)](https://github.com/parmeet10/solveWatchAi/releases)
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/parmeet10/solveWatchAi)
 [![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)](https://github.com/parmeet10/solveWatchAi)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 
+</div>
+
+---
+
+## Demo
+
+<div align="center">
+  <video src="assets/demo.mp4" controls width="700" autoplay muted loop>
+    <a href="assets/demo.mp4">Watch demo</a>
+  </video>
 </div>
 
 ---
@@ -228,6 +240,25 @@ Run `./start.sh --setup` — it pulls `llama3.2:1b` automatically.
 ```
 
 Copy from `config/api-keys.json.example` on first setup.
+
+---
+
+## Roadmap
+
+Planned features — contributions welcome:
+
+- [ ] Linux support
+- [ ] Browser extension mode (no Electron required)
+- [ ] Remote AI endpoint / self-hosted LLM support
+- [ ] Answer history panel with copy-to-clipboard
+- [ ] Custom hotkey configuration in settings UI
+- [ ] Automated release builds (DMG for macOS, EXE installer for Windows)
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=parmeet10/solveWatchAi&type=Date)](https://star-history.com/#parmeet10/solveWatchAi&Date)
 
 ---
 
