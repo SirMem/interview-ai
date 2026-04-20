@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use SolveWatch AI in your research or build on top of it, please cite it as below."
+type: software
+title: "SolveWatch AI"
+abstract: >
+  Real-time AI interview assistant featuring on-device Whisper STT,
+  streaming LocalAgreement-2 transcription, multi-provider AI fallback
+  (OpenAI / Groq / Gemini / Anthropic), and a stealth Electron HUD overlay
+  that is excluded from all screen-capture tools via OS-level content protection.
+authors:
+  - family-names: Singh
+    given-names: Parmeet
+    email: sparmeet162000@gmail.com
+repository-code: "https://github.com/parmeet10/solveWatchAi"
+license: MIT
+version: "2.0.0"
+date-released: "2026-04-20"
+keywords:
+  - interview assistant
+  - speech-to-text
+  - whisper
+  - electron
+  - real-time transcription
+  - AI overlay
+  - stealth HUD
