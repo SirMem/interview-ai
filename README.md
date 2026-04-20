@@ -23,9 +23,11 @@ Live transcription → instant AI answers → stealth HUD overlay
 ## Demo
 
 <div align="center">
-  <video src="assets/demo.mp4" controls width="700" autoplay muted loop>
-    <a href="assets/demo.mp4">Watch demo</a>
-  </video>
+  <a href="https://youtu.be/GE15expmqXs">
+    <img src="https://img.youtube.com/vi/GE15expmqXs/maxresdefault.jpg" alt="SolveWatch AI Demo" width="700" />
+  </a>
+
+  *Click to watch the demo*
 </div>
 
 ---
