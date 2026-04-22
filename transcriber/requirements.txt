@@ -26,11 +26,19 @@ transformers>=4.35.0
 sentencepiece>=0.1.99
 scikit-learn>=1.3.0
 
-# Speaker identification (pyannote) — requires HF token + model acceptance
-# https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
-pyannote.audio>=3.1.0
+# Speaker identification (SpeechBrain ECAPA-TDNN) — no HF token required
+# https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb
+speechbrain>=1.0.0
 torch>=2.0.0
 torchaudio>=2.0.0
+
+# Telemetry — OpenTelemetry → Grafana Cloud (OTLP HTTP)
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp-proto-http>=1.25.0
+psutil>=5.9.0
+# Optional: NVIDIA GPU metrics. Safe to keep installed on macOS — import is guarded.
+nvidia-ml-py>=12.0.0; sys_platform != "darwin"
 
 # Utilities
 pydantic>=2.5.0

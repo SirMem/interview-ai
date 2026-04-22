@@ -1,7 +1,9 @@
 import ocrService from './ocr.service.js';
-import aiService from './ai.service.js';
+import aiService, { aiCostUSD } from './ai.service.js';
 import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
+import { recordHistogram, addCounter } from '../utils/telemetry.js';
+import { logEvent } from '../utils/file-logger.js';
 
 dotenv.config();
 
@@ -47,13 +49,6 @@ class ImageProcessingService {
     if (this.processedData.length > MAX_PROCESSED_DATA) {
       this.processedData = this.processedData.slice(-MAX_PROCESSED_DATA);
     }
-    // COMMENTED OUT: Frontend removed - no longer needed
-    // // Notify WebSocket clients about the new data
-    // this.dataHandlers.forEach((handler) => {
-    //   if (handler) {
-    //     handler.notifyDataChanged(data);
-    //   }
-    // });
   }
 
   async processImage(imagePath, filename, useContext = false) {
@@ -71,6 +66,7 @@ class ImageProcessingService {
       });
 
       // Emit screenshot captured event (if not already emitted by monitor)
+      addCounter('screenshot_captured_total');
       this.dataHandlers.forEach((handler) => {
         if (handler && handler.emitScreenshotCaptured) {
           handler.emitScreenshotCaptured(filename, imagePath);
@@ -141,7 +137,22 @@ class ImageProcessingService {
       }
 
       const aiDuration = Date.now() - aiStartTime;
-      const provider = gptResponse.provider || 'unknown';
+      const provider   = gptResponse.provider || 'unknown';
+      const model      = gptResponse.model    || 'unknown';
+      // askGpt is non-streaming; total time is the only useful AI measurement.
+      // Record both ttft and total under the screenshot flow so the dashboard
+      // can average across flows when needed.
+      recordHistogram('ai_ttft_ms',  aiDuration, { provider, flow: 'screenshot' });
+      recordHistogram('ai_total_ms', aiDuration, { provider, flow: 'screenshot' });
+
+      // AI observability — tokens + cost
+      const inputTokens  = gptResponse.usage?.input_tokens  || 0;
+      const outputTokens = gptResponse.usage?.output_tokens || 0;
+      const costUsd      = aiCostUSD(model, inputTokens, outputTokens);
+      const tokenLabels  = { provider, model, flow: 'screenshot' };
+      addCounter('ai_input_tokens_total',  inputTokens,  tokenLabels);
+      addCounter('ai_output_tokens_total', outputTokens, tokenLabels);
+      addCounter('ai_cost_usd_total',      costUsd,      tokenLabels);
 
       // Generate messageId for this processing
       const messageId = `msg-${Date.now()}-${Math.random()
@@ -195,6 +206,28 @@ class ImageProcessingService {
         aiDuration: `${aiDuration}ms`,
         provider,
         useContext: actuallyUsedContext,
+      });
+
+      // Fix #8 — pipeline histogram + per-screenshot structured record
+      recordHistogram('screenshot_pipeline_total_ms', totalDuration);
+      logEvent('screenshot_processed', 'INFO', {
+        module: 'ImageProcessingService',
+        flow: 'screenshot',
+        processId,
+        filename,
+        ocr_text: extractedText,
+        ocr_word_count: extractedText.trim().split(/\s+/).filter(Boolean).length,
+        answer: gptResponse.message?.content ?? '',
+        answer_word_count: (gptResponse.message?.content ?? '').trim().split(/\s+/).filter(Boolean).length,
+        provider,
+        model,
+        input_tokens:  inputTokens,
+        output_tokens: outputTokens,
+        cost_usd:      costUsd,
+        used_context: actuallyUsedContext,
+        ocr_duration_ms: ocrDuration,
+        ai_total_ms:     aiDuration,
+        screenshot_pipeline_total_ms: totalDuration,
       });
 
       const processedItem = {

@@ -10,6 +10,7 @@ import {
   errorHandler,
   notFoundHandler,
 } from './middleware/error.middleware.js';
+import { httpTelemetryMiddleware } from './middleware/telemetry.middleware.js';
 import { CONFIG } from './config/constants.js';
 import logger from './utils/logger.js';
 
@@ -23,6 +24,7 @@ const log = logger('App');
 const app = express();
 
 // Middleware
+app.use(httpTelemetryMiddleware);  // first — times every request, even errors
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

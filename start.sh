@@ -302,17 +302,16 @@ except: print('small')
 fi
 
 # ── Log file setup ────────────────────────────────────────────────────────────
-# Two log files:
-#   logs/app.jsonl        — structured NDJSON (all Node actions, settings, VAD, models)
-#   logs/transcriber.log  — Python transcriber text log
+# Structured logs now flow to Grafana Cloud via OpenTelemetry — see
+# config/api-keys.json `telemetry` block. The local logs/ directory is only
+# kept for the live-tail Python text log (a debugging convenience).
 mkdir -p "$SCRIPT_DIR/logs"
-APP_JSON_LOG="$SCRIPT_DIR/logs/app.jsonl"
 PYTHON_LOG="$SCRIPT_DIR/logs/transcriber.log"
 
 if $NEW_LOGS; then
-  log "Clearing all logs (--newlogs)..."
-  rm -f "$SCRIPT_DIR/logs/"*.json "$SCRIPT_DIR/logs/"*.jsonl "$SCRIPT_DIR/logs/"*.log "$SCRIPT_DIR/logs/"*.ndjson
-  ok "Logs cleared."
+  log "Clearing local text log (--newlogs)..."
+  rm -f "$SCRIPT_DIR/logs/"*.log
+  ok "Local logs cleared."
 fi
 
 echo ""
@@ -335,12 +334,12 @@ wait_for_port() {
 }
 
 # ── 1. Node.js backend ────────────────────────────────────────────────────────
-# Node logs go to logs/app.jsonl (structured). Console output goes to /dev/null.
+# Structured events go to Grafana Cloud via OTel. Console output is suppressed.
 log "Starting Node.js backend (port $NODE_PORT)..."
 node src/server.js >/dev/null 2>&1 &
 NODE_PID=$!
 PIDS+=("$NODE_PID")
-wait_for_port "$NODE_PORT" "Node.js backend" "$APP_JSON_LOG"
+wait_for_port "$NODE_PORT" "Node.js backend" "(see Grafana Cloud)"
 
 # ── 2. Python transcriber ─────────────────────────────────────────────────────
 TRANSCRIBER_DIR="$SCRIPT_DIR/transcriber"
@@ -397,8 +396,8 @@ echo -e "  Node.js      → PID $NODE_PID"
 echo -e "  Transcriber  → PID $PYTHON_PID"
 echo -e "  Electron HUD → PID $ELECTRON_PID"
 echo -e ""
-echo -e "  ${BOLD}Log files:${RESET}"
-echo -e "  Structured JSON  → ${DIM}logs/app.jsonl${RESET}"
+echo -e "  ${BOLD}Logs:${RESET}"
+echo -e "  Structured       → ${DIM}Grafana Cloud (telemetry block in api-keys.json)${RESET}"
 echo -e "  Transcriber text → ${DIM}logs/transcriber.log${RESET}"
 echo -e ""
 echo -e "  ${BOLD}Quick links:${RESET}"

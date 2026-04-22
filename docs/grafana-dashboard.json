@@ -1,0 +1,593 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus (metrics)",
+      "description": "Pick your grafanacloud-*-prom data source",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_LOKI",
+      "label": "Loki (logs)",
+      "description": "Pick your grafanacloud-*-logs data source",
+      "type": "datasource",
+      "pluginId": "loki",
+      "pluginName": "Loki"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
+    { "type": "datasource", "id": "loki", "name": "Loki", "version": "1.0.0" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "piechart", "name": "Pie chart", "version": "" },
+    { "type": "panel", "id": "heatmap", "name": "Heatmap", "version": "" },
+    { "type": "panel", "id": "barchart", "name": "Bar chart", "version": "" },
+    { "type": "panel", "id": "logs", "name": "Logs", "version": "" }
+  ],
+  "title": "SolveWatch AI — Observability",
+  "uid": "solvewatch-ai",
+  "tags": ["solvewatch", "llm", "observability"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 3,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "annotations": {
+    "list": [
+      {
+        "name": "Errors",
+        "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+        "enable": true,
+        "iconColor": "red",
+        "expr": "{service_namespace=\"solvewatch\"} | json | level=\"ERROR\"",
+        "titleFormat": "ERROR — {{event}}"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(host_cpu_percent{host_name!=\"\"}, host_name)",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "host_owner",
+        "label": "Owner",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(host_cpu_percent{host_owner!=\"\"}, host_owner)",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "device_cpu_brand",
+        "label": "CPU brand",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(host_cpu_percent{device_cpu_brand!=\"\"}, device_cpu_brand)",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "service_name",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(process_cpu_percent, service_name)",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "provider",
+        "label": "AI provider",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(ai_total_ms_count, provider)",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "flow",
+        "label": "Flow",
+        "type": "custom",
+        "query": "transcription,screenshot",
+        "includeAll": true, "multi": true,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 5, "type": "stat", "title": "Active machines",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "count(count by (host_name) (host_cpu_percent{host_name!=\"\"}))" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple" }] } } },
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 1, "type": "stat", "title": "$ spent (selected range)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(increase(ai_cost_usd_total{provider=~\"$provider\", flow=~\"$flow\"}[$__range]))" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 1.0 }, { "color": "red", "value": 5.0 }
+      ]}}},
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "P95 end-to-end",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(end_to_end_question_ms_bucket{host_name=~\"$host\"}[$__range])))" }],
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "yellow", "value": 700 }, { "color": "red", "value": 1500 }
+      ]}}},
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Questions answered",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "refId": "A", "expr": "sum(increase(utterances_passed_total[$__range]))" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue" }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 103, "type": "row", "title": "System resources (per host)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 }, "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 51, "type": "timeseries", "title": "Host CPU% by host",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name, host_owner, device_cpu_brand) (host_cpu_percent{host_name=~\"$host\", host_owner=~\"$host_owner\", device_cpu_brand=~\"$device_cpu_brand\"})",
+        "legendFormat": "{{host_owner}} / {{host_name}} ({{device_cpu_brand}})"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } }
+    },
+    {
+      "id": 52, "type": "timeseries", "title": "Host memory % by host",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name, host_owner) (host_memory_percent{host_name=~\"$host\", host_owner=~\"$host_owner\"})",
+        "legendFormat": "{{host_owner}} / {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } }
+    },
+    {
+      "id": 53, "type": "timeseries", "title": "Process CPU% (Node + Python combined)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (service_name, host_name) (process_cpu_percent{host_name=~\"$host\", service_name=~\"$service_name\"})",
+        "legendFormat": "{{service_name}} @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "id": 54, "type": "timeseries", "title": "Process RSS (Node + Python combined)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (service_name, host_name) (process_memory_rss_bytes{host_name=~\"$host\", service_name=~\"$service_name\"})",
+        "legendFormat": "{{service_name}} @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 531, "type": "timeseries", "title": "Node CPU% (server only)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 21 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name) (process_cpu_percent{service_name=\"solvewatch.server\", host_name=~\"$host\"})",
+        "legendFormat": "Node @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "fixed", "fixedColor": "blue" } } }
+    },
+    {
+      "id": 532, "type": "timeseries", "title": "Python CPU% (transcriber only)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 21 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name) (process_cpu_percent{service_name=\"solvewatch.transcriber\", host_name=~\"$host\"})",
+        "legendFormat": "Python @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "fixed", "fixedColor": "yellow" } } }
+    },
+    {
+      "id": 541, "type": "timeseries", "title": "Node RSS (server only)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 21 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name) (process_memory_rss_bytes{service_name=\"solvewatch.server\", host_name=~\"$host\"})",
+        "legendFormat": "Node @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "blue" } } }
+    },
+    {
+      "id": 542, "type": "timeseries", "title": "Python RSS (transcriber only)",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 21 },
+      "targets": [{
+        "refId": "A",
+        "expr": "avg by (host_name) (process_memory_rss_bytes{service_name=\"solvewatch.transcriber\", host_name=~\"$host\"})",
+        "legendFormat": "Python @ {{host_name}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "yellow" } } }
+    },
+
+    {
+      "id": 112, "type": "row", "title": "HTTP API performance",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 }, "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 61, "type": "timeseries", "title": "HTTP P95 latency by route",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "targets": [{
+        "refId": "A",
+        "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_ms_bucket[$__rate_interval])))",
+        "legendFormat": "{{route}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 62, "type": "timeseries", "title": "HTTP request rate by status code",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "targets": [{
+        "refId": "A",
+        "expr": "sum by (status_code) (rate(http_request_duration_ms_count[$__rate_interval]))",
+        "legendFormat": "HTTP {{status_code}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+    },
+
+    {
+      "id": 105, "type": "row", "title": "Logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 }, "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 82, "type": "logs", "title": "Complete logs — both services (Node + Python)",
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 39 },
+      "targets": [{
+        "refId": "A",
+        "expr": "{service_namespace=\"solvewatch\", service_name=~\"$service_name\"}"
+      }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 821, "type": "logs", "title": "Node logs only (server)",
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 51 },
+      "targets": [{
+        "refId": "A",
+        "expr": "{service_namespace=\"solvewatch\", service_name=\"solvewatch.server\"}"
+      }],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 822, "type": "logs", "title": "Python logs only (transcriber)",
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 51 },
+      "targets": [{
+        "refId": "A",
+        "expr": "{service_namespace=\"solvewatch\", service_name=\"solvewatch.transcriber\"}"
+      }],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+    {
+      "id": 84, "type": "logs", "title": "Errors only (both services)",
+      "datasource": { "type": "loki", "uid": "${DS_LOKI}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 63 },
+      "targets": [{
+        "refId": "A",
+        "expr": "{service_namespace=\"solvewatch\"} | json | level=\"ERROR\""
+      }],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+    },
+
+    {
+      "id": 110, "type": "row", "title": "SLO compliance (expand to view)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 }, "collapsed": true,
+      "panels": [
+        {
+          "id": 11, "type": "stat", "title": "% questions ≤ 700 ms",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 52 },
+          "targets": [{ "refId": "A", "expr": "100 * (sum(increase(end_to_end_question_ms_bucket{le=\"700\"}[$__range])) / sum(increase(end_to_end_question_ms_count[$__range])))" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null }, { "color": "yellow", "value": 90 }, { "color": "green", "value": 99 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 12, "type": "stat", "title": "% questions ≤ 1500 ms",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 52 },
+          "targets": [{ "refId": "A", "expr": "100 * (sum(increase(end_to_end_question_ms_bucket{le=\"1500\"}[$__range])) / sum(increase(end_to_end_question_ms_count[$__range])))" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null }, { "color": "yellow", "value": 95 }, { "color": "green", "value": 99 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 13, "type": "stat", "title": "AI provider error rate",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 52 },
+          "targets": [{ "refId": "A", "expr": "100 * (sum(rate(ai_provider_failure_total[$__rate_interval])) / clamp_min(sum(rate(ai_provider_success_total[$__rate_interval])) + sum(rate(ai_provider_failure_total[$__rate_interval])), 1))" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 14, "type": "stat", "title": "Listener uptime",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 52 },
+          "targets": [{ "refId": "A", "expr": "100 * avg_over_time(listener_active{host_name=~\"$host\"}[$__range])" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue" }] } } },
+          "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        }
+      ]
+    },
+
+    {
+      "id": 101, "type": "row", "title": "Latency (expand to view)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 }, "collapsed": true,
+      "panels": [
+        {
+          "id": 21, "type": "timeseries", "title": "End-to-end question latency (P50 / P95 / P99)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(end_to_end_question_ms_bucket{host_name=~\"$host\"}[$__rate_interval])))", "legendFormat": "P50" },
+            { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(end_to_end_question_ms_bucket{host_name=~\"$host\"}[$__rate_interval])))", "legendFormat": "P95" },
+            { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(end_to_end_question_ms_bucket{host_name=~\"$host\"}[$__rate_interval])))", "legendFormat": "P99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "id": 22, "type": "heatmap", "title": "End-to-end latency distribution (heatmap)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+          "targets": [{ "refId": "A", "expr": "sum by (le) (rate(end_to_end_question_ms_bucket{host_name=~\"$host\"}[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{le}}" }],
+          "options": { "calculate": false, "yAxis": { "unit": "ms" }, "color": { "scheme": "Spectral", "mode": "scheme" } }
+        },
+        {
+          "id": 23, "type": "timeseries", "title": "Per-stage latency P95 stacked",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(vad_latency_ms_bucket[$__rate_interval])))",          "legendFormat": "VAD" },
+            { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(whisper_decode_ms_bucket[$__rate_interval])))",       "legendFormat": "Whisper decode" },
+            { "refId": "C", "expr": "histogram_quantile(0.95, sum by (le) (rate(speaker_id_latency_ms_bucket[$__rate_interval])))",   "legendFormat": "Speaker ID" },
+            { "refId": "D", "expr": "histogram_quantile(0.95, sum by (le) (rate(silence_wait_actual_ms_bucket[$__rate_interval])))",  "legendFormat": "Silence wait" },
+            { "refId": "E", "expr": "histogram_quantile(0.95, sum by (le) (rate(ai_ttft_ms_bucket[$__rate_interval])))",              "legendFormat": "AI TTFT" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+        },
+        {
+          "id": 25, "type": "timeseries", "title": "AI TTFT by provider (P95)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+          "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, provider) (rate(ai_ttft_ms_bucket{provider=~\"$provider\", flow=~\"$flow\"}[$__rate_interval])))", "legendFormat": "{{provider}}" }],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "id": 26, "type": "timeseries", "title": "Whisper decode by backend (P95)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 73 },
+          "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, backend, model) (rate(whisper_decode_ms_bucket[$__rate_interval])))", "legendFormat": "{{backend}} / {{model}}" }],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "id": 24, "type": "timeseries", "title": "Silence-wait actual (P50/P95)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 73 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(silence_wait_actual_ms_bucket[$__rate_interval])))", "legendFormat": "P50" },
+            { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(silence_wait_actual_ms_bucket[$__rate_interval])))", "legendFormat": "P95" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        }
+      ]
+    },
+
+    {
+      "id": 102, "type": "row", "title": "AI cost & tokens (expand to view)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 57 }, "collapsed": true,
+      "panels": [
+        {
+          "id": 41, "type": "timeseries", "title": "$ rate by provider",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
+          "targets": [{ "refId": "A", "expr": "sum by (provider) (rate(ai_cost_usd_total{provider=~\"$provider\", flow=~\"$flow\"}[$__rate_interval]))", "legendFormat": "{{provider}}" }],
+          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 6, "custom": { "fillOpacity": 30, "stacking": { "mode": "normal" } } } }
+        },
+        {
+          "id": 42, "type": "timeseries", "title": "Tokens in/out by model",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 58 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (model) (rate(ai_input_tokens_total{provider=~\"$provider\", flow=~\"$flow\"}[$__rate_interval]))",  "legendFormat": "in: {{model}}" },
+            { "refId": "B", "expr": "sum by (model) (rate(ai_output_tokens_total{provider=~\"$provider\", flow=~\"$flow\"}[$__rate_interval]))", "legendFormat": "out: {{model}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+        },
+        {
+          "id": 6, "type": "stat", "title": "Cost per question",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 66 },
+          "targets": [{ "refId": "A", "expr": "sum(increase(ai_cost_usd_total[$__range])) / clamp_min(sum(increase(utterances_passed_total[$__range])), 1)" }],
+          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 5, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 0.005 }, { "color": "red", "value": 0.05 }
+          ]}}},
+          "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 2, "type": "stat", "title": "Spend forecast (30 days)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 66 },
+          "targets": [{ "refId": "A", "expr": "sum(rate(ai_cost_usd_total[1h])) * 86400 * 30" }],
+          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 25 }, { "color": "red", "value": 100 }
+          ]}}},
+          "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 44, "type": "piechart", "title": "Output-token share by provider",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 66 },
+          "targets": [{ "refId": "A", "expr": "sum by (provider) (increase(ai_output_tokens_total[$__range]))", "legendFormat": "{{provider}}" }],
+          "options": { "pieType": "donut", "displayLabels": ["name", "percent"], "legend": { "displayMode": "list", "placement": "right" } }
+        },
+        {
+          "id": 45, "type": "stat", "title": "Local vs paid (output tokens)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 66 },
+          "targets": [
+            { "refId": "A", "expr": "sum(increase(ai_output_tokens_total{provider=\"ollama\"}[$__range]))",  "legendFormat": "local (ollama)" },
+            { "refId": "B", "expr": "sum(increase(ai_output_tokens_total{provider!=\"ollama\"}[$__range]))", "legendFormat": "paid (cloud)" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal" }
+        },
+        {
+          "id": 46, "type": "stat", "title": "Anthropic cache hit ratio",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 74 },
+          "targets": [{ "refId": "A", "expr": "100 * sum(increase(ai_cache_read_tokens_total[$__range])) / clamp_min(sum(increase(ai_input_tokens_total{provider=\"claude\"}[$__range])) + sum(increase(ai_cache_read_tokens_total[$__range])) + sum(increase(ai_cache_creation_tokens_total[$__range])), 1)" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null }, { "color": "yellow", "value": 30 }, { "color": "green", "value": 70 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 47, "type": "timeseries", "title": "Anthropic cache reads vs creations vs uncached input (rate)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 18, "x": 6, "y": 74 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(ai_cache_read_tokens_total[$__rate_interval]))",                       "legendFormat": "cache hit (cheap)" },
+            { "refId": "B", "expr": "sum(rate(ai_cache_creation_tokens_total[$__rate_interval]))",                   "legendFormat": "cache write (expensive)" },
+            { "refId": "C", "expr": "sum(rate(ai_input_tokens_total{provider=\"claude\"}[$__rate_interval]))",       "legendFormat": "uncached input" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } } }
+        }
+      ]
+    },
+
+    {
+      "id": 111, "type": "row", "title": "Screenshot pipeline (expand to view)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 }, "collapsed": true,
+      "panels": [
+        {
+          "id": 31, "type": "timeseries", "title": "Screenshot pipeline total (P50/P95/P99)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 59 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(screenshot_pipeline_total_ms_bucket[$__rate_interval])))", "legendFormat": "P50" },
+            { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(screenshot_pipeline_total_ms_bucket[$__rate_interval])))", "legendFormat": "P95" },
+            { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(screenshot_pipeline_total_ms_bucket[$__rate_interval])))", "legendFormat": "P99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "id": 32, "type": "timeseries", "title": "OCR duration P95 (with vs without coords)",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 59 },
+          "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, has_coordinates) (rate(ocr_duration_ms_bucket[$__rate_interval])))", "legendFormat": "has_coords={{has_coordinates}}" }],
+          "fieldConfig": { "defaults": { "unit": "ms" } }
+        },
+        {
+          "id": 33, "type": "stat", "title": "Screenshots captured",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 8, "x": 0, "y": 67 },
+          "targets": [{ "refId": "A", "expr": "sum(increase(screenshot_captured_total[$__range]))" }],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 } },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 34, "type": "stat", "title": "OCR failures",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 8, "x": 8, "y": 67 },
+          "targets": [{ "refId": "A", "expr": "sum(increase(ocr_failed_total[$__range]))" }],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 35, "type": "stat", "title": "OCR success rate",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 8, "x": 16, "y": 67 },
+          "targets": [{ "refId": "A", "expr": "100 * (1 - sum(rate(ocr_failed_total[$__range])) / clamp_min(sum(rate(ocr_duration_ms_count[$__range])), 1))" }],
+          "fieldConfig": { "defaults": { "unit": "percent", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [
+            { "color": "red", "value": null }, { "color": "yellow", "value": 95 }, { "color": "green", "value": 99 }
+          ]}}},
+          "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        }
+      ]
+    },
+
+    {
+      "id": 104, "type": "row", "title": "Pipeline health (expand to view)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 59 }, "collapsed": true,
+      "panels": [
+        {
+          "id": 71, "type": "timeseries", "title": "AI provider success vs failure rate",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (provider) (rate(ai_provider_success_total[$__rate_interval]))", "legendFormat": "✓ {{provider}}" },
+            { "refId": "B", "expr": "sum by (provider, error_class) (rate(ai_provider_failure_total[$__rate_interval]))", "legendFormat": "✗ {{provider}} ({{error_class}})" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ops" } }
+        },
+        {
+          "id": 72, "type": "piechart", "title": "Why utterances were discarded",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 60 },
+          "targets": [{ "refId": "A", "expr": "sum by (reason) (increase(utterances_discarded_total[$__range]))", "legendFormat": "{{reason}}" }],
+          "options": { "pieType": "donut", "displayLabels": ["name", "percent"], "legend": { "displayMode": "list", "placement": "right" } }
+        },
+        {
+          "id": 73, "type": "timeseries", "title": "Always-on listener active",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 60 },
+          "targets": [{ "refId": "A", "expr": "listener_active{host_name=~\"$host\"}", "legendFormat": "{{host_name}}" }],
+          "fieldConfig": { "defaults": { "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 30 } } }
+        }
+      ]
+    }
+  ]
+}

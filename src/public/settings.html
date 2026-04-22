@@ -555,39 +555,22 @@
         </label>
         <div>
           <div style="font-size:13px;font-weight:600">Enable Speaker Identification</div>
-          <div class="hint" style="margin-top:2px">Uses pyannote (HuggingFace). Filters your voice — only the interviewer's questions trigger AI answers.</div>
+          <div class="hint" style="margin-top:2px">SpeechBrain ECAPA-TDNN — runs locally, no token required. Filters your voice so only the interviewer's questions trigger AI answers.</div>
         </div>
       </div>
       <div id="speakerIdPanel" style="display:none">
         <div class="field">
-          <label>HuggingFace Token</label>
           <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">Setup — 2 steps required</div>
+            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">Setup</div>
             <div style="font-size:12px;color:var(--text2);line-height:1.7">
-              <div style="display:flex;gap:8px;align-items:flex-start">
-                <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">1.</span>
-                <span>Accept the model licence on HuggingFace:<br>
-                  <a href="https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM" target="_blank" style="color:var(--purple-l);word-break:break-all">pyannote/wespeaker-voxceleb-resnet34-LM</a>
-                </span>
-              </div>
-              <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-                <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">2.</span>
-                <span>Create a <strong>read</strong> access token and paste it below:</span>
-                <a href="https://huggingface.co/settings/tokens" target="_blank"
-                   style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:var(--purple-dim);border:1px solid var(--border2);border-radius:5px;color:var(--purple-l);font-size:11px;font-weight:600;text-decoration:none;flex-shrink:0">
-                  Open HF Tokens ↗
-                </a>
-              </div>
+              On first load, the model (~22 MB) downloads automatically and runs on the best available device (Apple GPU / CUDA / CPU).
+              Then click <strong>Enroll My Voice</strong> below to record a 30-second sample.
             </div>
           </div>
           <div class="key-row">
-            <div class="key-wrap">
-              <input type="password" id="hfTokenInput" placeholder="hf_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
-              <button class="key-toggle" id="hfTokenToggle" type="button">Show</button>
-            </div>
             <button class="btn btn-secondary btn-sm" id="btnLoadSpeakerId">Load Model</button>
           </div>
-          <div id="hfTokenStatus" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
+          <div id="speakerIdLoadStatus" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
         </div>
         <div class="field">
           <label>Similarity Threshold <span class="hint" style="display:inline;margin-left:6px">Higher = stricter. Default: 0.70</span></label>
@@ -618,17 +601,127 @@
           </div>
         </div>
 
-        <!-- Interviewer enrollment status -->
-        <div id="interviewerEnrollPanel" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border2)">
-          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">Interviewer Voice</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
-            When the HUD detects an unknown speaker, it shows a popup. Tap "Enroll as interviewer" and the voice is saved here.
-            More taps = higher accuracy (up to 5 snippets averaged).
+      </div>
+    </div>
+  </div>
+
+  <!-- Telemetry / Logs -->
+  <div class="section" id="sec-telemetry">
+    <div class="section-header">
+      <div class="sh-left">
+        <div class="sec-icon">📊</div>
+        <div>
+          <div class="sec-title">Telemetry &amp; Logs</div>
+          <div class="sec-desc">Send structured logs + metrics to Grafana Cloud (off by default)</div>
+        </div>
+      </div>
+      <div class="sec-actions">
+        <span id="telemetryStatusPill" style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;background:rgba(120,120,120,0.18);color:var(--muted)">disabled</span>
+      </div>
+    </div>
+    <div class="sec-body">
+      <div class="field" style="flex-direction:row;align-items:center;gap:14px">
+        <label class="toggle">
+          <input type="checkbox" id="telemetryEnabled">
+          <span class="toggle-track"></span>
+        </label>
+        <div>
+          <div style="font-size:13px;font-weight:600">Enable structured logs &amp; metrics</div>
+          <div class="hint" style="margin-top:2px">When on, every question / OCR run / latency measurement is sent to Grafana Cloud. CPU / GPU / memory gauges are sampled every 10 s.</div>
+        </div>
+      </div>
+      <div id="telemetryPanel" style="display:none">
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)">Setup steps</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.7">
+            <div style="display:flex;gap:6px;align-items:flex-start">
+              <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">1.</span>
+              <span><strong>Don't have a Grafana stack?</strong> Sign up free at
+                <a href="https://grafana.com/auth/sign-up/create-user" target="_blank" style="color:var(--purple-l)">grafana.com/auth/sign-up</a>
+                (10k metric series + 50&nbsp;GB logs included; 14-day trial then free tier).
+                Already have one? Open it from
+                <a href="https://grafana.com/orgs" target="_blank" style="color:var(--purple-l)">grafana.com/orgs</a>.</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:flex-start;margin-top:4px">
+              <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">2.</span>
+              <span>In your Grafana stack, open the <strong>OpenTelemetry</strong> setup page:
+                <a href="https://grafana.com/docs/grafana-cloud/send-data/otlp/" target="_blank" style="color:var(--purple-l)">docs link</a>.
+                Or in your Grafana web UI: left sidebar → <strong>Connections → Add new connection</strong> → search "OpenTelemetry" → click <strong>OpenTelemetry (OTLP)</strong>. Copy the <strong>endpoint URL</strong> + <strong>Instance ID</strong> (e.g. <code>1465941</code>).</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:flex-start;margin-top:4px">
+              <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">3.</span>
+              <span>On the same page, click <strong>Generate now</strong> to create an access-policy token (or go to
+                <strong>Administration → Access Policies → Create access policy</strong>; scopes
+                <code>metrics:write</code> + <code>logs:write</code>). Copy the <code>glc_…</code> value.</span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:flex-start;margin-top:4px">
+              <span style="font-weight:700;color:var(--purple-l);flex-shrink:0">4.</span>
+              <span>Paste the three values below and click <strong>Validate &amp; Enable</strong>.</span>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-            <span id="interviewerEnrollStatus" style="font-size:12px;color:var(--muted)">Not enrolled</span>
-            <button class="btn btn-ghost btn-sm" id="btnClearInterviewer" style="display:none">Clear</button>
+        </div>
+
+        <div class="field">
+          <label>OTLP endpoint URL</label>
+          <input type="text" id="telemetryEndpoint" placeholder="https://otlp-gateway-prod-us-east-0.grafana.net/otlp" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Instance ID <span class="hint" style="display:inline;margin-left:6px">The numeric ID shown next to the endpoint</span></label>
+          <input type="text" id="telemetryInstanceId" placeholder="e.g. 1234567" autocomplete="off" style="width:200px">
+        </div>
+        <div class="field">
+          <label>Access Policy Token <span class="hint" style="display:inline;margin-left:6px">Token from the access policy with metrics:write + logs:write</span></label>
+          <div class="key-row">
+            <div class="key-wrap">
+              <input type="password" id="telemetryToken" placeholder="glc_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+              <button class="key-toggle" id="telemetryTokenToggle" type="button">Show</button>
+            </div>
           </div>
+        </div>
+        <div class="field">
+          <label>Service prefix <span class="hint" style="display:inline;margin-left:6px">Lets you separate environments (e.g. solvewatch-dev)</span></label>
+          <input type="text" id="telemetryServicePrefix" value="solvewatch" style="width:200px">
+        </div>
+        <div class="field">
+          <label>Machine label <span class="hint" style="display:inline;margin-left:6px">Friendly name for this machine (e.g. "office-mac" or "test-rig"). Falls back to your OS username. Becomes the <code>host_owner</code> label in Grafana.</span></label>
+          <input type="text" id="telemetryHostOwner" placeholder="e.g. office-mac" autocomplete="off" style="width:300px">
+        </div>
+        <div class="key-row" style="margin-top:8px">
+          <button class="btn btn-primary btn-sm" id="btnSaveTelemetry">Validate &amp; Enable</button>
+          <button class="btn btn-ghost btn-sm" id="btnDisableTelemetry">Disable</button>
+        </div>
+        <div id="telemetryResult" style="font-size:12px;margin-top:10px;color:var(--muted)"></div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border2)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">Auto-import dashboard</div>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;padding:10px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm);font-size:12px;color:var(--text2);line-height:1.6">
+            <div><strong>One-click setup:</strong> creates the SolveWatch dashboard in your Grafana stack. Needs a separate Service Account token (different from the OTLP token above).</div>
+            <div style="margin-top:6px">Steps:</div>
+            <ol style="margin:0;padding-left:18px;line-height:1.7">
+              <li>In your Grafana stack: left sidebar → <strong>Administration → Users and access → Service accounts</strong>
+                (direct path: <code>&lt;your-grafana-url&gt;/org/serviceaccounts</code>)</li>
+              <li>Use an existing service account, or click <strong>Add service account</strong>. Set role to <strong>Admin</strong> so it can write dashboards in any folder.</li>
+              <li>Open the service account → <strong>Add service account token</strong> → name it (e.g. "SolveWatch importer") → click <strong>Generate token</strong> → copy the <code>glsa_…</code> value.</li>
+              <li>Paste your stack URL + the token below and click <strong>Import dashboard to Grafana</strong>.</li>
+            </ol>
+          </div>
+          <div class="field">
+            <label>Grafana URL <span class="hint" style="display:inline;margin-left:6px">Your stack's web URL — find it on <a href="https://grafana.com/orgs" target="_blank" style="color:var(--purple-l)">grafana.com/orgs</a></span></label>
+            <input type="text" id="grafanaUrl" placeholder="https://your-stack.grafana.net" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Service Account token <span class="hint" style="display:inline;margin-left:6px">Starts with <code>glsa_</code>. Admin role with <code>dashboards:write</code>.</span></label>
+            <div class="key-row">
+              <div class="key-wrap">
+                <input type="password" id="grafanaSaToken" placeholder="glsa_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+                <button class="key-toggle" id="grafanaSaTokenToggle" type="button">Show</button>
+              </div>
+            </div>
+          </div>
+          <div class="key-row" style="margin-top:8px">
+            <button class="btn btn-primary btn-sm" id="btnImportDashboard">Import dashboard to Grafana</button>
+          </div>
+          <div id="dashboardImportResult" style="font-size:12px;margin-top:10px;color:var(--muted)"></div>
         </div>
       </div>
     </div>
@@ -703,7 +796,7 @@ function setSectionStatus(id, msg, type) {
 
 // ── State ──────────────────────────────────────────────────────────────────
 let providers=[], modelCache={}, currentPromptType='interview-answer';
-let _sidLoading=false, _hfTokenSaved=false;
+let _sidLoading=false;
 
 const PROV_META = {
   openai: { label:'OpenAI',    ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)', char:'O' },
@@ -740,10 +833,6 @@ async function loadConfig() {
     document.getElementById('speakerIdEnabled').checked = sidOn;
     updateSpeakerIdPanel();
     document.getElementById('speakerThreshold').value = data.speaker_id_threshold??0.70;
-
-    _hfTokenSaved = !!(data.hf_token_set);
-    document.getElementById('hfTokenInput').value = _hfTokenSaved ? '***' : '';
-    if (!_hfTokenSaved) setHfStatus('Paste your token and click Load Model','var(--muted)');
 
     renderProviders(); updateFallbackChain();
     for (const p of providers) { if (p.hasKey) loadModelsForProvider(p.id); }
@@ -999,18 +1088,12 @@ async function loadPromptPreview(type) {
 }
 
 // ── Speaker ID ─────────────────────────────────────────────────────────────
-function setHfStatus(msg,color) { const el=document.getElementById('hfTokenStatus'); if(el){el.textContent=msg;el.style.color=color||'var(--muted)';} }
+function setSpeakerIdLoadStatus(msg,color) { const el=document.getElementById('speakerIdLoadStatus'); if(el){el.textContent=msg;el.style.color=color||'var(--muted)';} }
 function updateSpeakerIdPanel() { document.getElementById('speakerIdPanel').style.display=document.getElementById('speakerIdEnabled').checked?'':'none'; }
 document.getElementById('speakerIdEnabled').addEventListener('change',updateSpeakerIdPanel);
-document.getElementById('hfTokenToggle').addEventListener('click',()=>{
-  const inp=document.getElementById('hfTokenInput'); const isPass=inp.type==='password';
-  inp.type=isPass?'text':'password'; document.getElementById('hfTokenToggle').textContent=isPass?'Hide':'Show';
-});
 document.getElementById('btnLoadSpeakerId').addEventListener('click',()=>{
-  const token=document.getElementById('hfTokenInput').value.trim();
   const thr=parseFloat(document.getElementById('speakerThreshold').value)||0.70;
-  if(!token||token==='***'){showToast('Paste a HuggingFace token first','err');return;}
-  socket.emit('load_speaker_id',{hf_token:token,threshold:thr});
+  socket.emit('load_speaker_id',{threshold:thr});
 });
 socket.on('speaker_id_loading',()=>{
   _sidLoading=true;
@@ -1018,51 +1101,28 @@ socket.on('speaker_id_loading',()=>{
   document.getElementById('speakerIdError').style.display='none';
   document.getElementById('enrollPanel').style.display='none';
   document.getElementById('enrollScript').style.display='';
-  document.getElementById('speakerIdLoadingText').textContent='Downloading pyannote model from HuggingFace…';
-  setHfStatus('Downloading…','var(--yellow)');
+  document.getElementById('speakerIdLoadingText').textContent='Loading SpeechBrain ECAPA model…';
+  setSpeakerIdLoadStatus('Loading…','var(--yellow)');
 });
 socket.on('speaker_id_loaded',data=>{
   _sidLoading=false;
   document.getElementById('speakerIdLoading').style.display='none';
-  if(data.success){_hfTokenSaved=true;document.getElementById('speakerIdError').style.display='none';showToast('Model ready — click Enroll My Voice','ok');}
-  else{document.getElementById('enrollScript').style.display='none';document.getElementById('speakerIdError').style.display='';document.getElementById('speakerIdErrorText').textContent=`Failed: ${data.error||'unknown'}`;setHfStatus('Failed','var(--red)');}
+  if(data.success){document.getElementById('speakerIdError').style.display='none';showToast('Model ready — click Enroll My Voice','ok');}
+  else{document.getElementById('enrollScript').style.display='none';document.getElementById('speakerIdError').style.display='';document.getElementById('speakerIdErrorText').textContent=`Failed: ${data.error||'unknown'}`;setSpeakerIdLoadStatus('Failed','var(--red)');}
 });
 function applyEnrollmentStatus(data) {
   if(_sidLoading)return;
   const ep=document.getElementById('enrollPanel');const es=document.getElementById('enrollScript');const st=document.getElementById('enrollStatus');const btn=document.getElementById('btnEnrollVoice');if(!ep)return;
   document.getElementById('speakerIdLoading').style.display='none';document.getElementById('speakerIdError').style.display='none';
   if(data.model_loaded){
-    es.style.display='';ep.style.display='';setHfStatus('Model ready ✓','var(--green)');
+    es.style.display='';ep.style.display='';
+    const dev=data.device?` (device: ${data.device})`:'';
+    setSpeakerIdLoadStatus(`Model ready ✓${dev}`,'var(--green)');
     if(data.enrolled){st.textContent='Enrolled ✓';st.style.color='var(--green)';btn.textContent='🔄 Re-enroll';btn.disabled=false;}
     else{st.textContent='Not enrolled — click Enroll to start';st.style.color='var(--muted)';btn.textContent='🎤 Enroll My Voice';btn.disabled=false;}
-    // Interviewer enrollment panel
-    const ip=document.getElementById('interviewerEnrollPanel');
-    const is_=document.getElementById('interviewerEnrollStatus');
-    const clrBtn=document.getElementById('btnClearInterviewer');
-    if(ip){ip.style.display='';}
-    if(is_&&clrBtn){
-      if(data.interviewer_enrolled){
-        const n=data.interviewer_snippets||1;
-        is_.textContent=`Enrolled ✓ (${n} snippet${n!==1?'s':''})`;
-        is_.style.color='var(--green)';clrBtn.style.display='';
-      } else {
-        is_.textContent='Not enrolled — use HUD popup during interview';
-        is_.style.color='var(--muted)';clrBtn.style.display='none';
-      }
-    }
-  } else {ep.style.display='none';es.style.display='none';if(_hfTokenSaved)setHfStatus('Token saved — click Load Model','var(--muted)');}
+  } else {ep.style.display='none';es.style.display='none';setSpeakerIdLoadStatus('Click Load Model to begin','var(--muted)');}
 }
 socket.on('enrollment_status',applyEnrollmentStatus);
-// Clear interviewer enrollment
-(function(){
-  const btn=document.getElementById('btnClearInterviewer');
-  if(btn) btn.addEventListener('click',()=>{
-    socket.emit('clear_interviewer');
-    btn.style.display='none';
-    const is_=document.getElementById('interviewerEnrollStatus');
-    if(is_){is_.textContent='Cleared';is_.style.color='var(--muted)';}
-  });
-})();
 document.getElementById('btnEnrollVoice').addEventListener('click',()=>socket.emit('enroll_voice'));
 let _et=null;
 socket.on('enrollment_started',data=>{
@@ -1085,6 +1145,154 @@ socket.on('enrollment_complete',data=>{
   else{btn.textContent='🎤 Enroll My Voice';document.getElementById('enrollStatus').textContent=`Failed: ${data.error||'unknown'}`;document.getElementById('enrollStatus').style.color='var(--red)';}
 });
 
+// ── Telemetry / Logs ─────────────────────────────────────────────────────
+function setTelemetryPanelVisible() {
+  document.getElementById('telemetryPanel').style.display =
+    document.getElementById('telemetryEnabled').checked ? '' : 'none';
+}
+function setTelemetryPill(text, kind /* 'ok'|'warn'|'err'|'off' */) {
+  const el = document.getElementById('telemetryStatusPill'); if (!el) return;
+  const colors = {
+    ok:   { bg: 'rgba(34,197,94,0.18)',  fg: '#86efac' },
+    warn: { bg: 'rgba(245,158,11,0.18)', fg: '#fde68a' },
+    err:  { bg: 'rgba(239,68,68,0.18)',  fg: '#fecaca' },
+    off:  { bg: 'rgba(120,120,120,0.18)', fg: 'var(--muted)' },
+  }[kind] || { bg: 'rgba(120,120,120,0.18)', fg: 'var(--muted)' };
+  el.style.background = colors.bg;
+  el.style.color      = colors.fg;
+  el.textContent      = text;
+}
+async function loadTelemetryStatus() {
+  try {
+    const r = await fetch('/api/telemetry/status');
+    const d = await r.json();
+    if (!d.success) return;
+    document.getElementById('telemetryEnabled').checked = !!d.configured;
+    document.getElementById('telemetryEndpoint').value  = d.otlp_endpoint || '';
+    document.getElementById('telemetryServicePrefix').value = d.service_prefix || 'solvewatch';
+    document.getElementById('telemetryInstanceId').value = d.instance_id || '';
+    document.getElementById('telemetryToken').value = d.auth_token_set ? '***' : '';
+    document.getElementById('telemetryHostOwner').value = d.host_owner || '';
+    document.getElementById('grafanaUrl').value     = d.grafana_url || '';
+    document.getElementById('grafanaSaToken').value = d.grafana_sa_token_set ? '***' : '';
+    setTelemetryPanelVisible();
+    if (d.enabled)         setTelemetryPill('connected', 'ok');
+    else if (d.configured) setTelemetryPill('configured (off)', 'warn');
+    else                   setTelemetryPill('disabled', 'off');
+  } catch {}
+}
+document.getElementById('telemetryEnabled').addEventListener('change', setTelemetryPanelVisible);
+document.getElementById('telemetryTokenToggle').addEventListener('click', () => {
+  const inp = document.getElementById('telemetryToken');
+  const isPass = inp.type === 'password';
+  inp.type = isPass ? 'text' : 'password';
+  document.getElementById('telemetryTokenToggle').textContent = isPass ? 'Hide' : 'Show';
+});
+document.getElementById('btnSaveTelemetry').addEventListener('click', async () => {
+  const btn = document.getElementById('btnSaveTelemetry');
+  const out = document.getElementById('telemetryResult');
+  btn.disabled = true; btn.textContent = 'Validating…';
+  out.style.color = 'var(--muted)'; out.textContent = 'Sending probe to OTLP endpoint…';
+  setTelemetryPill('validating…', 'warn');
+  try {
+    const res = await fetch('/api/telemetry/save-and-reload', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        enabled:        true,
+        otlp_endpoint:  document.getElementById('telemetryEndpoint').value.trim(),
+        instance_id:    document.getElementById('telemetryInstanceId').value.trim(),
+        access_token:   document.getElementById('telemetryToken').value.trim(),
+        service_prefix: document.getElementById('telemetryServicePrefix').value.trim(),
+        host_owner:     document.getElementById('telemetryHostOwner').value.trim(),
+      }),
+    });
+    const d = await res.json();
+    if (d.success && d.enabled) {
+      out.style.color = 'var(--green)';
+      out.textContent = `✓ Connected. Probe HTTP ${d.validation?.status}. Both services are now exporting.`;
+      setTelemetryPill('connected', 'ok');
+      showToast('Telemetry enabled', 'ok');
+    } else {
+      out.style.color = 'var(--red)';
+      out.textContent = `✗ ${d.error || 'Validation failed'}`;
+      setTelemetryPill('disabled', 'err');
+      // Keep the toggle visually on so the user can fix the token without re-toggling
+    }
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = `✗ ${e.message}`;
+    setTelemetryPill('disabled', 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Validate & Enable';
+  }
+});
+document.getElementById('btnDisableTelemetry').addEventListener('click', async () => {
+  const out = document.getElementById('telemetryResult');
+  out.style.color = 'var(--muted)'; out.textContent = 'Disabling…';
+  try {
+    const res = await fetch('/api/telemetry/save-and-reload', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        enabled:        false,
+        otlp_endpoint:  document.getElementById('telemetryEndpoint').value.trim(),
+        instance_id:    document.getElementById('telemetryInstanceId').value.trim(),
+        access_token:   document.getElementById('telemetryToken').value.trim(),
+        service_prefix: document.getElementById('telemetryServicePrefix').value.trim(),
+      }),
+    });
+    const d = await res.json();
+    document.getElementById('telemetryEnabled').checked = false;
+    setTelemetryPanelVisible();
+    setTelemetryPill('disabled', 'off');
+    out.style.color = 'var(--muted)';
+    out.textContent = d.message || 'Telemetry disabled.';
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = `✗ ${e.message}`;
+  }
+});
+// ── Auto-import dashboard to Grafana ─────────────────────────────────────
+document.getElementById('grafanaSaTokenToggle').addEventListener('click', () => {
+  const inp = document.getElementById('grafanaSaToken');
+  const isPass = inp.type === 'password';
+  inp.type = isPass ? 'text' : 'password';
+  document.getElementById('grafanaSaTokenToggle').textContent = isPass ? 'Hide' : 'Show';
+});
+document.getElementById('btnImportDashboard').addEventListener('click', async () => {
+  const btn = document.getElementById('btnImportDashboard');
+  const out = document.getElementById('dashboardImportResult');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  out.style.color = 'var(--muted)'; out.textContent = 'Talking to Grafana…';
+  try {
+    const res = await fetch('/api/telemetry/import-dashboard', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        grafana_url: document.getElementById('grafanaUrl').value.trim(),
+        sa_token:    document.getElementById('grafanaSaToken').value.trim(),
+      }),
+    });
+    const d = await res.json();
+    if (d.success) {
+      out.style.color = 'var(--green)';
+      out.innerHTML = `✓ Imported. <a href="${d.url}" target="_blank" style="color:var(--purple-l);text-decoration:underline">Open dashboard ↗</a> &nbsp; (data sources: ${d.datasources.prometheus} + ${d.datasources.loki})`;
+      showToast('Dashboard imported', 'ok');
+    } else {
+      out.style.color = 'var(--red)';
+      out.textContent = `✗ ${d.error || 'Import failed'}`;
+    }
+  } catch (e) {
+    out.style.color = 'var(--red)';
+    out.textContent = `✗ ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Import dashboard to Grafana';
+  }
+});
+
+loadTelemetryStatus();
+
 // ── Save ───────────────────────────────────────────────────────────────────
 function buildPayload() {
   const local=document.getElementById('tabSttLocal').classList.contains('active');
@@ -1096,7 +1304,6 @@ function buildPayload() {
     interview_role: document.getElementById('interviewRole').value.trim(),
     speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value)||0.70,
     speaker_id_enabled: document.getElementById('speakerIdEnabled').checked,
-    hf_token:(()=>{ const v=document.getElementById('hfTokenInput').value.trim(); return(v&&v!=='***')?v:''; })(),
   };
 }
 async function saveSectionSettings(id) {
@@ -1108,8 +1315,6 @@ async function saveSectionSettings(id) {
     const d=await res.json();
     if(d.success){
       setSectionStatus(id,'✓ Saved','ok');
-      const nt=document.getElementById('hfTokenInput').value.trim();
-      if(document.getElementById('speakerIdEnabled').checked&&nt&&nt!=='***') socket.emit('load_speaker_id');
       setTimeout(loadConfig,300);
     } else { setSectionStatus(id,'✗ '+(d.error||'Error'),'err'); }
   } catch { setSectionStatus(id,'✗ Network error','err'); }
