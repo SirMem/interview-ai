@@ -307,7 +307,7 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             from opentelemetry.sdk.metrics import MeterProvider
             from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
             from opentelemetry.sdk.resources import Resource
-            from opentelemetry.sdk._logs import LoggerProvider, LogRecord
+            from opentelemetry.sdk._logs import LoggerProvider
             from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
             from opentelemetry.exporter.otlp.proto.http.log_exporter  import OTLPLogExporter
@@ -527,7 +527,6 @@ def log(event: str, level: str = 'INFO', **fields):
         return
     try:
         from opentelemetry._logs import SeverityNumber
-        from opentelemetry.sdk._logs import LogRecord
 
         sev_map = {
             'DEBUG':    SeverityNumber.DEBUG,
@@ -538,10 +537,11 @@ def log(event: str, level: str = 'INFO', **fields):
             'CRITICAL': SeverityNumber.FATAL,
         }
         severity = sev_map.get(level.upper(), SeverityNumber.INFO)
-
         attributes = {'event': event, 'service': _service_name, **_jsonable(fields)}
 
-        record = LogRecord(
+        # SDK >=1.27 removed LogRecord from opentelemetry.sdk._logs; Logger.emit()
+        # now accepts keyword arguments directly.
+        _otel_logger.emit(
             timestamp=int(time.time() * 1e9),
             observed_timestamp=int(time.time() * 1e9),
             severity_number=severity,
@@ -549,7 +549,6 @@ def log(event: str, level: str = 'INFO', **fields):
             body=event,
             attributes=attributes,
         )
-        _otel_logger.emit(record)
     except Exception as e:
         # Telemetry must never break the hot path. Log to stdlib logger only.
         logger.debug("telemetry.log failed: %s", e)
