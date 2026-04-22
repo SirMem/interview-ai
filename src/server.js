@@ -9,7 +9,7 @@ import DataHandler from './sockets/dataHandler.js';
 import imageProcessingService from './services/image-processing.service.js';
 import { CONFIG, getLocalIP } from './config/constants.js';
 import logger from './utils/logger.js';
-import { initTelemetry, shutdownTelemetry, startSystemMetricsSampler, isEnabled as isTelemetryEnabled } from './utils/telemetry.js';
+import { initTelemetry, shutdownTelemetry, startSystemMetricsSampler, isEnabled as isTelemetryEnabled, logEvent } from './utils/telemetry.js';
 
 const log = logger('Server');
 
@@ -59,6 +59,8 @@ const io = new Server(httpServer, {
 const dataHandler = new DataHandler(io);
 imageProcessingService.setDataHandlers([dataHandler]);
 
+const _serverStartTime = Date.now();
+
 httpServer.listen(CONFIG.PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
   log.info('Server started');
@@ -68,12 +70,25 @@ httpServer.listen(CONFIG.PORT, '0.0.0.0', () => {
   log.info(
     `Data Updates: ws://localhost:${CONFIG.PORT}/data-updates | ws://${localIP}:${CONFIG.PORT}/data-updates`,
   );
+  logEvent('server_start', 'INFO', {
+    port:         CONFIG.PORT,
+    pid:          process.pid,
+    node_version: process.version,
+    platform:     process.platform,
+    start_time:   new Date().toISOString(),
+  });
 });
 
 // Graceful shutdown handlers
 const gracefulShutdown = () => {
   log.info('Shutting down...');
   screenshotMonitorService.stop && screenshotMonitorService.stop();
+
+  logEvent('server_stop', 'INFO', {
+    pid:            process.pid,
+    uptime_seconds: Math.round((Date.now() - _serverStartTime) / 1000),
+    stop_time:      new Date().toISOString(),
+  });
 
   // Flush any pending OTel batches before exit. shutdownTelemetry resolves once
   // metric/log providers are flushed; failures are swallowed so we still exit.

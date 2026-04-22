@@ -4,6 +4,7 @@ FastAPI server for real-time speech-to-text transcription
 import asyncio
 import logging
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     global _transcription_executor
 
     logger.info("Initializing STT system components...")
+
+    _start_time = time.monotonic()
 
     # Initialize OpenTelemetry → Grafana Cloud (no-op when telemetry.enabled=false).
     telemetry.init_telemetry(_app_cfg)
@@ -180,6 +183,14 @@ async def lifespan(app: FastAPI):
             logger.info("Keyboard handler disabled in configuration")
 
         logger.info("STT system ready")
+        telemetry.log('transcriber_start', 'INFO',
+                      pid=os.getpid(),
+                      platform=sys.platform,
+                      python_version=sys.version.split()[0],
+                      whisper_model=getattr(transcriber, 'model_size', 'unknown'),
+                      whisper_backend=os.environ.get('WHISPER_BACKEND', 'unknown'),
+                      speaker_id_enabled=SPEAKER_ID_ENABLED,
+                      start_time=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
 
     except Exception as e:
         logger.error(f"Failed to initialize STT system: {e}")
@@ -209,7 +220,10 @@ async def lifespan(app: FastAPI):
     if socket_client:
         socket_client.disconnect()
 
-    log_writer.log('transcriber_shutdown')
+    telemetry.log('transcriber_stop', 'INFO',
+                  pid=os.getpid(),
+                  uptime_seconds=round(time.monotonic() - _start_time),
+                  stop_time=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     telemetry.stop_system_metrics_sampler()
     telemetry.shutdown_telemetry()
     logger.info("STT system shut down")
