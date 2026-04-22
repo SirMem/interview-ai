@@ -310,7 +310,7 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             from opentelemetry.sdk._logs import LoggerProvider
             from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
             from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-            from opentelemetry.exporter.otlp.proto.http.log_exporter  import OTLPLogExporter
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
         except Exception as e:
             _enabled = False
             _install_noop_handles()
