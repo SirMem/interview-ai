@@ -1,5 +1,5 @@
 "use client";
-import { ArrowRight, EyeOff, Zap, Cpu } from "lucide-react";
+import { ArrowRight, EyeOff, Zap, Cpu, Activity } from "lucide-react";
 import FadeIn from "./FadeIn";
 import Link from "next/link";
 
@@ -24,6 +24,13 @@ const articles = [
     title: "The STT + AI pipeline",
     desc: "From mic audio to answer on screen: VAD → rolling buffer → Whisper on-device → Node backend → multi-provider AI → streamed HUD overlay.",
     href: "/how-it-works",
+  },
+  {
+    icon: Activity,
+    tag: "Deep dive",
+    title: "Grafana + OpenTelemetry setup",
+    desc: "How SolveWatch ships OTel metrics and structured logs from both the Node backend and Python transcriber to Grafana Cloud — without touching the hot path.",
+    href: "/observability",
   },
 ];
 
