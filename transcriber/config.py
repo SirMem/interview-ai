@@ -17,38 +17,10 @@ BLOCK_SIZE: int = int(SAMPLE_RATE * CHUNK_DURATION)  # Samples per chunk
 # Whisper Model Configuration
 WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "small")  # tiny, base, small, medium, large
 LANGUAGE: Optional[str] = os.getenv("LANGUAGE", "en")  # None for auto-detect
-VAD_FILTER: bool = True  # Voice Activity Detection filter
 
 # Whisper backend: "mlx" (Apple Silicon), "local" (openai-whisper CPU/CUDA), "api" (OpenAI cloud)
 # Leave empty for auto-detection: Apple Silicon → mlx, everything else → local
 WHISPER_BACKEND: str = os.getenv("WHISPER_BACKEND", "")
-
-# Question Detection Configuration
-QUESTION_PATTERN_CONFIDENCE_THRESHOLD: float = 0.7
-
-# Question words for pattern matching
-QUESTION_WORDS: list = [
-    "what", "how", "why", "when", "where", "who", "which",
-    "can", "could", "would", "should", "will", "shall",
-    "is", "are", "was", "were", "do", "does", "did", "have", "has", "had"
-]
-
-# Question patterns
-QUESTION_PATTERNS: list = [
-    "tell me",
-    "explain",
-    "describe",
-    "what about",
-    "can you",
-    "could you",
-    "would you",
-    "how do",
-    "how does",
-    "how did",
-    "what do",
-    "what does",
-    "what did"
-]
 
 # API Configuration
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
@@ -57,9 +29,6 @@ API_WORKERS: int = int(os.getenv("API_WORKERS", "1"))
 
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-# Transcriptions Storage Configuration
-TRANSCRIPTIONS_JSON_FILE: str = os.getenv("TRANSCRIPTIONS_JSON_FILE", "transcriptions.ndjson")
 
 # Keyboard Configuration
 KEYBOARD_ENABLED: bool = os.getenv("KEYBOARD_ENABLED", "false").lower() == "true"
@@ -81,7 +50,6 @@ _app_cfg = _load_json_config()
 _vad_cfg = _app_cfg.get("vad", {})
 
 # Always-On Listener Configuration (continuous interviewer speech detection)
-ALWAYS_ON_ENABLED: bool = _app_cfg.get("always_on_enabled", False)
 ALWAYS_ON_SILENCE_THRESHOLD: float = float(os.getenv("ALWAYS_ON_SILENCE_THRESHOLD", str(_vad_cfg.get("silence_threshold", 1.0))))
 ALWAYS_ON_MIN_SPEECH_DURATION: float = float(os.getenv("ALWAYS_ON_MIN_SPEECH_DURATION", str(_vad_cfg.get("min_speech_duration", 0.75))))
 ALWAYS_ON_MAX_UTTERANCE_DURATION: float = float(os.getenv("ALWAYS_ON_MAX_UTTERANCE_DURATION", str(_vad_cfg.get("max_utterance_duration", 30.0))))
@@ -94,8 +62,7 @@ VAD_ENERGY_GATE_THRESHOLD: float = float(os.getenv("VAD_ENERGY_GATE_THRESHOLD", 
 VAD_SPEECH_FRAME_RATIO: float = float(os.getenv("VAD_SPEECH_FRAME_RATIO", str(_vad_cfg.get("speech_frame_ratio", 0.7))))
 VAD_MIN_WORD_COUNT: int = int(os.getenv("VAD_MIN_WORD_COUNT", str(_vad_cfg.get("min_word_count", 3))))
 
-# Speaker identification (pyannote)
-HF_TOKEN: str = _app_cfg.get("hf_token", os.getenv("HF_TOKEN", ""))
+# Speaker identification (SpeechBrain ECAPA-TDNN — no HF token required)
 SPEAKER_ID_THRESHOLD: float = float(_app_cfg.get("speaker_id_threshold", 0.70))
 SPEAKER_ID_ENABLED: bool = bool(_app_cfg.get("speaker_id_enabled", False))
 

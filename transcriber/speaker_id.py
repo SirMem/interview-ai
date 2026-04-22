@@ -1,27 +1,24 @@
 """
-SpeakerIdentifier — pyannote-based speaker embedding for voice identification.
+SpeakerIdentifier — SpeechBrain ECAPA-TDNN speaker embedding.
 
-Enrollment: record 30s of candidate audio → compute 512-dim embedding → save to disk.
+Enrollment: record 30s of candidate audio → compute 192-dim embedding → save to disk.
 Identification: compare each utterance embedding to the stored candidate embedding
                 using cosine similarity.
 
-Pre-STT diarization support:
-  - SpeakerIDWorker: daemon thread that receives completed VAD segments and decides
-    CANDIDATE / INTERVIEWER / UNKNOWN before Whisper sees the audio.
-  - PendingAudioStore: short-lived store keyed by utterance_id for interviewer enrollment.
-  - Dual-embedding: once interviewer voice is enrolled, identify() uses nearest-neighbor
-    between candidate + interviewer embeddings for higher accuracy.
+Binary decision model:
+  - CANDIDATE  → audio matches enrolled candidate voice → discard (it's the user)
+  - PASS       → anything else → pass to AI (interviewer or unknown)
+
+Device selection: MPS (Apple Silicon) → CUDA (NVIDIA) → CPU fallback.
 
 Thread safety: identify() is called from the SpeakerIDWorker thread (one caller).
-               enroll_from_audio() and enroll_interviewer_snippet() are called from
-               HTTP handler threads — one at a time — so no lock is needed there.
-               PendingAudioStore uses its own internal lock.
+               enroll_from_audio() is called from HTTP handler threads — one at a
+               time — so no lock is needed there.
 
-Prerequisites:
-  1. HuggingFace account — accept model terms at:
-     https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
-  2. Create HF access token at https://huggingface.co/settings/tokens
-  3. Add "hf_token": "hf_..." to config/api-keys.json
+Migration from previous pyannote model:
+  Old embeddings are 512-dim (pyannote). ECAPA is 192-dim. On startup, shape
+  mismatches are detected; the legacy file is renamed to <path>.legacy-512 and
+  the user is treated as not-enrolled until they re-enroll.
 """
 import logging
 import queue
@@ -36,62 +33,35 @@ logger = logging.getLogger(__name__)
 
 # Persistent storage — alongside silero_vad.onnx in the models directory
 EMBEDDING_PATH = Path(__file__).parent / 'models' / 'user_embedding.npy'
-INTERVIEWER_EMBEDDING_PATH = Path(__file__).parent / 'models' / 'interviewer_embedding.npy'
 
-# pyannote model — ResNet-34 trained on VoxCeleb, 512-dim embeddings
-PYANNOTE_MODEL = 'pyannote/wespeaker-voxceleb-resnet34-LM'
+# SpeechBrain ECAPA-TDNN — 22 MB, 192-dim embeddings. No HF token required.
+SPEECHBRAIN_MODEL = 'speechbrain/spkrec-ecapa-voxceleb'
+ECAPA_EMBEDDING_DIM = 192
 
-# Maximum interviewer snippets to average (more = more robust)
-_MAX_INTERVIEWER_SNIPPETS = 5
-# Minimum snippet duration (seconds) to accept for interviewer enrollment
-_MIN_SNIPPET_SECONDS = 2.0
+
+def _get_device() -> str:
+    """Select the best available device for ECAPA inference.
+
+    Returns one of 'mps' (Apple Silicon), 'cuda' (NVIDIA GPU), or 'cpu'.
+    Logs the chosen device; caller doesn't need to.
+    """
+    try:
+        import torch
+        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            logger.info("SpeakerIdentifier: using MPS (Apple GPU)")
+            return 'mps'
+        if torch.cuda.is_available():
+            logger.info("SpeakerIdentifier: using CUDA (NVIDIA GPU)")
+            return 'cuda'
+    except Exception as e:
+        logger.warning("SpeakerIdentifier: device detection error — %s", e)
+    logger.info("SpeakerIdentifier: using CPU")
+    return 'cpu'
 
 
 class SpeakerLabel(Enum):
-    CANDIDATE   = "candidate"    # matches enrolled candidate → discard
-    INTERVIEWER = "interviewer"  # matches enrolled interviewer → pass to AI
-    UNKNOWN     = "unknown"      # no match → pass to AI, offer enrollment popup
-
-
-class PendingAudioStore:
-    """Thread-safe temporary store for utterance audio, keyed by utterance_id.
-
-    Audio buffers are kept for up to max_age_seconds after which they are
-    evicted automatically. The store never grows beyond max_entries.
-    Used to hold audio that the HUD may want to enroll as interviewer voice.
-    """
-
-    def __init__(self, max_age_seconds: int = 300, max_entries: int = 50):
-        self._store: dict = {}   # uid → (audio_np, sample_rate, stored_at)
-        self._lock = threading.Lock()
-        self._max_age = max_age_seconds
-        self._max_entries = max_entries
-
-    def store(self, uid: str, audio: np.ndarray, sample_rate: int):
-        with self._lock:
-            self._evict()
-            self._store[uid] = (audio.copy(), sample_rate, time.monotonic())
-
-    def retrieve(self, uid: str) -> tuple:
-        """Returns (audio_np, sample_rate) or (None, None) if not found/expired."""
-        with self._lock:
-            entry = self._store.get(uid)
-            if entry:
-                return entry[0], entry[1]
-            return None, None
-
-    def delete(self, uid: str):
-        with self._lock:
-            self._store.pop(uid, None)
-
-    def _evict(self):
-        now = time.monotonic()
-        expired = [k for k, (_, _, t) in self._store.items() if now - t > self._max_age]
-        for k in expired:
-            del self._store[k]
-        while len(self._store) >= self._max_entries:
-            oldest = min(self._store, key=lambda k: self._store[k][2])
-            del self._store[oldest]
+    CANDIDATE = "candidate"    # matches enrolled candidate → discard (it's the user)
+    PASS      = "pass"          # anything else → pass to AI (interviewer or unknown)
 
 
 class _PendingSpeechSegment:
@@ -104,35 +74,50 @@ class _PendingSpeechSegment:
 
 
 class SpeakerIDWorker(threading.Thread):
-    """Daemon thread that runs pyannote speaker ID on completed VAD segments.
+    """Daemon thread that runs speaker ID on completed VAD segments.
 
-    Receives segments from the audio callback thread via a queue, identifies
-    the speaker (CANDIDATE / INTERVIEWER / UNKNOWN), then calls back into
-    StreamingSTT to either discard or release the held decode result.
+    Receives segments from the audio callback thread via a queue, classifies
+    CANDIDATE / PASS, then calls back into StreamingSTT to either discard or
+    release the held decode result.
 
-    This keeps pyannote inference (~200-400ms) off the real-time audio thread.
+    cancel_if_uid(uid) marks a UID as stale before the worker invokes its
+    callbacks; used when speech resumes after a partial silence (Fix #3).
     """
 
     def __init__(
         self,
         speaker_identifier,
-        pending_audio_store: PendingAudioStore,
         on_pass: Callable[[str], None],
         on_discard: Callable[[str], None],
-        on_possible_interviewer: Optional[Callable[[str], None]] = None,
     ):
         super().__init__(daemon=True, name="speaker-id-worker")
-        self._speaker_id             = speaker_identifier
-        self._pending_audio_store    = pending_audio_store
-        self._on_pass                = on_pass
-        self._on_discard             = on_discard
-        self._on_possible_interviewer = on_possible_interviewer
-        self._q: queue.Queue         = queue.Queue()
-        self._running                = True
+        self._speaker_id = speaker_identifier
+        self._on_pass    = on_pass
+        self._on_discard = on_discard
+        self._q: queue.Queue = queue.Queue()
+        self._running    = True
+        self._stale_uids: set = set()
+        self._stale_lock = threading.Lock()
 
     def submit(self, segment: _PendingSpeechSegment):
         """Queue a speech segment for identification. O(1), safe from audio thread."""
         self._q.put(segment)
+
+    def cancel_if_uid(self, uid: str):
+        """Mark a UID as stale. The worker will drop its result when processed.
+
+        Called from the audio callback thread when speech resumes before the full
+        silence threshold (mid-sentence pause case, Fix #3).
+        """
+        with self._stale_lock:
+            self._stale_uids.add(uid)
+
+    def _is_stale(self, uid: str) -> bool:
+        with self._stale_lock:
+            if uid in self._stale_uids:
+                self._stale_uids.discard(uid)
+                return True
+        return False
 
     def stop(self):
         self._running = False
@@ -148,74 +133,80 @@ class SpeakerIDWorker(threading.Thread):
             except Exception as e:
                 logger.error("SpeakerIDWorker error: %s", e, exc_info=True)
                 # Fail-safe: pass through so nothing is silently lost
-                self._on_pass(seg.utterance_id)
+                if not self._is_stale(seg.utterance_id):
+                    self._on_pass(seg.utterance_id)
 
     def _process(self, seg: _PendingSpeechSegment):
+        # Drop if speech resumed before full silence threshold
+        if self._is_stale(seg.utterance_id):
+            logger.debug("SpeakerIDWorker: dropped stale uid=%.8s", seg.utterance_id)
+            return
+
         sid = self._speaker_id
         if sid is None or not sid.is_ready:
             # Model not loaded or candidate not enrolled — pass everything
             self._on_pass(seg.utterance_id)
             return
 
+        # Fix #8 — instrument identify() latency (per-call, attributes set after).
+        import telemetry, time as _time
+        t0 = _time.perf_counter()
         label, sim = sid.identify(seg.audio, seg.sample_rate)
+        elapsed_ms = (_time.perf_counter() - t0) * 1000.0
+        try:
+            telemetry.HIST_SPEAKER_ID_LATENCY_MS.record(
+                elapsed_ms,
+                {"label": label.value, "device": getattr(sid, 'device', 'cpu')},
+            )
+        except Exception:
+            pass
         logger.info(
-            "SpeakerIDWorker: %s sim=%.3f uid=%.8s",
-            label.value, sim, seg.utterance_id,
+            "SpeakerIDWorker: %s sim=%.3f uid=%.8s (%.0fms)",
+            label.value, sim, seg.utterance_id, elapsed_ms,
         )
 
         if label == SpeakerLabel.CANDIDATE:
             self._on_discard(seg.utterance_id)
         else:
             self._on_pass(seg.utterance_id)
-            # Offer interviewer enrollment for UNKNOWN speech when not yet enrolled
-            if (label == SpeakerLabel.UNKNOWN
-                    and not sid.is_interviewer_enrolled
-                    and self._on_possible_interviewer is not None):
-                self._pending_audio_store.store(seg.utterance_id, seg.audio, seg.sample_rate)
-                self._on_possible_interviewer(seg.utterance_id)
 
 
 class SpeakerIdentifier:
     """Identifies whether an audio segment belongs to the enrolled candidate.
 
-    Phase 1 (candidate only): binary CANDIDATE / UNKNOWN classification.
-    Phase 3 (dual-embedding): nearest-neighbor CANDIDATE / INTERVIEWER / UNKNOWN.
+    Binary classification: CANDIDATE (matches user) vs PASS (anyone else).
     """
 
-    def __init__(self, hf_token: str, threshold: float = 0.70):
+    def __init__(self, threshold: float = 0.70):
         """
         Args:
-            hf_token:  HuggingFace access token for downloading the pyannote model.
-            threshold: Cosine similarity floor. Only used in single-embedding mode.
-                       In dual-embedding mode, nearest-neighbor decides with a lower
-                       combined floor of 0.65.
+            threshold: Cosine similarity floor. Above → CANDIDATE, below → PASS.
         """
-        self.hf_token  = hf_token
         self.threshold = threshold
-        self._model    = None           # pyannote Inference pipeline
+        self._model    = None           # SpeechBrain EncoderClassifier
+        self._device   = 'cpu'
 
-        # Candidate embedding
+        # Candidate embedding (192-dim)
         self._embedding: Optional[np.ndarray] = None
-        # Interviewer embedding (averaged from multiple snippets)
-        self._interviewer_embedding: Optional[np.ndarray] = None
-        self._interviewer_snippets:  list = []   # list of 512-dim embeddings
 
         # Load previously saved candidate embedding from disk (survives restarts)
         self._load_stored_embedding()
-        # Interviewer embedding is session-only — not loaded from disk
 
     # ── Model loading ─────────────────────────────────────────────────────────
 
     def load_model(self):
-        """Load the pyannote embedding model. Called once at app startup."""
+        """Load the ECAPA embedding model. Called once at app startup."""
         try:
-            from pyannote.audio import Model, Inference
-            model = Model.from_pretrained(
-                PYANNOTE_MODEL,
-                use_auth_token=self.hf_token,
+            from speechbrain.pretrained import EncoderClassifier
+            self._device = _get_device()
+            self._model = EncoderClassifier.from_hparams(
+                source=SPEECHBRAIN_MODEL,
+                run_opts={"device": self._device},
             )
-            self._model = Inference(model, window='whole')
-            logger.info("SpeakerIdentifier: pyannote model loaded (%s)", PYANNOTE_MODEL)
+            logger.info(
+                "SpeakerIdentifier: %s loaded on %s",
+                SPEECHBRAIN_MODEL, self._device,
+            )
         except Exception as e:
             logger.error("SpeakerIdentifier: failed to load model — %s", e)
             self._model = None
@@ -236,16 +227,8 @@ class SpeakerIdentifier:
         return self._embedding is not None
 
     @property
-    def is_enrolled(self) -> bool:
-        """Alias for has_enrollment — candidate voice enrolled."""
-        return self._embedding is not None
-
-    @property
-    def is_interviewer_enrolled(self) -> bool:
-        return self._interviewer_embedding is not None
-
-    def interviewer_snippet_count(self) -> int:
-        return len(self._interviewer_snippets)
+    def device(self) -> str:
+        return self._device
 
     # ── Candidate enrollment ──────────────────────────────────────────────────
 
@@ -269,57 +252,27 @@ class SpeakerIdentifier:
             return False
 
     def _load_stored_embedding(self):
-        if EMBEDDING_PATH.exists():
-            try:
-                self._embedding = np.load(EMBEDDING_PATH)
-                logger.info("SpeakerIdentifier: loaded candidate embedding from %s", EMBEDDING_PATH)
-            except Exception as e:
-                logger.warning("SpeakerIdentifier: could not load candidate embedding — %s", e)
-                self._embedding = None
-
-    # ── Interviewer enrollment ────────────────────────────────────────────────
-
-    def enroll_interviewer_snippet(self, audio: np.ndarray, sample_rate: int = 16000) -> bool:
-        """Add one audio snippet to the interviewer embedding pool and re-average.
-
-        Short clips (>= 2s) are accepted. Each additional snippet improves accuracy
-        by refining the averaged embedding (up to _MAX_INTERVIEWER_SNIPPETS).
-        """
-        if self._model is None:
-            logger.error("SpeakerIdentifier: model not loaded — cannot enroll interviewer")
-            return False
-        min_samples = int(_MIN_SNIPPET_SECONDS * sample_rate)
-        if len(audio) < min_samples:
-            logger.warning("SpeakerIdentifier: interviewer snippet too short (< %.1fs)", _MIN_SNIPPET_SECONDS)
-            return False
+        if not EMBEDDING_PATH.exists():
+            return
         try:
-            emb = self._compute_embedding(audio, sample_rate)
-            self._interviewer_snippets.append(emb)
-            # Keep only the most recent N snippets
-            if len(self._interviewer_snippets) > _MAX_INTERVIEWER_SNIPPETS:
-                self._interviewer_snippets = self._interviewer_snippets[-_MAX_INTERVIEWER_SNIPPETS:]
-            self._finalize_interviewer_embedding()
-            logger.info(
-                "SpeakerIdentifier: interviewer snippet added (%d total)",
-                len(self._interviewer_snippets),
-            )
-            return True
+            stored = np.load(EMBEDDING_PATH)
+            if stored.shape[0] != ECAPA_EMBEDDING_DIM:
+                # Legacy 512-dim pyannote embedding — archive and treat as not-enrolled
+                legacy_path = EMBEDDING_PATH.with_suffix(
+                    EMBEDDING_PATH.suffix + f'.legacy-{stored.shape[0]}'
+                )
+                EMBEDDING_PATH.rename(legacy_path)
+                logger.warning(
+                    "SpeakerIdentifier: legacy %d-dim embedding archived to %s — re-enrollment required",
+                    stored.shape[0], legacy_path,
+                )
+                self._embedding = None
+                return
+            self._embedding = stored
+            logger.info("SpeakerIdentifier: loaded candidate embedding from %s", EMBEDDING_PATH)
         except Exception as e:
-            logger.error("SpeakerIdentifier: interviewer enrollment failed — %s", e)
-            return False
-
-    def _finalize_interviewer_embedding(self):
-        """Average all stored interviewer snippets and L2-normalize. In-memory only."""
-        stacked = np.stack(self._interviewer_snippets)
-        avg = stacked.mean(axis=0)
-        norm = np.linalg.norm(avg)
-        self._interviewer_embedding = avg / (norm + 1e-8)
-
-    def clear_interviewer_enrollment(self):
-        """Clear the in-session interviewer embedding."""
-        self._interviewer_embedding = None
-        self._interviewer_snippets = []
-        logger.info("SpeakerIdentifier: interviewer enrollment cleared")
+            logger.warning("SpeakerIdentifier: could not load candidate embedding — %s", e)
+            self._embedding = None
 
     # ── Identification ────────────────────────────────────────────────────────
 
@@ -328,62 +281,43 @@ class SpeakerIdentifier:
 
         Returns (SpeakerLabel, similarity_score).
 
-        Single-embedding mode (no interviewer enrolled):
-          - cosine_sim >= threshold  → CANDIDATE
-          - else                     → UNKNOWN
+        - cosine_sim >= threshold → CANDIDATE (discard; it's the user)
+        - else                    → PASS     (forward to AI)
 
-        Dual-embedding mode (interviewer enrolled):
-          - nearest-neighbor with floor of 0.65:
-            if candidate_sim >= interviewer_sim → CANDIDATE
-            else                                → INTERVIEWER
-          - if neither reaches 0.65             → UNKNOWN
-
-        Fail-safe: returns (UNKNOWN, 0.0) on any error — never silently drops audio.
+        Fail-safe: returns (PASS, 0.0) on any error — never silently drops audio
+        that might be the interviewer.
         """
         if not self.is_ready:
-            return SpeakerLabel.UNKNOWN, 0.0
+            return SpeakerLabel.PASS, 0.0
         if len(audio) < sample_rate * 0.5:
-            return SpeakerLabel.UNKNOWN, 0.0
+            return SpeakerLabel.PASS, 0.0
         try:
             emb = self._compute_embedding(audio, sample_rate)
-
-            candidate_sim   = self._cosine_similarity(emb, self._embedding)
-            interviewer_sim = (
-                self._cosine_similarity(emb, self._interviewer_embedding)
-                if self._interviewer_embedding is not None
-                else -1.0
-            )
-
-            if self._interviewer_embedding is not None:
-                # Dual-embedding nearest-neighbor
-                FLOOR = 0.65
-                if candidate_sim >= FLOOR or interviewer_sim >= FLOOR:
-                    if candidate_sim >= interviewer_sim:
-                        return SpeakerLabel.CANDIDATE, float(candidate_sim)
-                    else:
-                        return SpeakerLabel.INTERVIEWER, float(interviewer_sim)
-                return SpeakerLabel.UNKNOWN, float(max(candidate_sim, interviewer_sim))
-            else:
-                # Single-embedding threshold
-                if candidate_sim >= self.threshold:
-                    return SpeakerLabel.CANDIDATE, float(candidate_sim)
-                return SpeakerLabel.UNKNOWN, float(candidate_sim)
-
+            sim = self._cosine_similarity(emb, self._embedding)
+            if sim >= self.threshold:
+                return SpeakerLabel.CANDIDATE, float(sim)
+            return SpeakerLabel.PASS, float(sim)
         except Exception as e:
-            logger.warning("SpeakerIdentifier: identify error — %s (treating as UNKNOWN)", e)
-            return SpeakerLabel.UNKNOWN, 0.0
+            logger.warning("SpeakerIdentifier: identify error — %s (treating as PASS)", e)
+            return SpeakerLabel.PASS, 0.0
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
     def _compute_embedding(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
-        """Run pyannote Inference on a numpy audio array → 512-dim embedding."""
+        """Run ECAPA on a numpy audio array → 192-dim embedding (L2-normalized)."""
         import torch
         waveform = torch.from_numpy(audio.astype(np.float32)).unsqueeze(0)
-        result   = self._model({'waveform': waveform, 'sample_rate': sample_rate})
-        return np.array(result).flatten()
+        # encode_batch returns (1, 1, 192); squeeze to (192,)
+        emb = self._model.encode_batch(waveform).squeeze().detach().cpu().numpy()
+        # L2-normalize so cosine similarity is a simple dot product
+        norm = np.linalg.norm(emb)
+        if norm > 0.0:
+            emb = emb / norm
+        return emb
 
     @staticmethod
     def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+        # Embeddings are L2-normalized at compute time, so dot product = cosine
         norm_a = np.linalg.norm(a)
         norm_b = np.linalg.norm(b)
         if norm_a == 0.0 or norm_b == 0.0:

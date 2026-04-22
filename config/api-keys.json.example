@@ -28,6 +28,15 @@
 
   "hud_opacity": 0,
 
+  "_telemetry_note": "OpenTelemetry → Grafana Cloud. enabled=false makes all loggers no-ops. Configure via Settings page.",
+  "telemetry": {
+    "enabled": false,
+    "otlp_endpoint": "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
+    "instance_id": "1234567",
+    "access_token": "glc_your_access_policy_token_here",
+    "service_prefix": "solvewatch"
+  },
+
   "_vad_note": "Advanced: edit the vad block below to tune Silero VAD parameters. These are not exposed in the settings UI.",
   "vad": {
     "energy_gate_threshold": 0.015,

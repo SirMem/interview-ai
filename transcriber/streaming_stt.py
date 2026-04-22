@@ -40,9 +40,19 @@ logger = logging.getLogger(__name__)
 DECODE_INTERVAL_S = 0.30    # re-decode every 300ms
 BUFFER_MAX_S      = 15.0    # hard cap: drop oldest audio beyond this
 COMMIT_TS_TOL_S   = 0.30    # LocalAgreement-2 timestamp tolerance
-SILENCE_FINAL_S   = 1.00    # emit stt_final after this many seconds of VAD silence
 MIN_BUFFER_S      = 1.0     # don't attempt decode until ≥1s of audio buffered
 RMS_GATE          = 10 ** (-40 / 20)   # -40 dBFS — skip near-silent frames
+
+# Fix #2 — Adaptive silence-final timeout.
+# Whisper sometimes places trailing punctuation in the tentative-only stream
+# (LocalAgreement-2 stops committing at the first non-matching word), so we
+# look at committed + tentative when deciding to fire FAST. We additionally
+# require the committed prefix to have been stable for ≥ 2 decode ticks to
+# guard against mid-sentence pauses ("React hooks, right?... so explain them.").
+SILENCE_FINAL_FAST = 0.30   # used when text ends in ?/./! AND committed is stable
+SILENCE_FINAL_SLOW = 1.00   # default — same as previous fixed value
+_FAST_STABLE_TICKS = 2      # committed-list stable for at least this many decode ticks
+_SENTENCE_END_CHARS = ('?', '.', '!')
 
 
 class StreamingSTT:
@@ -54,7 +64,10 @@ class StreamingSTT:
             transcriber: existing Transcriber instance — used for model_path
                          and the module-level _mlx_lock.
             on_partial:  callback(committed: str, tentative: str)
-            on_final:    callback(text: str, audio: np.ndarray, utterance_id: Optional[str])
+            on_final:    callback(text, audio, utterance_id, silence_started_at)
+                         silence_started_at is unix wall-clock time (seconds) at
+                         which VAD silence began for this utterance — used by
+                         downstream telemetry to compose end-to-end latency.
         """
         self._transcriber = transcriber
         self.on_partial   = on_partial
@@ -69,6 +82,10 @@ class StreamingSTT:
         # LocalAgreement-2 state
         self._committed   = []
         self._prev_decode = []
+
+        # Fix #2 — track committed-prefix stability for adaptive silence threshold
+        self._prev_committed_snapshot: list = []
+        self._stable_count: int = 0
 
         # VAD silence tracking
         self._vad_silent   = False
@@ -128,7 +145,9 @@ class StreamingSTT:
         if full:
             logger.info("StreamingSTT force_final: %s", full[:80])
             self._reset()
-            self.on_final(full, np.array([], dtype=np.float32), None)
+            # No real silence_started_at on force_final (manual stop) — pass time.time()
+            # so end-to-end measurement degrades to 0 ms rather than NaN.
+            self.on_final(full, np.array([], dtype=np.float32), None, time.time())
 
     # ── Pre-STT diarization API ───────────────────────────────────────────────
 
@@ -151,9 +170,9 @@ class StreamingSTT:
             result = self._held_results.pop(utterance_id, None)
 
         if result is not None:
-            text, audio = result
+            text, audio, silence_started_at = result
             logger.debug("StreamingSTT: releasing held result uid=%.8s", utterance_id)
-            self.on_final(text, audio, utterance_id)
+            self.on_final(text, audio, utterance_id, silence_started_at)
 
     def discard(self, utterance_id: str):
         """SpeakerIDWorker decided: candidate. Drop any stored result and reset."""
@@ -233,18 +252,48 @@ class StreamingSTT:
                 if (w, round(s, 2)) not in committed_set
             )
 
+            # Fix #2 — track stability of the committed prefix across decode ticks.
+            # We compare the word list (text only) — timestamps shift slightly each
+            # decode and shouldn't reset stability.
+            committed_words_only = [w for w, _, _ in self._committed]
+            if committed_words_only and committed_words_only == self._prev_committed_snapshot:
+                self._stable_count += 1
+            else:
+                self._stable_count = 1 if committed_words_only else 0
+                self._prev_committed_snapshot = list(committed_words_only)
+
             if self._committed:
                 self._prune_buffer(self._committed[-1][2] - 0.5)
 
         if committed_str or tentative_str:
             self.on_partial(committed_str, tentative_str)
 
-        # Final condition: VAD silent for ≥ SILENCE_FINAL_S
-        if silent_since is not None and (time.time() - silent_since) >= SILENCE_FINAL_S:
+        # Fix #2 — pick adaptive silence threshold based on punctuation + stability.
+        # Use FAST when the full text (committed + tentative) ends in clear sentence
+        # punctuation AND committed has been stable for ≥ _FAST_STABLE_TICKS, else SLOW.
+        full_text = (committed_str + ' ' + tentative_str).strip() if tentative_str else committed_str
+        ends_in_punct = bool(full_text) and full_text.rstrip().endswith(_SENTENCE_END_CHARS)
+        is_stable     = self._stable_count >= _FAST_STABLE_TICKS
+        effective_threshold = SILENCE_FINAL_FAST if (ends_in_punct and is_stable) else SILENCE_FINAL_SLOW
+
+        # Final condition: VAD silent for ≥ effective_threshold
+        if silent_since is not None and (time.time() - silent_since) >= effective_threshold:
             full = committed_str
             if tentative_str:
                 full = (full + ' ' + tentative_str).strip()
             audio_snapshot = audio.copy()
+
+            # Fix #8 — record the actual silence wait we observed before firing,
+            # and remember silence_started_at so on_final can propagate it for the
+            # composite end_to_end_question_ms histogram (Node side).
+            try:
+                import telemetry
+                telemetry.HIST_SILENCE_WAIT_ACTUAL_MS.record(
+                    (time.time() - silent_since) * 1000.0,
+                )
+            except Exception:
+                pass
+            silence_started_at = silent_since
 
             # Check hold / discard state before emitting
             with self._held_lock:
@@ -255,25 +304,38 @@ class StreamingSTT:
                 if utterance_id and utterance_id in self._pending_hold:
                     # Speaker ID hasn't decided yet — store result
                     if full:
-                        self._held_results[utterance_id] = (full, audio_snapshot)
+                        self._held_results[utterance_id] = (full, audio_snapshot, silence_started_at)
                     return
                 # No hold active — proceed normally
 
             self._reset()
             if full:
-                self.on_final(full, audio_snapshot, utterance_id)
+                self.on_final(full, audio_snapshot, utterance_id, silence_started_at)
 
     # ── Whisper call ─────────────────────────────────────────────────────────
 
     def _decode_with_timestamps(self, audio: np.ndarray, buf_start: float):
+        # Fix #8 — instrument every Whisper decode at one chokepoint.
         backend = getattr(self._transcriber, 'backend', 'mlx')
-        if backend == 'mlx':
-            return self._decode_mlx(audio, buf_start)
-        elif backend == 'local':
-            return self._decode_local_cpu(audio, buf_start)
-        else:
-            # API backend: no word timestamps — split text into fake-timestamped words
-            return self._decode_api_fallback(audio, buf_start)
+        model   = getattr(self._transcriber, 'model_size', '') or ''
+        t0 = time.perf_counter()
+        try:
+            if backend == 'mlx':
+                return self._decode_mlx(audio, buf_start)
+            elif backend == 'local':
+                return self._decode_local_cpu(audio, buf_start)
+            else:
+                # API backend: no word timestamps — split text into fake-timestamped words
+                return self._decode_api_fallback(audio, buf_start)
+        finally:
+            try:
+                import telemetry
+                telemetry.HIST_WHISPER_DECODE_MS.record(
+                    (time.perf_counter() - t0) * 1000.0,
+                    {"backend": backend, "model": model},
+                )
+            except Exception:
+                pass
 
     def _decode_mlx(self, audio: np.ndarray, buf_start: float):
         from mlx_whisper import transcribe
@@ -378,3 +440,6 @@ class StreamingSTT:
             self._prev_decode  = []
             self._silent_since = None
             self._vad_silent   = False
+            # Fix #2 — clear stability tracking so next utterance starts fresh
+            self._prev_committed_snapshot = []
+            self._stable_count = 0

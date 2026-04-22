@@ -2,6 +2,7 @@ import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import logger from '../utils/logger.js';
+import { recordHistogram, addCounter } from '../utils/telemetry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,12 @@ class OCRService {
 
       worker.on('message', ({ text, error }) => {
         const duration = Date.now() - startTime;
+        // Fix #8 — duration histogram (labeled by whether a coords-region was used)
+        recordHistogram('ocr_duration_ms', duration, {
+          has_coordinates: coordinates !== null,
+        });
         if (error) {
+          addCounter('ocr_failed_total');
           log.error('OCR worker reported error', { error, duration: `${duration}ms` });
           reject(new Error(error));
         } else {
@@ -42,6 +48,7 @@ class OCRService {
       });
 
       worker.on('error', (err) => {
+        addCounter('ocr_failed_total');
         log.error('OCR worker threw an error', { error: err.message });
         reject(err);
       });

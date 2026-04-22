@@ -27,4 +27,9 @@ router.get('/config/platform', (req, res) => configController.getPlatformInfo(re
 router.get('/config/whisper-models', (req, res) => configController.getWhisperModels(req, res));
 router.post('/config/whisper-download', (req, res) => configController.downloadWhisperModel(req, res));
 
+// ── Telemetry (OTel → Grafana Cloud) ──────────────────────────────────
+router.get('/telemetry/status',           (req, res) => configController.getTelemetryStatus(req, res));
+router.post('/telemetry/save-and-reload', (req, res) => configController.saveAndReloadTelemetry(req, res));
+router.post('/telemetry/import-dashboard', (req, res) => configController.importDashboardToGrafana(req, res));
+
 export default router;

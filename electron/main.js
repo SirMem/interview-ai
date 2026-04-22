@@ -2,20 +2,20 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const IS_WINDOWS = process.platform === 'win32';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SOCKET_URL = process.env.SOCKET_URL || 'http://localhost:4000';
 
 let overlayWindow      = null;
-let notifWindow        = null;
 let dragState          = null;
 const HOTKEY           = 'CommandOrControl+Shift+H';
 const LISTEN_HOTKEY    = 'CommandOrControl+Shift+X';
 
 // ── Overlay (HUD) ────────────────────────────────────────────────────────────
+
+const OVERLAY_WIDTH  = 380;
+const OVERLAY_HEIGHT = 600;
 
 function positionOverlayOnDisplayUnderCursor(win) {
   const cursorPoint = screen.getCursorScreenPoint();
@@ -24,13 +24,11 @@ function positionOverlayOnDisplayUnderCursor(win) {
 
   const insetX = 24;
   const insetY = 24;
-  const width  = 380;
-  const height = 460;
 
   const x = workArea.x + insetX;
   const y = workArea.y + insetY;
 
-  win.setBounds({ x, y, width, height });
+  win.setBounds({ x, y, width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT });
 }
 
 function createOverlayWindow() {
@@ -41,8 +39,8 @@ function createOverlayWindow() {
   }
 
   overlayWindow = new BrowserWindow({
-    width: 380,
-    height: 600,
+    width: OVERLAY_WIDTH,
+    height: OVERLAY_HEIGHT,
     transparent: false,
     backgroundColor: '#12121a',
     frame: false,
@@ -70,10 +68,6 @@ function createOverlayWindow() {
   overlayWindow.on('closed', () => {
     overlayWindow = null;
     dragState = null;
-    // Close notification window alongside the HUD
-    if (notifWindow && !notifWindow.isDestroyed()) {
-      notifWindow.close();
-    }
   });
 
   overlayWindow.loadFile(path.join(__dirname, 'hud.html'), {
@@ -88,68 +82,10 @@ function toggleOverlay() {
   }
   if (overlayWindow.isVisible()) {
     overlayWindow.hide();
-    if (notifWindow && !notifWindow.isDestroyed()) notifWindow.hide();
   } else {
     overlayWindow.show();
     positionOverlayOnDisplayUnderCursor(overlayWindow);
   }
-}
-
-// ── Notification window (interviewer enrollment popup) ────────────────────────
-
-const NOTIF_WIDTH  = 380;
-const NOTIF_HEIGHT = 112;
-
-function getNotifPosition() {
-  if (!overlayWindow || overlayWindow.isDestroyed()) {
-    // Fallback: top-right of primary display
-    const { workArea } = screen.getPrimaryDisplay();
-    return {
-      x: workArea.x + workArea.width - NOTIF_WIDTH - 24,
-      y: workArea.y + 24,
-    };
-  }
-  const [hudX, hudY] = overlayWindow.getPosition();
-  const notifY = hudY - NOTIF_HEIGHT - 8;   // just above the HUD
-  const { workArea } = screen.getDisplayNearestPoint({ x: hudX, y: hudY });
-  return {
-    x: hudX,
-    y: Math.max(workArea.y, notifY),         // don't go off-screen
-  };
-}
-
-function ensureNotifWindow() {
-  if (notifWindow && !notifWindow.isDestroyed()) return;
-
-  notifWindow = new BrowserWindow({
-    width:  NOTIF_WIDTH,
-    height: NOTIF_HEIGHT,
-    // Windows: transparent frameless windows can render incorrectly — use solid bg instead
-    transparent: !IS_WINDOWS,
-    backgroundColor: IS_WINDOWS ? '#12121a' : '#00000000',
-    frame: false,
-    hasShadow: true,
-    thickFrame: false,
-    skipTaskbar: true,
-    focusable: true,
-    show: false,
-    resizable: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'notification-preload.js'),
-    },
-  });
-
-  notifWindow.setContentProtection(true);
-  notifWindow.setAlwaysOnTop(true, 'screen-saver');
-  notifWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-
-  notifWindow.on('closed', () => { notifWindow = null; });
-
-  notifWindow.loadFile(path.join(__dirname, 'interviewer-notification.html'), {
-    query: { socketUrl: SOCKET_URL },
-  });
 }
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
@@ -182,19 +118,6 @@ app.whenReady().then(() => {
     overlayWindow.setOpacity(opacity);
   });
 
-  // Notification window show/hide (called from notification-preload bridge)
-  ipcMain.on('notif-show', () => {
-    ensureNotifWindow();
-    const { x, y } = getNotifPosition();
-    notifWindow.setBounds({ x, y, width: NOTIF_WIDTH, height: NOTIF_HEIGHT });
-    notifWindow.show();
-    notifWindow.focus();
-  });
-
-  ipcMain.on('notif-hide', () => {
-    if (notifWindow && !notifWindow.isDestroyed()) notifWindow.hide();
-  });
-
   // Hotkeys
   const registered = globalShortcut.register(HOTKEY, toggleOverlay);
   if (!registered) console.warn(`Failed to register hotkey ${HOTKEY}`);
@@ -204,8 +127,6 @@ app.whenReady().then(() => {
   });
   if (!listenRegistered) console.warn(`Failed to register listen hotkey ${LISTEN_HOTKEY}`);
 
-  // Pre-create the notification window so it's ready when first popup fires
-  ensureNotifWindow();
   createOverlayWindow();
 });
 

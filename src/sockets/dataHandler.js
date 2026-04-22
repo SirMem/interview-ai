@@ -19,7 +19,8 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import logger from '../utils/logger.js';
 import { logEvent } from '../utils/file-logger.js';
-import aiService from '../services/ai.service.js';
+import { recordHistogram, addCounter } from '../utils/telemetry.js';
+import aiService, { aiCostUSD } from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
 import InterviewTranscriptBuffer from './InterviewTranscriptBuffer.js';
 
@@ -104,11 +105,9 @@ class DataHandler extends EventEmitter {
     socket.on('stt_partial', (data) => this.handleSttPartial(data));
     socket.on('stt_final',   (data) => this.handleSttFinal(socket, data));
     socket.on('enroll_voice',              () => this.handleEnrollVoice());
-    socket.on('enroll_interviewer',        (data) => this.handleEnrollInterviewer(data));
-    socket.on('clear_interviewer',         () => this.handleClearInterviewer());
     socket.on('get_enrollment_status',     () => this.handleGetEnrollmentStatus(socket));
     socket.on('load_speaker_id',           (data) => this.handleLoadSpeakerId(socket, data));
-    socket.on('possible_interviewer_speech', (data) => this.handlePossibleInterviewerSpeech(data));
+    socket.on('speaker_id_unavailable',    (data) => this.handleSpeakerIdUnavailable(data));
     socket.on('set_stt_model', (data) => this.handleSetSttModel(socket, data));
     socket.on('set_answer_mode', (data) => this.handleSetAnswerMode(socket, data));
     socket.on('get_settings', () => this.handleGetSettings(socket));
@@ -306,10 +305,18 @@ class DataHandler extends EventEmitter {
     this.namespace.emit('question_answer_started', { questionId });
 
     try {
-      const answerText = await this._streamInterviewAnswer(fullTranscription, questionId, transcriptContext, memoryContext);
+      const { answerText, stageLatencies, providerInfo, tokens } =
+        await this._streamInterviewAnswer(fullTranscription, questionId, transcriptContext, memoryContext);
       this.namespace.emit('question_answer_complete', { questionId, response: answerText });
       log.info('Manual question answered', { questionId, responseLength: answerText.length });
-      logEvent('manual_question_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+      logEvent('manual_question_answered', 'INFO', {
+        module: 'DataHandler', questionId, responseLength: answerText.length,
+        provider: providerInfo.provider, model: providerInfo.model,
+        input_tokens:  tokens.input,
+        output_tokens: tokens.output,
+        cost_usd:      tokens.cost_usd,
+        ai_ttft_ms: stageLatencies.ai_ttft_ms, ai_total_ms: stageLatencies.ai_total_ms,
+      });
       if (fullTranscription && answerText) {
         this.transcriptBuffer.addQAPair(fullTranscription, answerText);
       }
@@ -349,10 +356,12 @@ class DataHandler extends EventEmitter {
       let fullResponse = '';
       let provider = 'unknown';
 
-      for await (const { token, provider: p } of aiService.askGptStream(promptText, promptType)) {
-        fullResponse += token;
-        provider = p;
-        this.emitToSocket(socket, 'ai_token', { token, messageId });
+      for await (const chunk of aiService.askGptStream(promptText, promptType)) {
+        // Skip the final {usage,...} marker — token-only consumer.
+        if (!chunk?.token) continue;
+        fullResponse += chunk.token;
+        provider = chunk.provider;
+        this.emitToSocket(socket, 'ai_token', { token: chunk.token, messageId });
       }
 
       const aiDuration = Date.now() - aiStartTime;
@@ -507,13 +516,46 @@ class DataHandler extends EventEmitter {
   // Buffers tokens until the AI outputs the "Q: ...\nA:" prefix, then:
   //   - emits question_text_updated with the extracted question
   //   - streams remaining tokens as question_answer_token
-  // Returns the answer-only text (Q: line stripped) for memory storage.
-  async _streamInterviewAnswer(rawText, questionId, transcriptContext, memoryContext) {
+  // Returns { answerText, stageLatencies, providerInfo } so callers can write
+  // a per-question telemetry record.
+  //
+  // Fix #8 — instruments ai_ttft_ms + ai_total_ms (transcription flow). When
+  // silenceStartedAtSec is provided (always-on flow), composes
+  // end_to_end_question_ms from that anchor to first AI token.
+  async _streamInterviewAnswer(rawText, questionId, transcriptContext, memoryContext, silenceStartedAtSec = null) {
     let buffer = '';
     let answerText = '';
     let questionExtracted = false;
+    let firstTokenAt = null;
+    let providerInfo = null;
+    let usage        = null;   // { input_tokens, output_tokens } captured on the final chunk
+    const startedAt = performance.now();
 
-    for await (const { token } of aiService.answerInterviewQuestion(rawText, transcriptContext, memoryContext)) {
+    for await (const chunk of aiService.answerInterviewQuestion(rawText, transcriptContext, memoryContext)) {
+      // ai.service annotates every chunk with provider/model
+      if (!providerInfo && chunk && chunk.provider) {
+        providerInfo = { provider: chunk.provider, model: chunk.model || '' };
+      }
+      // Final-chunk usage payload — capture and continue (no token to emit)
+      if (chunk.usage) {
+        usage = chunk.usage;
+        continue;
+      }
+      const { token } = chunk;
+      if (!token) continue;
+      if (firstTokenAt === null) {
+        firstTokenAt = performance.now();
+        recordHistogram('ai_ttft_ms', firstTokenAt - startedAt, {
+          provider: providerInfo?.provider || 'unknown',
+          flow:     'transcription',
+        });
+        if (silenceStartedAtSec) {
+          // silence_started_at comes from Python as a unix-time seconds float.
+          // Compose end-to-end with wall-clock so the units match.
+          recordHistogram('end_to_end_question_ms',
+            (Date.now() / 1000 - silenceStartedAtSec) * 1000.0);
+        }
+      }
       if (!questionExtracted) {
         buffer += token;
         // Match the required format: Q: <question>\nA: (with optional extra newlines)
@@ -521,33 +563,68 @@ class DataHandler extends EventEmitter {
         if (match) {
           questionExtracted = true;
           this.namespace.emit('question_text_updated', { questionId, questionText: match[1].trim() });
-          // Emit any answer text already buffered after the A: line
           const answerStart = buffer.slice(match[0].length);
           if (answerStart) {
             answerText += answerStart;
             this.namespace.emit('question_answer_token', { token: answerStart, questionId });
           }
         }
-        // else keep buffering — don't emit Q: line tokens to HUD
       } else {
         answerText += token;
         this.namespace.emit('question_answer_token', { token, questionId });
       }
     }
 
-    // Fallback: AI didn't follow the Q:/A: format — emit everything as the answer
     if (!questionExtracted) {
       answerText = buffer;
       if (buffer) this.namespace.emit('question_answer_token', { token: buffer, questionId });
     }
 
-    return answerText;
+    const totalMs = performance.now() - startedAt;
+    recordHistogram('ai_total_ms', totalMs, {
+      provider: providerInfo?.provider || 'unknown',
+      flow:     'transcription',
+    });
+
+    // ── AI observability — tokens + cost ──
+    let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheCreationTokens = 0, costUsd = 0;
+    if (usage && providerInfo) {
+      inputTokens         = usage.input_tokens  || 0;
+      outputTokens        = usage.output_tokens || 0;
+      cacheReadTokens     = usage.cache_read_input_tokens     || 0;
+      cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+      // For Anthropic, cache_read_input_tokens are billed at ~10% of input cost;
+      // cache_creation_input_tokens are billed at ~125% of input cost. Total
+      // input billed = input_tokens (already excludes cached) + creation cost
+      // adjustment. For simplicity we price input_tokens at the full rate and
+      // surface cache visibility as separate metrics; close enough for trending.
+      costUsd      = aiCostUSD(providerInfo.model, inputTokens, outputTokens);
+      const labels = { provider: providerInfo.provider, model: providerInfo.model || 'unknown', flow: 'transcription' };
+      addCounter('ai_input_tokens_total',  inputTokens,  labels);
+      addCounter('ai_output_tokens_total', outputTokens, labels);
+      addCounter('ai_cost_usd_total',      costUsd,      labels);
+      if (cacheReadTokens)     addCounter('ai_cache_read_tokens_total',     cacheReadTokens,     labels);
+      if (cacheCreationTokens) addCounter('ai_cache_creation_tokens_total', cacheCreationTokens, labels);
+    }
+
+    return {
+      answerText,
+      stageLatencies: {
+        ai_ttft_ms:  firstTokenAt !== null ? firstTokenAt - startedAt : null,
+        ai_total_ms: totalMs,
+      },
+      providerInfo: providerInfo || { provider: 'unknown', model: '' },
+      tokens: {
+        input: inputTokens, output: outputTokens, cost_usd: costUsd,
+        cache_read: cacheReadTokens, cache_creation: cacheCreationTokens,
+      },
+    };
   }
 
   // stt_final fires from Python when StreamingSTT detects ≥700ms of VAD silence.
   // Replaces the old interviewer_speech + process_transcription chain for always-on mode.
   async handleSttFinal(socket, data) {
-    const { text } = data || {};
+    const { text, uid, silence_started_at } = data || {};
     if (!text || !text.trim()) return;
 
     const questionId        = `q-${Date.now()}`;
@@ -555,21 +632,51 @@ class DataHandler extends EventEmitter {
     const memoryContext     = this.transcriptBuffer.getMemoryContext();
     this.transcriptBuffer.addUtterance(text);
 
-    log.info('Processing stt_final as interview question', { questionId, textLength: text.length });
-    logEvent('stt_final_received', 'INFO', { module: 'DataHandler', questionId });
+    log.info('Processing stt_final as interview question', { questionId, uid, textLength: text.length });
+    logEvent('stt_final_received', 'INFO', { module: 'DataHandler', questionId, uid });
 
     this.namespace.emit('interviewer_question', { questionId, questionText: text });
     this.namespace.emit('question_answer_started', { questionId });
 
     try {
-      const answerText = await this._streamInterviewAnswer(text, questionId, transcriptContext, memoryContext);
+      const result = await this._streamInterviewAnswer(
+        text, questionId, transcriptContext, memoryContext,
+        typeof silence_started_at === 'number' ? silence_started_at : null,
+      );
+      const { answerText, stageLatencies, providerInfo, tokens } = result;
       this.namespace.emit('question_answer_complete', { questionId, response: answerText });
       log.info('stt_final question answered', { questionId, responseLength: answerText.length });
       logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
+
+      // Fix #8 — per-question structured record (full transcript + answer).
+      // User explicitly requested no length-only redaction.
+      const endToEndMs = (typeof silence_started_at === 'number')
+        ? Math.max(0, Date.now() / 1000 - silence_started_at) * 1000.0
+        : null;
+      logEvent('question_answered', 'INFO', {
+        module: 'DataHandler',
+        flow: 'transcription',
+        uid,
+        questionId,
+        transcript: text,
+        transcript_word_count: text.trim().split(/\s+/).length,
+        answer: answerText,
+        answer_word_count: answerText.trim().split(/\s+/).length,
+        provider: providerInfo.provider,
+        model:    providerInfo.model,
+        input_tokens:  tokens.input,
+        output_tokens: tokens.output,
+        cost_usd:      tokens.cost_usd,
+        ai_ttft_ms:  stageLatencies.ai_ttft_ms,
+        ai_total_ms: stageLatencies.ai_total_ms,
+        end_to_end_ms: endToEndMs,
+      });
+
       if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
     } catch (err) {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
+      logEvent('stt_final_failed', 'ERROR', { module: 'DataHandler', questionId, uid, error: err.message });
     }
   }
 
@@ -600,83 +707,34 @@ class DataHandler extends EventEmitter {
       this.emitToSocket(socket, 'enrollment_status', body);
     } catch (_) {
       this.emitToSocket(socket, 'enrollment_status', {
-        model_loaded: false, enrolled: false, interviewer_enrolled: false, interviewer_snippets: 0,
+        model_loaded: false, enrolled: false,
       });
     }
   }
 
-  // Relay possible_interviewer_speech from Python socket client to all HUD clients.
-  // Python emits this when it detects UNKNOWN speech with no interviewer enrolled.
-  handlePossibleInterviewerSpeech(data) {
-    log.info('Possible interviewer speech detected', { audio_id: data?.audio_id });
-    this.namespace.emit('possible_interviewer_speech', data);
+  // Fix #7: relay speaker_id_unavailable from Python to HUD clients so the
+  // banner can render with the right reason ('load_failed' or 'not_enrolled').
+  handleSpeakerIdUnavailable(data) {
+    log.warn('Speaker ID unavailable', { reason: data?.reason });
+    this.namespace.emit('speaker_id_unavailable', data || {});
   }
 
-  // HUD tapped "Enroll" on the interviewer toast — forward audio_id to Python.
-  async handleEnrollInterviewer(data) {
-    const { audio_id } = data || {};
-    if (!audio_id) return;
-    log.info('Enrolling interviewer snippet', { audio_id });
-    try {
-      const res  = await fetch('http://localhost:8000/enroll-interviewer', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ audio_id }),
-      });
-      const body = await res.json().catch(() => ({}));
-      const result = { success: res.ok, ...body };
-      log.info('Interviewer enrollment complete', result);
-      logEvent('interviewer_enrolled', 'INFO', { module: 'DataHandler', success: res.ok, snippet_count: body.snippet_count });
-      this.namespace.emit('interviewer_enrollment_complete', result);
-    } catch (err) {
-      log.warn('Interviewer enrollment request failed', { error: err.message });
-      this.namespace.emit('interviewer_enrollment_complete', { success: false, error: err.message });
-    }
-  }
-
-  async handleClearInterviewer() {
-    log.info('Clearing interviewer enrollment');
-    try {
-      await fetch('http://localhost:8000/clear-interviewer-enrollment', { method: 'POST' });
-      this.namespace.emit('interviewer_enrollment_complete', { success: true, snippet_count: 0, interviewer_enrolled: false });
-    } catch (err) {
-      log.warn('Clear interviewer failed', { error: err.message });
-    }
-  }
-
-  // Dynamically load the pyannote speaker ID model using the token already saved
-  // in config/api-keys.json. Emits speaker_id_loading while downloading (can be
-  // slow on first run — model is ~200MB from HuggingFace), then speaker_id_loaded
-  // with success/failure. On success also broadcasts fresh enrollment_status.
+  // Dynamically load the SpeechBrain ECAPA speaker ID model. No HF token
+  // required — body just carries an optional `threshold`. Persists the
+  // enabled flag + threshold to config so it survives restarts.
   async handleLoadSpeakerId(socket, data = {}) {
-    // Token may come directly from the UI (user just typed it), or fall back to config
-    let hfToken   = (data.hf_token || '').trim();
-    let threshold = data.threshold ?? 0.70;
+    const threshold = data.threshold ?? 0.70;
 
     const configPath = join(process.cwd(), 'config', 'api-keys.json');
-    if (!hfToken) {
-      // Fall back to whatever is already saved
-      try {
-        const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
-        hfToken   = cfg.hf_token || '';
-        threshold = cfg.speaker_id_threshold ?? threshold;
-      } catch (_) {}
-    }
-
-    if (!hfToken) {
-      this.emitToSocket(socket, 'speaker_id_loaded', { success: false, error: 'No HF token provided' });
-      return;
-    }
-
-    // Persist the token + enable flag to config so it survives restarts
     try {
       const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
-      cfg.hf_token           = hfToken;
-      cfg.speaker_id_enabled = true;
+      cfg.speaker_id_enabled   = true;
       cfg.speaker_id_threshold = threshold;
+      // Drop any legacy hf_token field from the persisted config.
+      if ('hf_token' in cfg) delete cfg.hf_token;
       writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
     } catch (e) {
-      log.warn('Could not save hf_token to config', { error: e.message });
+      log.warn('Could not persist speaker_id config', { error: e.message });
     }
 
     this.emitToSocket(socket, 'speaker_id_loading', {});
@@ -686,7 +744,7 @@ class DataHandler extends EventEmitter {
       const res  = await fetch('http://localhost:8000/load-speaker-id', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ hf_token: hfToken, threshold }),
+        body:    JSON.stringify({ threshold }),
       });
       const body = await res.json().catch(() => ({}));
       this.emitToSocket(socket, 'speaker_id_loaded', { success: res.ok, ...body });

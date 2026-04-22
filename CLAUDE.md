@@ -5,6 +5,23 @@
 
 ---
 
+## Creating Pull Requests — Required Checklist
+
+Before opening any PR, you MUST complete both steps in order:
+
+1. **Update `CHANGELOG.md`** — add an entry under the correct version (follow [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format: Added / Changed / Fixed / Removed). Commit this on the feature branch before creating the PR.
+
+2. **Fill out `.github/PULL_REQUEST_TEMPLATE.md`** — every section must be completed:
+   - **Summary**: 1–3 bullet points describing what the PR does
+   - **Type of change**: check all that apply
+   - **Affected components**: check every component touched
+   - **Testing**: check each item you verified; describe how you tested
+   - **Notes for reviewers**: highlight anything non-obvious, risky, or requiring special attention
+
+Only after both are done should you run `gh pr create`. Pass the full filled-out template body via `--body`.
+
+---
+
 ## Code Exploration — Two Graph Tools Available, Pick the Right One
 
 This repo has **both** `code-review-graph` MCP and `graphify` available. Use whichever fits the task best. Direct file reads are a last resort.

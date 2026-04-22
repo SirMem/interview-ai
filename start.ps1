@@ -192,13 +192,16 @@ try {
 } catch {}
 
 # ── Log setup ─────────────────────────────────────────────────────────────────
+# Structured logs flow to Grafana Cloud via OpenTelemetry (telemetry block in
+# api-keys.json). The local logs/ directory is kept only for the live-tail
+# Python text log (debugging convenience).
 New-Item -ItemType Directory -Force -Path "$ScriptDir\logs" | Out-Null
 $PythonLog = "$ScriptDir\logs\transcriber.log"
 
 if ($NewLogs) {
-    Log "Clearing all logs..."
-    Remove-Item "$ScriptDir\logs\*" -Force -ErrorAction SilentlyContinue
-    Ok "Logs cleared."
+    Log "Clearing local text log..."
+    Remove-Item "$ScriptDir\logs\*.log" -Force -ErrorAction SilentlyContinue
+    Ok "Local logs cleared."
 }
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
@@ -298,7 +301,8 @@ Write-Host "  Stop all      → Ctrl+C"
 Write-Host ""
 Write-Host "  STT model: $WhisperModel  (backend: openai-whisper CPU)"
 Write-Host "  Log level: $LogLevel"
-Write-Host "  Log file:  logs\transcriber.log"
+Write-Host "  Logs:      Structured -> Grafana Cloud (telemetry block in api-keys.json)"
+Write-Host "             Transcriber text -> logs\transcriber.log"
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
 Write-Host ""
 Write-Host "Press Ctrl+C to stop all services." -ForegroundColor Yellow

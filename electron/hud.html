@@ -508,6 +508,19 @@
 
     .action-btn.coding-btn:not(:disabled) { border-color: rgba(34,197,94,0.45); }
     .action-btn.coding-btn:not(:disabled):hover { background: rgba(34,197,94,0.15); color: #86efac; border-color: rgba(34,197,94,0.7); }
+
+    /* Speaker-ID unavailable banner (Fix #7) */
+    .sid-banner {
+      display: none;
+      padding: 6px 10px;
+      font-size: 11px;
+      line-height: 1.35;
+      border-bottom: 1px solid transparent;
+      -webkit-app-region: no-drag;
+    }
+    .sid-banner.visible { display: block; }
+    .sid-banner.warn  { background: rgba(239,68,68,0.16);  color: #fecaca; border-bottom-color: rgba(239,68,68,0.35); }
+    .sid-banner.info  { background: rgba(245,158,11,0.16); color: #fde68a; border-bottom-color: rgba(245,158,11,0.35); }
   </style>
 </head>
 <body>
@@ -522,6 +535,9 @@
         <span class="clock" id="clock">--:--:--</span>
       </div>
     </div>
+
+    <!-- Speaker-ID status banner (Fix #7) -->
+    <div class="sid-banner" id="sidBanner"></div>
 
     <!-- Live transcription strip -->
     <div class="live-strip" id="liveStrip">No real-time transcription</div>
@@ -823,7 +839,6 @@
     });
 
     // Confidence-weighted live strip — committed words bright, tentative dim.
-    // Wired up now; will fire once streaming STT (phase 5) is built.
     socket.on('stt_partial', (data) => {
       const { committed, tentative } = data || {};
       // Sliding window: show only the tail of committed so the strip stays one line
@@ -1032,13 +1047,27 @@
     }
     initDrag();
 
-    // Interviewer enrollment feedback — the popup lives in its own window
-    // (electron/interviewer-notification.html). Just update the status bar here.
-    socket.on('interviewer_enrollment_complete', ({ success, snippet_count }) => {
-      if (success) {
-        setActionStatus(`Interviewer enrolled (${snippet_count || 1} snippet${snippet_count !== 1 ? 's' : ''})`);
-        setTimeout(() => setActionStatus(''), 4000);
+    // Fix #7: persistent banner when speaker ID is unavailable. Surfaces the
+    // distinction between "model failed to load" (a bug) and "user not enrolled"
+    // (a setup step) so the user knows why auto-answer isn't firing.
+    const sidBanner = document.getElementById('sidBanner');
+    function showSidBanner(reason) {
+      if (!sidBanner) return;
+      if (reason === 'load_failed') {
+        sidBanner.className = 'sid-banner warn visible';
+        sidBanner.textContent = '⚠ Speaker ID model failed to load — auto-answer disabled. Manual mode (⌘⇧X) still works.';
+      } else if (reason === 'not_enrolled') {
+        sidBanner.className = 'sid-banner info visible';
+        sidBanner.textContent = 'ℹ Enroll your voice in Settings to enable auto-answer.';
+      } else {
+        sidBanner.className = 'sid-banner';
+        sidBanner.textContent = '';
       }
+    }
+    socket.on('speaker_id_unavailable', (data) => showSidBanner(data?.reason));
+    // Hide banner once enrollment / model state recovers
+    socket.on('enrollment_status', (data) => {
+      if (data && data.model_loaded && data.enrolled) showSidBanner(null);
     });
   </script>
 </body>

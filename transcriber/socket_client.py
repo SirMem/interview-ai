@@ -189,19 +189,6 @@ class SocketClient:
         except Exception as e:
             logger.error(f"Error sending process_transcription: {e}")
 
-    def send_interviewer_speech(self, text: str):
-        """Send a detected interviewer utterance to the server for question classification."""
-        if not self.connected:
-            logger.warning("Not connected — skipping interviewer speech")
-            return
-        if not text or not text.strip():
-            return
-        try:
-            self.sio.emit('interviewer_speech', {'text': text.strip(), 'timestamp': time.time()}, namespace=self.endpoint)
-            logger.debug(f"Sent interviewer speech: {text[:50]}…")
-        except Exception as e:
-            logger.error(f"Error sending interviewer speech: {e}")
-
     def send_stt_partial(self, committed: str, tentative: str):
         """Emit streaming partial transcript — committed (stable) + tentative (may change).
         Called ~every 300ms while the speaker is talking.
@@ -217,34 +204,48 @@ class SocketClient:
         except Exception as e:
             logger.error(f"Error sending stt_partial: {e}")
 
-    def send_stt_final(self, text: str):
-        """Emit final confirmed transcript. Triggers AI answer on the Node side."""
+    def send_stt_final(self, text: str, uid=None, silence_started_at=None):
+        """Emit final confirmed transcript. Triggers AI answer on the Node side.
+
+        `uid` and `silence_started_at` (Fix #8) are propagated so Node can
+        compose the end_to_end_question_ms histogram by computing the delta
+        between silence-detected (here) and first-AI-token (in dataHandler).
+        """
         if not self.connected:
             return
         if not text or not text.strip():
             return
         try:
-            self.sio.emit('stt_final', {
+            payload = {
                 'text': text.strip(),
                 'timestamp': time.time(),
-            }, namespace=self.endpoint)
-            logger.info(f"Sent stt_final: {text[:80]}…")
+            }
+            if uid is not None:
+                payload['uid'] = uid
+            if silence_started_at is not None:
+                payload['silence_started_at'] = silence_started_at
+            self.sio.emit('stt_final', payload, namespace=self.endpoint)
+            logger.info(f"Sent stt_final: {text[:80]}… uid=%s", str(uid)[:8] if uid else 'none')
         except Exception as e:
             logger.error(f"Error sending stt_final: {e}")
 
-    def send_possible_interviewer(self, audio_id: str, text_excerpt: str):
-        """Emit possible_interviewer_speech — Node will relay to HUD for enrollment popup."""
+    def send_speaker_id_status(self, status: str):
+        """Emit speaker_id_unavailable — Node relays to HUD for the warning banner.
+
+        status: 'load_failed' | 'not_enrolled'  (anything else is ignored)
+        """
+        if status not in ('load_failed', 'not_enrolled'):
+            return
         if not self.connected:
             return
         try:
-            self.sio.emit('possible_interviewer_speech', {
-                'audio_id': audio_id,
-                'text': text_excerpt,
+            self.sio.emit('speaker_id_unavailable', {
+                'reason': status,
                 'timestamp': time.time(),
             }, namespace=self.endpoint)
-            logger.debug("Sent possible_interviewer_speech: %s", text_excerpt[:50])
+            logger.info("Sent speaker_id_unavailable: %s", status)
         except Exception as e:
-            logger.error("Error sending possible_interviewer_speech: %s", e)
+            logger.error("Error sending speaker_id_unavailable: %s", e)
 
     def send_listen_state(self, listening: bool):
         """Notify Node.js that the always-on listener was toggled via keyboard."""

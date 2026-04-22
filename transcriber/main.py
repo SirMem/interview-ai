@@ -2,15 +2,12 @@
 FastAPI server for real-time speech-to-text transcription
 """
 import asyncio
-import json
 import logging
 import os
 import threading
 import time
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -23,7 +20,8 @@ from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
 from speaker_id import SpeakerIdentifier
 import log_writer
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, TRANSCRIPTIONS_JSON_FILE, KEYBOARD_ENABLED, ALWAYS_ON_ENABLED, HF_TOKEN, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED
+import telemetry
+from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, KEYBOARD_ENABLED, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED, _app_cfg
 
 # Configure logging
 logging.basicConfig(
@@ -34,75 +32,34 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# NDJSON async writer (O(1) appends — no full-file reads)
-# ---------------------------------------------------------------------------
-_transcription_queue: deque = deque()
-_json_writer_thread: Optional[threading.Thread] = None
-_json_writer_running: bool = False
-_json_writer_lock = threading.Lock()
-
-
-def json_writer_worker():
-    """Background thread that appends transcriptions to an NDJSON file.
-
-    Each line in the file is a self-contained JSON object (newline-delimited
-    JSON). This avoids reading + rewriting the whole file on every flush,
-    keeping write cost O(1) regardless of history size.
-    """
-    global _transcription_queue, _json_writer_running
-
-    while _json_writer_running:
-        try:
-            if not _transcription_queue:
-                threading.Event().wait(0.1)
-                continue
-
-            batch = []
-            while _transcription_queue:
-                batch.append(_transcription_queue.popleft())
-
-            if not batch:
-                continue
-
-            with _json_writer_lock:
-                with open(TRANSCRIPTIONS_JSON_FILE, 'a', encoding='utf-8') as f:
-                    for entry in batch:
-                        f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-
-            logger.debug(f"Appended {len(batch)} transcription(s) to {TRANSCRIPTIONS_JSON_FILE}")
-
-        except Exception as e:
-            logger.error(f"Error in JSON writer worker: {e}")
-
-
-def append_transcription_to_json(text: str):
-    """Queue a transcription entry for async NDJSON file writing (non-blocking)."""
-    if not text or not text.strip():
-        return
-    _transcription_queue.append({
-        "text": text.strip(),
-        "timestamp": datetime.now().isoformat(),
-        "unix_timestamp": datetime.now().timestamp(),
-    })
-
-
-# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global transcriber, socket_client, keyboard_handler, always_on_listener, speaker_identifier
-    global _json_writer_thread, _json_writer_running, _transcription_executor
+    global _transcription_executor
 
     logger.info("Initializing STT system components...")
 
-    # Start the shared JSON log writer (writes to logs/app.jsonl)
-    log_writer.start()
+    # Initialize OpenTelemetry → Grafana Cloud (no-op when telemetry.enabled=false).
+    telemetry.init_telemetry(_app_cfg)
+    # Background sampler that emits host CPU / memory / GPU gauges every 10 s.
+    # Cheap (~1 ms per tick) and stays active even when telemetry is disabled
+    # (gauges are no-ops in that case).
+    if telemetry.is_enabled():
+        telemetry.start_system_metrics_sampler(interval_seconds=10.0)
 
     try:
         transcriber = Transcriber()
         logger.info("Transcriber initialized")
         log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
+        try:
+            telemetry.GAUGE_WHISPER_MODEL_LOADED.set(
+                1, {"model_name": transcriber.model_size or 'unknown',
+                    "backend":    getattr(transcriber, 'backend', 'mlx')},
+            )
+        except Exception:
+            pass
 
         # Pre-warm: load model weights into GPU memory and trigger Metal JIT compile.
         # Without this, the first real question pays a 2-5s cold-start penalty.
@@ -116,23 +73,40 @@ async def lifespan(app: FastAPI):
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
 
-        # Speaker identification — load pyannote model only if enabled + token present
-        if SPEAKER_ID_ENABLED and HF_TOKEN:
+        # Speaker identification — load ECAPA model if enabled.
+        # Fix #7: track status so we can tell HUD why auto-answer is off.
+        # Values: 'ok' | 'disabled' | 'load_failed' | 'not_enrolled'
+        _speaker_id_status = 'disabled'
+        if SPEAKER_ID_ENABLED:
             try:
-                logger.info("Loading speaker identification model (pyannote)...")
-                speaker_identifier = SpeakerIdentifier(
-                    hf_token=HF_TOKEN,
-                    threshold=SPEAKER_ID_THRESHOLD,
-                )
+                logger.info("Loading speaker identification model (ECAPA-TDNN)...")
+                speaker_identifier = SpeakerIdentifier(threshold=SPEAKER_ID_THRESHOLD)
                 speaker_identifier.load_model()
-                status = "enrolled" if speaker_identifier.has_enrollment else "not enrolled yet — open Settings to enroll"
-                logger.info(f"SpeakerIdentifier ready ({status})")
-                log_writer.log('speaker_id_initialized', enrolled=speaker_identifier.has_enrollment)
+                if speaker_identifier.is_model_loaded:
+                    if speaker_identifier.has_enrollment:
+                        _speaker_id_status = 'ok'
+                        logger.info("SpeakerIdentifier ready (enrolled, device=%s)",
+                                    speaker_identifier.device)
+                    else:
+                        _speaker_id_status = 'not_enrolled'
+                        logger.info("SpeakerIdentifier loaded but not enrolled — open Settings to enroll")
+                else:
+                    _speaker_id_status = 'load_failed'
+                    logger.error("SpeakerIdentifier: model failed to load")
+                    speaker_identifier = None
+                log_writer.log('speaker_id_initialized', status=_speaker_id_status)
             except Exception as _e:
-                logger.warning(f"SpeakerIdentifier init failed (speaker filtering disabled): {_e}")
+                logger.error(f"SpeakerIdentifier init failed: {_e}")
                 speaker_identifier = None
+                _speaker_id_status = 'load_failed'
         else:
-            logger.info("No hf_token in config — speaker identification disabled")
+            logger.info("Speaker identification disabled in config")
+
+        # Fix #8 — publish current speaker-ID status as a gauge for the Grafana dashboard.
+        try:
+            telemetry.GAUGE_SPEAKER_ID_MODEL_STATUS.set(1, {"status": _speaker_id_status})
+        except Exception:
+            pass
 
         # MLX is protected by an internal lock in transcriber.py — one worker
         # handles preprocessing concurrently while the other waits for the GPU.
@@ -150,17 +124,32 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Could not connect to Socket.IO server: {e}")
             logger.warning("Background reconnect is active")
 
-        _json_writer_running = True
-        _json_writer_thread = threading.Thread(target=json_writer_worker, daemon=True)
-        _json_writer_thread.start()
-        logger.info("JSON writer thread started (NDJSON mode)")
+        # Fix #7: if speaker ID was supposed to be active but isn't usable, disable
+        # auto-answer so the AI doesn't respond to the candidate's own voice.
+        _auto_answer_disabled = (SPEAKER_ID_ENABLED
+                                 and _speaker_id_status in ('load_failed', 'not_enrolled'))
+        if _auto_answer_disabled:
+            logger.warning("Auto-answer disabled (speaker_id=%s). Manual mode (⌘⇧X) still works.",
+                           _speaker_id_status)
 
         try:
-            always_on_listener = AlwaysOnListener(transcriber, socket_client, speaker_id=speaker_identifier)
+            always_on_listener = AlwaysOnListener(
+                transcriber, socket_client,
+                speaker_id=speaker_identifier,
+                auto_answer_disabled=_auto_answer_disabled,
+            )
             logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
         except Exception as e:
             logger.warning(f"Could not initialize always-on listener: {e}")
             always_on_listener = None
+
+        # Fix #7: emit speaker-ID status so the HUD can show a banner.
+        # Done after socket_client is connecting; it'll reach Node once the connection completes.
+        try:
+            if socket_client and _speaker_id_status in ('load_failed', 'not_enrolled'):
+                socket_client.send_speaker_id_status(_speaker_id_status)
+        except Exception as _e:
+            logger.debug("Could not send speaker_id_status (socket likely not connected yet): %s", _e)
 
         if KEYBOARD_ENABLED:
             try:
@@ -217,15 +206,12 @@ async def lifespan(app: FastAPI):
         _transcription_executor.shutdown(wait=True)
         _transcription_executor = None
 
-    _json_writer_running = False
-    if _json_writer_thread and _json_writer_thread.is_alive():
-        _json_writer_thread.join(timeout=2.0)
-
     if socket_client:
         socket_client.disconnect()
 
     log_writer.log('transcriber_shutdown')
-    log_writer.stop()
+    telemetry.stop_system_metrics_sampler()
+    telemetry.shutdown_telemetry()
     logger.info("STT system shut down")
 
 
@@ -319,7 +305,8 @@ def process_audio_chunk(audio_chunk: np.ndarray):
                 if socket_client and socket_client.is_connected():
                     socket_client.send_transcription_chunk(text)
 
-                append_transcription_to_json(text)
+                if text and text.strip():
+                    telemetry.log('transcription', text=text.strip())
 
     except Exception as e:
         logger.error(f"Error processing audio chunk: {e}")
@@ -437,7 +424,8 @@ def stop_recording_internal_sync():
                         # send_transcription_chunk is synchronous — no sleep needed
                         socket_client.send_transcription_chunk(text)
 
-                    append_transcription_to_json(text)
+                    if text and text.strip():
+                        telemetry.log('transcription', text=text.strip())
         except Exception as e:
             logger.error(f"Error processing final accumulated audio: {e}")
 
@@ -494,6 +482,36 @@ async def health_check():
                              and always_on_listener._running
                              and not always_on_listener._paused),
     }
+
+
+@app.post("/reload-telemetry")
+async def reload_telemetry():
+    """Re-read api-keys.json and reinitialize the OTel exporters.
+
+    Called by the Node settings page after the user enables/changes telemetry
+    so they don't have to restart the transcriber. Idempotent — safe to call
+    when telemetry is already configured (tear-down + re-init).
+    """
+    import json as _json
+    import pathlib as _pathlib
+    try:
+        cfg_path = _pathlib.Path(__file__).parent.parent / 'config' / 'api-keys.json'
+        with cfg_path.open('r') as f:
+            new_cfg = _json.load(f)
+    except Exception as e:
+        logger.error(f"reload-telemetry: could not read config: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not read config: {e}")
+
+    try:
+        telemetry.shutdown_telemetry()
+        telemetry.init_telemetry(new_cfg)
+        if telemetry.is_enabled():
+            telemetry.start_system_metrics_sampler(interval_seconds=10.0)
+        logger.info("Telemetry reloaded (enabled=%s)", telemetry.is_enabled())
+        return {"success": True, "enabled": telemetry.is_enabled()}
+    except Exception as e:
+        logger.error(f"reload-telemetry failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/always-on-mode")
@@ -607,32 +625,30 @@ async def get_settings():
 
 @app.post("/load-speaker-id")
 async def load_speaker_id_endpoint(body: dict):
-    """Dynamically load (or reload) the pyannote speaker ID model.
-    Called when the user saves a new HF token in settings — no app restart needed.
-    Downloads the model from HuggingFace (~200MB on first run, cached thereafter).
+    """Dynamically load (or reload) the speaker ID model (SpeechBrain ECAPA-TDNN).
+
+    No HF token required — the body is accepted only for backwards compatibility
+    with the old settings UI; only `threshold` is honored.
+    Downloads the model on first run (~22 MB), cached thereafter.
     """
     global speaker_identifier, always_on_listener
 
-    hf_token  = (body.get("hf_token") or "").strip()
     threshold = float(body.get("threshold") or SPEAKER_ID_THRESHOLD)
 
-    if not hf_token:
-        raise HTTPException(status_code=400, detail="hf_token is required")
-
-    logger.info("Loading speaker ID model on-demand (token provided)...")
+    logger.info("Loading speaker ID model on-demand (ECAPA-TDNN)...")
     log_writer.log('speaker_id_load_requested')
 
     try:
-        new_identifier = SpeakerIdentifier(hf_token=hf_token, threshold=threshold)
+        new_identifier = SpeakerIdentifier(threshold=threshold)
 
-        # load_model() downloads from HuggingFace — run in thread so we don't block
+        # First-run download can take a few seconds — run in thread so we don't block.
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, new_identifier.load_model)
 
         if not new_identifier.is_model_loaded:
             raise HTTPException(
                 status_code=500,
-                detail="Model failed to load — check hf_token is valid and you accepted the model terms at huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM"
+                detail="Model failed to load — check transcriber logs for SpeechBrain errors"
             )
 
         # Swap in the new identifier globally
@@ -640,7 +656,8 @@ async def load_speaker_id_endpoint(body: dict):
         if always_on_listener is not None:
             always_on_listener._speaker_id = speaker_identifier
 
-        logger.info("Speaker ID model loaded dynamically (enrolled=%s)", speaker_identifier.has_enrollment)
+        logger.info("Speaker ID model loaded dynamically (enrolled=%s, device=%s)",
+                    speaker_identifier.has_enrollment, speaker_identifier.device)
         log_writer.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
 
         return {
@@ -648,6 +665,7 @@ async def load_speaker_id_endpoint(body: dict):
             "model_loaded": True,
             "enrolled":     speaker_identifier.has_enrollment,
             "threshold":    speaker_identifier.threshold,
+            "device":       speaker_identifier.device,
         }
     except HTTPException:
         raise
@@ -661,9 +679,9 @@ async def enroll_voice():
     """Record 30 seconds of mic audio and save the candidate's voice embedding."""
     global speaker_identifier, always_on_listener
     if speaker_identifier is None:
-        raise HTTPException(status_code=503, detail="Speaker identification not available — check hf_token in config")
+        raise HTTPException(status_code=503, detail="Speaker identification not available — enable it in config")
     if not speaker_identifier.is_model_loaded:
-        raise HTTPException(status_code=503, detail="Speaker ID model not loaded — check logs for pyannote errors")
+        raise HTTPException(status_code=503, detail="Speaker ID model not loaded — check transcriber logs for SpeechBrain errors")
 
     import sounddevice as sd
 
@@ -722,73 +740,18 @@ async def enroll_voice():
 async def get_enrollment_status():
     """Return current speaker ID model and enrollment status."""
     if speaker_identifier is None:
-        return {"model_loaded": False, "enrolled": False, "threshold": None,
-                "interviewer_enrolled": False, "interviewer_snippets": 0,
-                "reason": "No hf_token configured" if not HF_TOKEN else "Model failed to load"}
-    return {
-        "model_loaded":          speaker_identifier.is_model_loaded,
-        "enrolled":              speaker_identifier.has_enrollment,
-        "threshold":             speaker_identifier.threshold,
-        "interviewer_enrolled":  speaker_identifier.is_interviewer_enrolled,
-        "interviewer_snippets":  speaker_identifier.interviewer_snippet_count(),
-    }
-
-
-@app.post("/enroll-interviewer")
-async def enroll_interviewer_endpoint(body: dict):
-    """Enroll one audio snippet as the interviewer's voice.
-
-    Retrieves the audio from PendingAudioStore (populated by AlwaysOnListener
-    when SpeakerIDWorker flags an UNKNOWN utterance), computes a 512-dim embedding,
-    and averages it into the interviewer embedding. Multiple calls improve accuracy.
-    """
-    global speaker_identifier, always_on_listener
-
-    if speaker_identifier is None:
-        raise HTTPException(status_code=503, detail="Speaker identification not available")
-    if not speaker_identifier.is_model_loaded:
-        raise HTTPException(status_code=503, detail="Speaker ID model not loaded")
-
-    audio_id = (body or {}).get("audio_id")
-    if not audio_id:
-        raise HTTPException(status_code=400, detail="audio_id required")
-
-    if always_on_listener is None or not hasattr(always_on_listener, '_pending_audio_store'):
-        raise HTTPException(status_code=503, detail="Listener not running")
-
-    audio, sr = always_on_listener._pending_audio_store.retrieve(audio_id)
-    if audio is None:
-        raise HTTPException(status_code=404, detail="audio_id not found or expired (max 5 minutes)")
-
-    loop = asyncio.get_event_loop()
-    success = await loop.run_in_executor(
-        None,
-        lambda: speaker_identifier.enroll_interviewer_snippet(audio, sr or SAMPLE_RATE),
-    )
-
-    always_on_listener._pending_audio_store.delete(audio_id)
-
-    if success:
-        count = speaker_identifier.interviewer_snippet_count()
-        logger.info("Interviewer enrollment snippet added (total: %d)", count)
-        log_writer.log('interviewer_enrolled', snippet_count=count)
         return {
-            "status": "ok",
-            "snippet_count": count,
-            "interviewer_enrolled": True,
+            "model_loaded": False,
+            "enrolled": False,
+            "threshold": None,
+            "reason": "Speaker ID disabled or model failed to load",
         }
-    raise HTTPException(status_code=500, detail="Enrollment failed — audio too short or model error")
-
-
-@app.post("/clear-interviewer-enrollment")
-async def clear_interviewer_enrollment():
-    """Remove the stored interviewer voice embedding."""
-    global speaker_identifier
-    if speaker_identifier is None:
-        raise HTTPException(status_code=503, detail="Speaker identification not available")
-    speaker_identifier.clear_interviewer_enrollment()
-    log_writer.log('interviewer_enrollment_cleared')
-    return {"status": "ok"}
+    return {
+        "model_loaded": speaker_identifier.is_model_loaded,
+        "enrolled":     speaker_identifier.has_enrollment,
+        "threshold":    speaker_identifier.threshold,
+        "device":       speaker_identifier.device,
+    }
 
 
 # ── Whisper model management (local CPU backend) ──────────────────────────────

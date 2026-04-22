@@ -1,0 +1,209 @@
+# SolveWatch AI — Grafana Alerting rules
+#
+# Import via Grafana UI:
+#   Alerting → Alert rules → Import → Upload file → pick this YAML
+# Or via API:
+#   POST /api/v1/provisioning/alert-rules with the JSON equivalent
+#
+# These rules use the same metrics + labels as docs/grafana-dashboard.json.
+# Adjust thresholds in the `expr` lines below to match your tolerance.
+# Default contact-point assignment is "grafana-default-email"; change to your
+# Slack/PagerDuty/webhook contact point in Grafana before saving.
+
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: solvewatch-ai
+    folder: SolveWatch AI
+    interval: 1m
+    rules:
+
+      # ── Latency SLO breach ────────────────────────────────────────────────
+      - uid: solvewatch-p95-latency-high
+        title: "P95 end-to-end latency above 2 s for 5 min"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: 'histogram_quantile(0.95, sum by (le) (rate(end_to_end_question_ms_bucket[5m])))'
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2000] }
+        for: 5m
+        labels:
+          severity: warning
+          team: solvewatch
+        annotations:
+          summary: "Question answer latency degraded"
+          description: |
+            P95 end-to-end latency on host {{ $labels.host_name }} is
+            {{ $values.A.Value | humanize }} ms (target ≤ 1500 ms, alert > 2000 ms).
+            Likely culprits: Whisper backend slow, AI provider TTFT spike, network.
+
+      # ── All AI providers down ────────────────────────────────────────────
+      - uid: solvewatch-all-providers-failing
+        title: "All AI providers failing for 1 min"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: 'sum(rate(ai_provider_failure_total[2m]))'
+              instant: true
+          - refId: B
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: B
+              expr: 'sum(rate(ai_provider_success_total[2m]))'
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: math
+              expression: '$A > 0 && $B == 0'
+        for: 1m
+        labels:
+          severity: critical
+          team: solvewatch
+        annotations:
+          summary: "Every configured AI provider is failing"
+          description: |
+            No successful AI calls in the last 2 minutes; failure rate is
+            {{ $values.A.Value | humanize }}/s. Check provider API keys, fallback chain,
+            and provider status pages.
+
+      # ── Cost runaway ─────────────────────────────────────────────────────
+      - uid: solvewatch-cost-rate-high
+        title: "AI spend rate exceeds $1/hr"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: 'sum(rate(ai_cost_usd_total[5m])) * 3600'
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1.0] }
+        for: 10m
+        labels:
+          severity: warning
+          team: solvewatch
+        annotations:
+          summary: "AI cost burning faster than expected"
+          description: |
+            Current AI spend rate is ${{ $values.A.Value | printf "%.2f" }}/hr
+            (alert threshold: $1/hr). Could be a runaway loop, mis-configured model,
+            or expected high usage — check the cost panel + recent question_answered logs.
+
+      # ── Always-on listener silently down ─────────────────────────────────
+      - uid: solvewatch-listener-down
+        title: "Always-on listener appears stopped"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: 'avg_over_time(listener_active[10m])'
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [0.05] }
+        for: 10m
+        labels:
+          severity: info
+          team: solvewatch
+        annotations:
+          summary: "Listener inactive for 10 minutes"
+          description: |
+            Listener has been ≤5% active over the last 10 minutes on
+            host {{ $labels.host_name }}. Expected if you toggled it off
+            intentionally; flag if you believed it was running.
+
+      # ── OCR failure rate ─────────────────────────────────────────────────
+      - uid: solvewatch-ocr-failure-rate-high
+        title: "OCR failure rate above 5%"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: '100 * sum(rate(ocr_failed_total[10m])) / clamp_min(sum(rate(ocr_duration_ms_count[10m])), 1)'
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+        for: 5m
+        labels:
+          severity: warning
+          team: solvewatch
+        annotations:
+          summary: "OCR is failing more often than expected"
+          description: |
+            OCR failure rate is {{ $values.A.Value | printf "%.1f" }}% over 10 min
+            (target < 1%). Check Tesseract worker logs and screenshot quality.
+
+      # ── Process memory leak suspicion ────────────────────────────────────
+      - uid: solvewatch-process-memory-high
+        title: "Process RSS over 2 GB"
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: ${DS_PROMETHEUS}
+            model:
+              refId: A
+              expr: 'max by (service_name, host_name) (process_memory_rss_bytes)'
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [2147483648] }
+        for: 15m
+        labels:
+          severity: warning
+          team: solvewatch
+        annotations:
+          summary: "Process memory above 2 GB"
+          description: |
+            {{ $labels.service_name }} on {{ $labels.host_name }} is using
+            {{ $values.A.Value | humanize1024 }}B of RAM. Expected for Whisper
+            "large" models (~3 GB); investigate for "small"/"medium".

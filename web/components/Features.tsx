@@ -1,5 +1,5 @@
 "use client";
-import { Mic, EyeOff, MessageSquare, Camera, GitFork, Brain } from "lucide-react";
+import { Mic, EyeOff, MessageSquare, Camera, GitFork, Brain, Activity } from "lucide-react";
 import FadeIn from "./FadeIn";
 
 const features = [
@@ -15,6 +15,7 @@ const features = [
   { icon: MessageSquare,title: "Streaming AI overlay",    description: "Answers stream as bullet points in real time into a frameless, always-on-top Electron window — right when you need them.",               size: "small" },
   { icon: Camera,      title: "Screenshot analysis",      description: "Drop a screenshot and the app OCRs it with Tesseract + AI for instant analysis. Great for coding problems on screen.",                    size: "small" },
   { icon: GitFork,     title: "Multi-provider fallback",  description: "Configure OpenAI → Groq → Gemini → Claude as a cascade. If one fails or rate-limits, the next kicks in automatically.",                  size: "small" },
+  { icon: Activity,    title: "Grafana observability",    description: "OpenTelemetry metrics and structured logs shipped to Grafana Cloud. Track AI latency, token cost, VAD, and Whisper decode times in real time.", size: "small" },
 ];
 
 type Feature = (typeof features)[0];

@@ -5,6 +5,13 @@ import Groq from 'groq-sdk';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import logger from '../utils/logger.js';
+import {
+  initTelemetry,
+  shutdownTelemetry,
+  startSystemMetricsSampler,
+  validateOtlpEndpoint,
+  isEnabled as isTelemetryEnabled,
+} from '../utils/telemetry.js';
 
 const log = logger('ConfigController');
 
@@ -183,7 +190,6 @@ class ConfigController {
         interview_role:       config.interview_role        || '',
         speaker_id_threshold: config.speaker_id_threshold  ?? 0.70,
         speaker_id_enabled:   config.speaker_id_enabled    ?? false,
-        hf_token_set:         !!(config.hf_token),
       });
     } catch (err) {
       log.error('Error reading full config', err);
@@ -195,7 +201,7 @@ class ConfigController {
 
   saveFullConfig(req, res) {
     try {
-      const { providers, stt_model, answer_mode, hud_opacity, screenshots_path, interview_role, speaker_id_threshold, speaker_id_enabled, hf_token } = req.body;
+      const { providers, stt_model, answer_mode, hud_opacity, screenshots_path, interview_role, speaker_id_threshold, speaker_id_enabled } = req.body;
 
       const configPath = this.getConfigFilePath();
       let existingConfig = { keys: {}, order: [], enabled: [] };
@@ -242,8 +248,9 @@ class ConfigController {
         interview_role:       interview_role       !== undefined ? interview_role       : (existingConfig.interview_role   || ''),
         speaker_id_threshold: speaker_id_threshold !== undefined ? +speaker_id_threshold : (existingConfig.speaker_id_threshold ?? 0.70),
         speaker_id_enabled:   speaker_id_enabled   !== undefined ? !!speaker_id_enabled  : (existingConfig.speaker_id_enabled   ?? false),
-        hf_token:             (hf_token && hf_token.trim() && hf_token !== '***') ? hf_token.trim() : (existingConfig.hf_token || ''),
       };
+      // Drop the legacy hf_token field on save — speaker ID no longer needs it.
+      if ('hf_token' in configToSave) delete configToSave.hf_token;
 
       fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
       log.info('Full config saved', { providers: order, stt_model, answer_mode });
@@ -453,6 +460,266 @@ class ConfigController {
     } catch {
       return res.status(503).json({ success: false, error: 'Transcriber not running. Start the app first.' });
     }
+  }
+
+  // ── Telemetry: read current config (no secrets exposed) ─────────────
+  getTelemetryStatus(req, res) {
+    let cfg = {};
+    try {
+      cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8'));
+    } catch {}
+    const t = cfg.telemetry || {};
+    return res.json({
+      success: true,
+      enabled:        !!t.enabled && isTelemetryEnabled(),     // both persisted AND actually running
+      configured:     !!t.enabled,                              // just the persisted bit
+      otlp_endpoint:  t.otlp_endpoint || 'https://otlp-gateway-prod-us-east-0.grafana.net/otlp',
+      service_prefix: t.service_prefix || 'solvewatch',
+      instance_id:    t.instance_id   || '',
+      auth_token_set: !!((t.access_token || t.auth_token) && (t.access_token || t.auth_token).trim()),
+      host_owner:     cfg.host_owner  || '',  // top-level field, friendly machine label
+      grafana_url:    t.grafana_url   || '',
+      grafana_sa_token_set: !!(t.grafana_sa_token && t.grafana_sa_token.trim()),
+    });
+  }
+
+  // ── Telemetry: validate + persist + reload both services ────────────
+  async saveAndReloadTelemetry(req, res) {
+    const body = req.body || {};
+    const enable        = !!body.enabled;
+    const otlpEndpoint  = (body.otlp_endpoint  || '').trim();
+    const servicePrefix = (body.service_prefix || 'solvewatch').trim() || 'solvewatch';
+    const instanceId    = (body.instance_id    || '').trim();
+    const hostOwner     = (body.host_owner     || '').trim();
+    let   accessToken   = (body.access_token   || body.auth_token || '').trim();  // accept legacy field too
+
+    // Read existing config
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8')); } catch {}
+    const existingToken = cfg.telemetry?.access_token || '';
+
+    // Token sentinel: '***' means "keep existing".
+    if (accessToken === '***') accessToken = existingToken;
+
+    // Build the Authorization header value.
+    //   - Grafana Cloud OTLP gateway:  Basic base64(instanceID:accessPolicyToken)
+    //   - Anything else (e.g. self-hosted with bearer tokens): use raw token if
+    //     it already includes a scheme, else fall back to Bearer.
+    const buildHeader = () => {
+      if (instanceId && accessToken) {
+        const b64 = Buffer.from(`${instanceId}:${accessToken}`, 'utf8').toString('base64');
+        return `Basic ${b64}`;
+      }
+      if (!accessToken) return '';
+      if (accessToken.startsWith('Bearer ') || accessToken.startsWith('Basic ')) return accessToken;
+      return `Bearer ${accessToken}`;
+    };
+
+    // ── Disable path: skip validation, just shut things down ──────────
+    if (!enable) {
+      cfg.telemetry = {
+        enabled: false,
+        otlp_endpoint:  otlpEndpoint  || cfg.telemetry?.otlp_endpoint  || '',
+        instance_id:    instanceId    || cfg.telemetry?.instance_id    || '',
+        access_token:   accessToken,
+        service_prefix: servicePrefix,
+      };
+      // Drop legacy auth_token field if present.
+      if ('auth_token' in cfg.telemetry) delete cfg.telemetry.auth_token;
+      // host_owner lives at the top level — friendly machine label.
+      if (hostOwner) cfg.host_owner = hostOwner;
+      this._writeConfig(cfg);
+      try { await shutdownTelemetry(); } catch {}
+      this._reloadPythonTelemetry().catch(() => {});  // best-effort
+      log.info('Telemetry disabled via settings');
+      return res.json({ success: true, enabled: false, message: 'Telemetry disabled.' });
+    }
+
+    // ── Enable path: validate first, only persist enabled=true if it works ──
+    if (!otlpEndpoint) {
+      return res.status(400).json({ success: false, error: 'OTLP endpoint is required.' });
+    }
+    if (!accessToken) {
+      return res.status(400).json({ success: false, error: 'Access policy token is required.' });
+    }
+    if (!instanceId) {
+      return res.status(400).json({ success: false, error: 'Instance ID is required (Grafana Cloud uses Basic auth: instanceID:token).' });
+    }
+
+    const headerToken = buildHeader();
+    log.info('Validating OTLP endpoint', { endpoint: otlpEndpoint, instanceId });
+    const probe = await validateOtlpEndpoint(otlpEndpoint, headerToken);
+
+    if (!probe.ok) {
+      // Persist with enabled=false so the next restart doesn't try a bad config.
+      cfg.telemetry = {
+        enabled: false,
+        otlp_endpoint:  otlpEndpoint,
+        instance_id:    instanceId,
+        access_token:   accessToken,    // keep what they typed so they can fix it
+        service_prefix: servicePrefix,
+      };
+      if (hostOwner) cfg.host_owner = hostOwner;
+      this._writeConfig(cfg);
+      try { await shutdownTelemetry(); } catch {}
+      const reasonMsg = {
+        bad_token:   'Authentication failed (HTTP 401/403). Check Instance ID + token (token must have metrics:write + logs:write).',
+        not_found:   'Endpoint not found (HTTP 404). Check the OTLP endpoint URL.',
+        unreachable: `Could not reach the endpoint: ${probe.error || 'network error'}.`,
+      }[probe.reason] || `Endpoint returned HTTP ${probe.status}.`;
+      log.warn('Telemetry validation failed — staying disabled', { reason: probe.reason, status: probe.status });
+      return res.json({
+        success: false,
+        enabled: false,
+        validation: probe,
+        error: reasonMsg,
+      });
+    }
+
+    // ── Validation passed → persist enabled=true and reload exporters ─
+    cfg.telemetry = {
+      enabled: true,
+      otlp_endpoint:  otlpEndpoint,
+      instance_id:    instanceId,
+      access_token:   accessToken,
+      service_prefix: servicePrefix,
+    };
+    if ('auth_token' in cfg.telemetry) delete cfg.telemetry.auth_token;
+    if (hostOwner) cfg.host_owner = hostOwner;
+    this._writeConfig(cfg);
+
+    try {
+      await initTelemetry(cfg);                         // re-entrant: tears down old + starts new
+      if (isTelemetryEnabled()) startSystemMetricsSampler(10).catch(() => {});
+    } catch (e) {
+      log.error('Telemetry reinit failed', { error: e.message });
+      return res.status(500).json({ success: false, error: `Reload failed: ${e.message}` });
+    }
+    // Best-effort: ask Python transcriber to reload too
+    const pyResult = await this._reloadPythonTelemetry();
+
+    log.info('Telemetry enabled via settings', { endpoint: otlpEndpoint, prefix: servicePrefix, python: pyResult });
+    return res.json({
+      success: true,
+      enabled: true,
+      validation: probe,
+      python: pyResult,
+      message: 'Telemetry validated and enabled.',
+    });
+  }
+
+  async _reloadPythonTelemetry() {
+    try {
+      const resp = await fetch('http://localhost:8000/reload-telemetry', {
+        method: 'POST',
+        signal: AbortSignal.timeout(5000),
+      });
+      const body = await resp.json().catch(() => ({}));
+      return { ok: resp.ok, ...body };
+    } catch (e) {
+      // Transcriber may not be up yet — that's OK, it'll pick up the config on next start.
+      return { ok: false, error: e.message };
+    }
+  }
+
+  _writeConfig(cfg) {
+    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+  }
+
+  // ── Dashboard auto-import to Grafana ──────────────────────────────────────
+  // Body: { grafana_url: 'https://my-stack.grafana.net', sa_token: 'glsa_...' }
+  // Steps: validate token → discover Prometheus + Loki UIDs → substitute into
+  // dashboard JSON → POST /api/dashboards/db. Response includes URL to view.
+  async importDashboardToGrafana(req, res) {
+    const body = req.body || {};
+    const grafanaUrl = (body.grafana_url || '').trim().replace(/\/+$/, '');
+    let saToken      = (body.sa_token    || '').trim();
+
+    // Persist+restore the SA token so users don't paste it every time. '***' = keep existing.
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8')); } catch {}
+    cfg.telemetry = cfg.telemetry || {};
+    if (saToken === '***') saToken = cfg.telemetry.grafana_sa_token || '';
+
+    if (!grafanaUrl) return res.status(400).json({ success: false, error: 'Grafana URL is required (e.g., https://my-stack.grafana.net)' });
+    if (!saToken)   return res.status(400).json({ success: false, error: 'Service Account token is required (starts with glsa_…)' });
+
+    const headers = { 'Authorization': `Bearer ${saToken}`, 'Content-Type': 'application/json' };
+
+    // 1. Validate token + discover data sources
+    let datasources;
+    try {
+      const r = await fetch(`${grafanaUrl}/api/datasources`, { headers, signal: AbortSignal.timeout(10000) });
+      if (r.status === 401 || r.status === 403) {
+        return res.json({ success: false, error: 'Service Account token rejected (HTTP ' + r.status + '). Token needs Editor role + dashboards:write scope.' });
+      }
+      if (!r.ok) {
+        return res.json({ success: false, error: `Grafana returned HTTP ${r.status} for /api/datasources. Check the URL.` });
+      }
+      datasources = await r.json();
+    } catch (err) {
+      return res.json({ success: false, error: `Could not reach Grafana: ${err.message}` });
+    }
+
+    const prom = datasources.find((d) => d.type === 'prometheus' && /prom/i.test(d.name)) || datasources.find((d) => d.type === 'prometheus');
+    const loki = datasources.find((d) => d.type === 'loki');
+    if (!prom) return res.json({ success: false, error: 'No Prometheus data source found in this Grafana stack.' });
+    if (!loki) return res.json({ success: false, error: 'No Loki data source found in this Grafana stack.' });
+
+    // 2. Read dashboard JSON + substitute placeholders
+    let dashboard;
+    try {
+      const dashPath = path.join(process.cwd(), 'docs', 'grafana-dashboard.json');
+      const raw = fs.readFileSync(dashPath, 'utf8')
+        .replaceAll('${DS_PROMETHEUS}', prom.uid)
+        .replaceAll('${DS_LOKI}',       loki.uid);
+      dashboard = JSON.parse(raw);
+      // Strip import-wizard markers so Grafana accepts it as a real dashboard.
+      delete dashboard.__inputs;
+      delete dashboard.__requires;
+      // Force a fresh creation rather than version-overwrite when uid collides.
+      dashboard.id = null;
+    } catch (err) {
+      return res.status(500).json({ success: false, error: `Could not read dashboard JSON: ${err.message}` });
+    }
+
+    // 3. POST to Grafana
+    let result;
+    try {
+      const r = await fetch(`${grafanaUrl}/api/dashboards/db`, {
+        method:  'POST',
+        headers,
+        body:    JSON.stringify({
+          dashboard,
+          overwrite: true,
+          message: 'Imported via SolveWatch settings page',
+          folderUid: '',
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      result = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        return res.json({ success: false, error: result.message || `Grafana returned HTTP ${r.status} on dashboard import.` });
+      }
+    } catch (err) {
+      return res.json({ success: false, error: `Dashboard import failed: ${err.message}` });
+    }
+
+    // 4. Persist Grafana URL + SA token for next time
+    cfg.telemetry.grafana_url      = grafanaUrl;
+    cfg.telemetry.grafana_sa_token = saToken;
+    try { this._writeConfig(cfg); } catch (e) { log.warn('Could not persist grafana fields', { error: e.message }); }
+
+    const dashboardUrl = `${grafanaUrl}${result.url || `/d/${result.uid}`}`;
+    log.info('Dashboard imported to Grafana', { uid: result.uid, url: dashboardUrl });
+    return res.json({
+      success:        true,
+      url:            dashboardUrl,
+      uid:            result.uid,
+      version:        result.version,
+      datasources:    { prometheus: prom.name, loki: loki.name },
+      message:        'Dashboard imported successfully.',
+    });
   }
 }
 
