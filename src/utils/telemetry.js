@@ -26,7 +26,7 @@ import { randomUUID, createHash } from 'crypto';
 import { metrics, ValueType } from '@opentelemetry/api';
 import { logs as logsApi, SeverityNumber } from '@opentelemetry/api-logs';
 import { Resource } from '@opentelemetry/resources';
-import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { MeterProvider, PeriodicExportingMetricReader, View, ExplicitBucketHistogramAggregation } from '@opentelemetry/sdk-metrics';
 import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { OTLPLogExporter }    from '@opentelemetry/exporter-logs-otlp-http';
@@ -61,8 +61,11 @@ const HISTOGRAM_NAMES = [
   'ai_ttft_ms',
   'ai_total_ms',
   'ocr_duration_ms',
+  'screenshot_capture_ms',
   'screenshot_pipeline_total_ms',
   'end_to_end_question_ms',
+  'stt_socket_rtt_ms',
+  'question_extraction_ms',
   'http_request_duration_ms',
 ];
 
@@ -255,7 +258,43 @@ export async function initTelemetry(rawConfig) {
       exportIntervalMillis: 10_000,
       exportTimeoutMillis:  5_000,
     });
-    _meterProvider = new MeterProvider({ resource, readers: [reader] });
+    // Custom histogram boundaries (ms). OTel's default boundaries are
+    // {0,5,10,25,50,75,100,250,500,750,1000,2500,5000,7500,10000,+Inf} which
+    // is too coarse at the short end (VAD is typically 1–5 ms so everything
+    // falls into the first bucket) and too coarse at the long end for AI
+    // calls (2,500 → 5,000 → 7,500 → 10,000 loses resolution between 4 s
+    // and 9 s). These custom lists are logarithmic-ish across each metric's
+    // expected range, giving usable P50/P95/P99 out of the box.
+    const FINE_SUBMS_BOUNDARIES = [
+      0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 75, 100, 200, 500,
+    ];
+    const AI_LATENCY_BOUNDARIES = [
+      100, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000,
+      6000, 7500, 10000, 15000, 20000, 30000,
+    ];
+    const _metricViews = [
+      new View({
+        instrumentName: 'vad_latency_ms',
+        aggregation:    new ExplicitBucketHistogramAggregation(FINE_SUBMS_BOUNDARIES),
+      }),
+      new View({
+        instrumentName: 'ai_total_ms',
+        aggregation:    new ExplicitBucketHistogramAggregation(AI_LATENCY_BOUNDARIES),
+      }),
+      new View({
+        instrumentName: 'ai_ttft_ms',
+        aggregation:    new ExplicitBucketHistogramAggregation(AI_LATENCY_BOUNDARIES),
+      }),
+      new View({
+        instrumentName: 'end_to_end_question_ms',
+        aggregation:    new ExplicitBucketHistogramAggregation(AI_LATENCY_BOUNDARIES),
+      }),
+      new View({
+        instrumentName: 'screenshot_pipeline_total_ms',
+        aggregation:    new ExplicitBucketHistogramAggregation(AI_LATENCY_BOUNDARIES),
+      }),
+    ];
+    _meterProvider = new MeterProvider({ resource, readers: [reader], views: _metricViews });
     metrics.setGlobalMeterProvider(_meterProvider);
     _meter = metrics.getMeter(_serviceName);
 
@@ -266,7 +305,18 @@ export async function initTelemetry(rawConfig) {
       _histograms.set(name, _meter.createHistogram(name, { valueType: ValueType.DOUBLE }));
     }
     for (const name of COUNTER_NAMES) {
-      _counters.set(name, _meter.createCounter(name));
+      const c = _meter.createCounter(name);
+      _counters.set(name, c);
+    }
+    // Seed unlabeled counters with .add(0) so Prometheus' increase() has a
+    // baseline sample. Without this, `sum(increase(X[$__range]))` on a newly
+    // created series is "no data" after the first real event and shows the
+    // count minus 1 after the second — a well-known first-sample gotcha.
+    // Labeled counters (provider/model/flow combos) can't all be pre-seeded
+    // without knowing runtime values — dashboard panels over those use
+    // max_over_time - min_over_time instead.
+    for (const name of ['screenshot_captured_total', 'ocr_failed_total']) {
+      _counters.get(name)?.add(0);
     }
     for (const name of GAUGE_NAMES) {
       const store = new GaugeStore();

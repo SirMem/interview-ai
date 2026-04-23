@@ -17,7 +17,11 @@
   },
 
   "order": ["openai", "grok", "gemini", "claude"],
-  "enabled": ["openai"],
+  "enabled": [],
+
+  "_ollama_note": "Ollama is always a terminal local fallback — runs on http://localhost:11434 with no API key. Set ollama_enabled=false to opt out. ollama_model is the local model name (e.g. llama3.2:1b, llama3.1:8b).",
+  "ollama_enabled": true,
+  "ollama_model": "llama3.2:1b",
 
   "answer_mode": "auto",
   "stt_model": "small",
@@ -28,9 +32,9 @@
 
   "hud_opacity": 0,
 
-  "_telemetry_note": "OpenTelemetry → Grafana Cloud. enabled=false makes all loggers no-ops. Configure via Settings page.",
+  "_telemetry_note": "OpenTelemetry → Grafana Cloud. Default enabled=true: metrics + logs export as soon as otlp_endpoint + access_token are filled in. Set enabled=false to make all telemetry calls no-ops.",
   "telemetry": {
-    "enabled": false,
+    "enabled": true,
     "otlp_endpoint": "https://otlp-gateway-prod-us-east-0.grafana.net/otlp",
     "instance_id": "1234567",
     "access_token": "glc_your_access_policy_token_here",

@@ -177,7 +177,8 @@ class AlwaysOnListener:
             telemetry.GAUGE_LISTENER_ACTIVE.set(0)
         except Exception:
             pass
-        self._streaming_stt.force_final()
+        # Stop means stop — any audio still in the rolling buffer is discarded.
+        # We only ever fire stt_final on a genuine VAD silence, never on shutdown.
         self._streaming_stt.stop()
         if self._speaker_id_worker is not None:
             self._speaker_id_worker.stop()
@@ -238,18 +239,19 @@ class AlwaysOnListener:
             is_speech=is_speech,
             latency_ms=latency_ms,
         )
+        # The vad_chunk LOG is sampled — ~10 records/s would flood Loki.
         if random.random() < _CHUNK_LOG_SAMPLE_RATE:
             log_writer.log('vad_chunk', **record)
 
-        # Fix #8 — VAD per-chunk latency histogram (sampled at the same rate as logs).
-        # Recording every chunk would be ~10 records/s per device — sampling keeps
-        # cardinality + cost down while still giving an honest distribution.
-        if random.random() < _CHUNK_LOG_SAMPLE_RATE:
-            try:
-                import telemetry
-                telemetry.HIST_VAD_LATENCY_MS.record(latency_ms, {"engine": vad.engine_name})
-            except Exception:
-                pass
+        # VAD per-chunk latency histogram — record EVERY chunk. Histograms are
+        # SDK-aggregated (buckets + counts), so per-chunk record() is ~1 µs and
+        # carries no cardinality cost. Sampling this was only hiding the real
+        # distribution from panel 410.
+        try:
+            import telemetry
+            telemetry.HIST_VAD_LATENCY_MS.record(latency_ms, {"engine": vad.engine_name})
+        except Exception:
+            pass
 
         if is_speech:
             # Fix #3: if speech resumed while speaker ID was in-flight, cancel it
@@ -421,7 +423,7 @@ class AlwaysOnListener:
     def _on_stt_final(self, text: str, audio: np.ndarray,
                       utterance_id: Optional[str] = None,
                       silence_started_at: Optional[float] = None):
-        """Called by StreamingSTT when silence threshold hits (or force_final on stop).
+        """Called by StreamingSTT when the VAD silence threshold is reached.
 
         Speaker ID filtering has already happened pre-STT — this callback only
         fires for non-candidate speech. Applies answerable + hallucination + length

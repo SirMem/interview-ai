@@ -823,20 +823,6 @@
 
     socket.on('listen_state_changed', (data) => setListening(!!data.listening));
 
-    socket.on('transcription_chunk', (data) => {
-      if (!data.text) return;
-      // Only accumulate into liveLines while actively listening.
-      // Chunks that arrive after the user releases the button are already
-      // included in the server-side fullTranscription sent with
-      // interviewer_question — adding them here would cause a mismatch.
-      if (isListening) {
-        liveLines.push(data.text.trim());
-        if (liveLines.length > 3) liveLines.shift();
-      }
-      const joined = liveLines.join(' ');
-      liveStrip.textContent = joined.length > 100 ? '\u2026' + joined.slice(-100) : joined;
-      liveStrip.className = 'live-strip active';
-    });
 
     // Confidence-weighted live strip — committed words bright, tentative dim.
     socket.on('stt_partial', (data) => {

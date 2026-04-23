@@ -48,7 +48,9 @@ const AI_PRICING = {
   // Anthropic
   'claude-sonnet-4-5':            { in: 3.00,  out: 15.00 },
   'claude-haiku-4-5':             { in: 1.00,  out: 5.00 },
+  'claude-opus-4-5':              { in: 15.00, out: 75.00 },
   'claude-opus-4-7':              { in: 15.00, out: 75.00 },
+  'claude-haiku-4-5-20251001':    { in: 1.00,  out: 5.00 },
   'claude-3-5-sonnet-20241022':   { in: 3.00,  out: 15.00 },
   'claude-3-5-haiku-20241022':    { in: 0.80,  out: 4.00 },
   // Local — Ollama models cost $0 (electricity not modeled)
@@ -58,10 +60,16 @@ const _unknownModelWarned = new Set();
 function _priceFor(model) {
   if (!model) return null;
   if (AI_PRICING[model]) return AI_PRICING[model];
-  // Fallback by family prefix (e.g. "ollama:llama3.2:1b" → "ollama:*")
+  // Family prefix with explicit "*" (e.g. "ollama:llama3.2:1b" → "ollama:*")
   for (const key of Object.keys(AI_PRICING)) {
     if (key.endsWith(':*') && model.startsWith(key.slice(0, -1))) return AI_PRICING[key];
   }
+  // Date-versioned model IDs (e.g. "claude-haiku-4-5-20251001",
+  // "gpt-4o-2024-08-06") — strip the trailing "-YYYYMMDD" (or similar date
+  // segments) and retry. Without this, a new snapshot release silently costs
+  // $0 until someone updates the pricing table.
+  const stripped = model.replace(/-\d{4,8}(-\d{2})?(-\d{2})?$/, '');
+  if (stripped !== model && AI_PRICING[stripped]) return AI_PRICING[stripped];
   return null;
 }
 function _costFor(model, inTokens, outTokens) {
@@ -289,24 +297,28 @@ class AIService {
   }
 
   getAvailableProviders() {
-    if (!this.config) return [];
+    if (!this.config) return ['ollama'];
 
     const enabledProviders = this.config.enabled || [];
+    // Paid providers need a non-empty API key; ollama runs locally so it's
+    // exempt from the key check.
     const providersToUse =
       enabledProviders.length > 0
         ? enabledProviders
         : (this.config.order || []).filter((id) => {
+            if (id === 'ollama') return true;
             const key = this.config.keys[id];
             return key && key.trim().length > 0;
           });
 
     const availableProviders = providersToUse.filter((id) => {
+      if (id === 'ollama') return true;
       const key = this.config.keys[id];
       return key && key.trim().length > 0;
     });
 
     const now = Date.now();
-    return availableProviders.filter((providerId) => {
+    const alive = availableProviders.filter((providerId) => {
       const entry = this.failedProviders.get(providerId);
       if (!entry) return true;
 
@@ -322,6 +334,14 @@ class AIService {
       }
       return false;
     });
+
+    // Ollama is always available as a terminal local fallback unless the user
+    // explicitly opted out (config.ollama_enabled === false). This guarantees
+    // a question will always answer — even with zero paid keys configured.
+    if (this.config?.ollama_enabled !== false && !alive.includes('ollama')) {
+      alive.push('ollama');
+    }
+    return alive;
   }
 
   // ==================== Non-streaming AI calls ====================
@@ -389,6 +409,27 @@ class AIService {
     };
   }
 
+  async callOllama(messages, options = {}) {
+    const model = options.model || this.config?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: options.temperature || 0.7,
+      max_tokens: options.max_tokens || 2048,
+    });
+    return {
+      text:  completion.choices[0]?.message?.content || 'No response generated',
+      // Prefix with "ollama:" so the pricing table's "ollama:*" rule matches
+      // (local models are $0 — see AI_PRICING).
+      model: `ollama:${model}`,
+      usage: {
+        input_tokens:  completion.usage?.prompt_tokens     || 0,
+        output_tokens: completion.usage?.completion_tokens || 0,
+      },
+    };
+  }
+
   async callClaude(messages, options = {}) {
     const apiKey = this.config?.keys?.claude;
     if (!apiKey) throw new Error('Claude API key not configured');
@@ -425,23 +466,10 @@ class AIService {
   async callAIWithFallback(messages, options = {}) {
     const providers = this.getAvailableProviders();
 
+    // providers is never empty because getAvailableProviders always appends
+    // 'ollama' as a terminal fallback (unless explicitly opted out).
     if (providers.length === 0) {
-      const allProviders = (
-        this.config?.enabled || this.config?.order || []
-      ).filter((id) => this.config?.keys?.[id]?.trim());
-
-      if (allProviders.length > 0 && this.failedProviders.size > 0) {
-        const now = Date.now();
-        const failedList = Array.from(this.failedProviders.entries())
-          .map(([id, { failedAt, failures }]) => {
-            const backoff = this._getBackoffMs(failures);
-            const timeLeft = Math.ceil((backoff - (now - failedAt)) / 1000);
-            return `${id} (retry in ${timeLeft}s)`;
-          })
-          .join(', ');
-        throw new Error(`All AI providers temporarily unavailable: ${failedList}`);
-      }
-      throw new Error('No AI providers configured. Please configure at least one API key.');
+      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
 
     let lastError = null;
@@ -454,6 +482,7 @@ class AIService {
           case 'grok':    result = await this.callGrok(messages, options); break;
           case 'gemini':  result = await this.callGemini(messages, options); break;
           case 'claude':  result = await this.callClaude(messages, options); break;
+          case 'ollama':  result = await this.callOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
         this.markProviderAsSuccess(providerId);
@@ -610,13 +639,18 @@ class AIService {
     const providers = this.getAvailableProviders();
 
     if (providers.length === 0) {
-      throw new Error('No AI providers available for streaming.');
+      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
 
     let lastError = null;
 
     for (const providerId of providers) {
-      const model = this.config?.models?.[providerId] || '';
+      const model =
+        providerId === 'ollama'
+          // Pricing table keys ollama as "ollama:*" — prefix the runtime model
+          // name so _priceFor() resolves to $0 for local inference.
+          ? `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`
+          : (this.config?.models?.[providerId] || '');
       try {
         let gen;
         switch (providerId) {
@@ -624,6 +658,7 @@ class AIService {
           case 'grok':   gen = this.streamGrok(messages, options); break;
           case 'gemini': gen = this.streamGemini(messages, options); break;
           case 'claude': gen = this.streamClaude(messages, options); break;
+          case 'ollama': gen = this._streamOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
 

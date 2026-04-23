@@ -115,25 +115,40 @@ class ImageProcessingService {
       // Other prompt types (theory, coding, debug) are used via use_prompt event
       const promptType = 'system';
 
-      if (actuallyUsedContext) {
-        log.info('Using context for AI processing', {
-          processId,
-          filename,
-          contextLength: this.lastResponse.length,
-          promptType: 'context',
+      try {
+        if (actuallyUsedContext) {
+          log.info('Using context for AI processing', {
+            processId,
+            filename,
+            contextLength: this.lastResponse.length,
+            promptType: 'context',
+          });
+          gptResponse = await aiService.askGptWithContext(
+            extractedText,
+            this.lastResponse,
+            'context',
+          );
+        } else {
+          log.info('Using system prompt for AI processing', {
+            processId,
+            filename,
+            promptType: 'system',
+          });
+          gptResponse = await aiService.askGpt(extractedText, 'system');
+        }
+        // Provider-health telemetry — symmetric with the transcription flow so
+        // the screenshot provider-success/failure dashboard panels light up.
+        addCounter('ai_provider_success_total', 1, {
+          provider: gptResponse?.provider || 'unknown',
+          flow:     'screenshot',
         });
-        gptResponse = await aiService.askGptWithContext(
-          extractedText,
-          this.lastResponse,
-          'context',
-        );
-      } else {
-        log.info('Using system prompt for AI processing', {
-          processId,
-          filename,
-          promptType: 'system',
+      } catch (aiErr) {
+        addCounter('ai_provider_failure_total', 1, {
+          provider:    gptResponse?.provider || 'unknown',
+          flow:        'screenshot',
+          error_class: (aiErr && aiErr.constructor && aiErr.constructor.name) || 'Error',
         });
-        gptResponse = await aiService.askGpt(extractedText, 'system');
+        throw aiErr;
       }
 
       const aiDuration = Date.now() - aiStartTime;
@@ -142,8 +157,8 @@ class ImageProcessingService {
       // askGpt is non-streaming; total time is the only useful AI measurement.
       // Record both ttft and total under the screenshot flow so the dashboard
       // can average across flows when needed.
-      recordHistogram('ai_ttft_ms',  aiDuration, { provider, flow: 'screenshot' });
-      recordHistogram('ai_total_ms', aiDuration, { provider, flow: 'screenshot' });
+      recordHistogram('ai_ttft_ms',  aiDuration, { provider, model, flow: 'screenshot' });
+      recordHistogram('ai_total_ms', aiDuration, { provider, model, flow: 'screenshot' });
 
       // AI observability — tokens + cost
       const inputTokens  = gptResponse.usage?.input_tokens  || 0;
@@ -210,24 +225,17 @@ class ImageProcessingService {
 
       // Fix #8 — pipeline histogram + per-screenshot structured record
       recordHistogram('screenshot_pipeline_total_ms', totalDuration);
-      logEvent('screenshot_processed', 'INFO', {
-        module: 'ImageProcessingService',
+      // One log event per answered screenshot. Shape matches the STT-flow
+      // question_answered event so the Q/A dashboard panels can query both
+      // flows with a single event name filtered by the `flow` label.
+      logEvent('question_answered', 'INFO', {
         flow: 'screenshot',
-        processId,
-        filename,
-        ocr_text: extractedText,
-        ocr_word_count: extractedText.trim().split(/\s+/).filter(Boolean).length,
-        answer: gptResponse.message?.content ?? '',
-        answer_word_count: (gptResponse.message?.content ?? '').trim().split(/\s+/).filter(Boolean).length,
+        question: extractedText,
+        answer:   gptResponse.message?.content ?? '',
         provider,
         model,
-        input_tokens:  inputTokens,
-        output_tokens: outputTokens,
-        cost_usd:      costUsd,
-        used_context: actuallyUsedContext,
-        ocr_duration_ms: ocrDuration,
-        ai_total_ms:     aiDuration,
-        screenshot_pipeline_total_ms: totalDuration,
+        latency_ms: totalDuration,
+        cost_usd:   costUsd,
       });
 
       const processedItem = {

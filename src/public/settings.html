@@ -799,10 +799,11 @@ let providers=[], modelCache={}, currentPromptType='interview-answer';
 let _sidLoading=false;
 
 const PROV_META = {
-  openai: { label:'OpenAI',    ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)', char:'O' },
-  grok:   { label:'Groq',      ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',  char:'G' },
-  gemini: { label:'Gemini',    ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)', char:'G' },
-  claude: { label:'Anthropic', ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)', char:'A' },
+  openai: { label:'OpenAI',        ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)',  char:'O' },
+  grok:   { label:'Groq',          ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',   char:'G' },
+  gemini: { label:'Gemini',        ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)',  char:'G' },
+  claude: { label:'Anthropic',     ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)',  char:'A' },
+  ollama: { label:'Ollama (local)', ph:'',        color:'#22c55e', bg:'rgba(34,197,94,0.15)',   char:'L' },
 };
 function getMeta(id) { return PROV_META[id]||{label:id,ph:'API key…',color:'#6366f1',bg:'rgba(99,102,241,0.15)',char:'?'}; }
 
@@ -853,16 +854,37 @@ function renderProviders() {
     const opts     = models.length > 0
       ? models.map(md=>`<option value="${esc(md.id)}"${md.id===p.model?' selected':''}>${esc(md.name)}</option>`).join('')
       : `<option value="${esc(p.model||'')}">${esc(p.model||'Loading…')}</option>`;
-    const pill = p.hasKey
-      ? `<span class="key-pill has">🔑 key saved</span>`
-      : `<span class="key-pill none">no key</span>`;
+    const isLocal = p.local || p.id === 'ollama';
+    const pill = isLocal
+      ? `<span class="key-pill has" style="background:rgba(34,197,94,0.15);color:#22c55e">🖥 local · $0</span>`
+      : (p.hasKey
+          ? `<span class="key-pill has">🔑 key saved</span>`
+          : `<span class="key-pill none">no key</span>`);
+
+    // Local providers don't need an API key — replace the key row with a
+    // short "runs locally" note and a connectivity-test button.
+    const keyRow = isLocal
+      ? `<div class="key-row">
+           <div class="key-wrap" style="align-items:center;padding:8px 10px;font-size:12px;color:var(--text2)">
+             Runs locally at <code>localhost:11434</code> — no API key needed.
+           </div>
+           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
+         </div>`
+      : `<div class="key-row">
+           <div class="key-wrap">
+             <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
+               placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
+             <button class="key-toggle" data-idx="${idx}">Show</button>
+           </div>
+           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
+         </div>`;
 
     const card = document.createElement('div');
     card.className = `provider-card${p.enabled?' enabled':''}`;
-    card.dataset.idx = idx; card.draggable = true;
+    card.dataset.idx = idx; card.draggable = !isLocal;
     card.innerHTML = `
       <div class="card-header">
-        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <span class="drag-handle" title="${isLocal?'Local fallback — fixed position':'Drag to reorder'}">${isLocal?'🔒':'⠿'}</span>
         <span class="order-badge">${orderNum}</span>
         <div class="prov-avatar" style="background:${m.bg};color:${m.color}">${m.char}</div>
         <div class="prov-info">
@@ -877,14 +899,7 @@ function renderProviders() {
         </div>
       </div>
       <div class="card-body">
-        <div class="key-row">
-          <div class="key-wrap">
-            <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
-              placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
-            <button class="key-toggle" data-idx="${idx}">Show</button>
-          </div>
-          <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
-        </div>
+        ${keyRow}
         <div class="model-row">
           <select class="prov-model-select" data-idx="${idx}">${opts}</select>
           <button class="btn btn-ghost btn-sm reload-models-btn" data-idx="${idx}" title="Refresh models">↻</button>
@@ -917,11 +932,14 @@ function bindProviderEvents() {
   document.querySelectorAll('.test-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       const idx=+e.target.dataset.idx; const p=providers[idx];
+      const isLocal = p.local || p.id === 'ollama';
       const key=p.newKey||null;
-      if (!key&&!p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
+      if (!isLocal && !key && !p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
       const orig=e.target.textContent; e.target.textContent='…'; e.target.disabled=true;
       try {
-        const body=key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'};
+        const body = isLocal
+          ? {providerId:p.id}
+          : (key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'});
         const res=await fetch('/api/config/test-provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         const d=await res.json();
         if (d.success) { e.target.textContent='✓'; e.target.className='btn btn-success btn-sm test-btn'; showToast(d.message,'ok'); }

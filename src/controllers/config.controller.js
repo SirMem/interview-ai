@@ -22,6 +22,7 @@ const KNOWN_PROVIDER_LABELS = {
   grok: 'Grok (Groq)',
   gemini: 'Gemini',
   claude: 'Claude (Anthropic)',
+  ollama: 'Ollama (local)',
 };
 
 // Fallback model lists per provider (used when live fetch fails or as initial options)
@@ -49,6 +50,13 @@ const FALLBACK_MODELS = {
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
     { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
     { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
+  ],
+  ollama: [
+    { id: 'llama3.2:1b', name: 'Llama 3.2 1B (fast)' },
+    { id: 'llama3.2:3b', name: 'Llama 3.2 3B' },
+    { id: 'llama3.1:8b', name: 'Llama 3.1 8B' },
+    { id: 'qwen2.5:3b',  name: 'Qwen 2.5 3B' },
+    { id: 'qwen2.5:7b',  name: 'Qwen 2.5 7B' },
   ],
 };
 
@@ -132,10 +140,7 @@ class ConfigController {
           ? enabled
           : order.filter((id) => mergedKeys[id]?.trim());
 
-      if (enabledProviders.length === 0) {
-        return res.status(400).json({ success: false, error: 'At least one provider must be enabled' });
-      }
-
+      // Zero enabled remote providers is legal now: Ollama is the terminal fallback.
       const configToSave = { ...existingConfig, keys: mergedKeys, order, enabled: enabledProviders };
       fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
 
@@ -157,7 +162,7 @@ class ConfigController {
     try {
       const config = this._readConfig() || { keys: {}, order: [], enabled: [] };
 
-      const allKnownIds = ['openai', 'grok', 'gemini', 'claude'];
+      const allKnownIds = ['openai', 'grok', 'gemini', 'claude', 'ollama'];
       const existingIds = new Set([
         ...(config.order || []),
         ...Object.keys(config.keys || {}).filter(k => k !== 'ollama_model'),
@@ -171,13 +176,20 @@ class ConfigController {
         ...allIds.filter(id => !(config.order || []).includes(id)),
       ];
 
+      // Ollama is always enabled by default (local fallback). Only disable it
+      // if the user explicitly set ollama_enabled=false.
       const enabledSet = new Set(config.enabled || config.order || []);
+      if (config.ollama_enabled !== false) enabledSet.add('ollama');
       const providers = orderedIds.map(id => ({
         id,
         label: KNOWN_PROVIDER_LABELS[id] || id,
-        hasKey: !!(config.keys?.[id]),
+        // ollama never needs an API key — treat as permanently "configured"
+        hasKey: id === 'ollama' ? true : !!(config.keys?.[id]),
+        local:  id === 'ollama',
         enabled: enabledSet.has(id),
-        model: config.models?.[id] || DEFAULT_MODELS[id] || '',
+        model: id === 'ollama'
+          ? (config.ollama_model || 'llama3.2:1b')
+          : (config.models?.[id] || DEFAULT_MODELS[id] || ''),
       }));
 
       res.json({
@@ -215,9 +227,17 @@ class ConfigController {
       const order = [];
       const enabledProviders = [];
 
+      let ollamaEnabledOverride = null;  // null = don't change; bool = set explicitly
+      let ollamaModelOverride   = null;
       if (Array.isArray(providers)) {
         for (const p of providers) {
           if (!p.id) continue;
+          if (p.id === 'ollama') {
+            // ollama lives in its own top-level fields, not in order/keys/models.
+            ollamaEnabledOverride = !!p.enabled;
+            if (p.model && p.model.trim()) ollamaModelOverride = p.model.trim();
+            continue;
+          }
           order.push(p.id);
           if (p.enabled) enabledProviders.push(p.id);
           // Only update key if a non-blank, non-placeholder value is provided
@@ -231,9 +251,9 @@ class ConfigController {
         }
       }
 
-      if (enabledProviders.length === 0 && order.length > 0) {
-        return res.status(400).json({ success: false, error: 'At least one provider must be enabled' });
-      }
+      // "At least one provider" rule is lifted: Ollama is always a terminal
+      // fallback, so zero enabled remote providers is legal — the answer just
+      // goes local.
 
       const configToSave = {
         ...existingConfig,           // preserve vad block and any other fields
@@ -241,6 +261,10 @@ class ConfigController {
         models:           mergedModels,
         order:            order.length ? order : existingConfig.order,
         enabled:          enabledProviders.length ? enabledProviders : existingConfig.enabled,
+        ollama_enabled:   ollamaEnabledOverride !== null
+                            ? ollamaEnabledOverride
+                            : (existingConfig.ollama_enabled !== false),
+        ollama_model:     ollamaModelOverride  || existingConfig.ollama_model || 'llama3.2:1b',
         stt_model:            stt_model            || existingConfig.stt_model            || 'small',
         answer_mode:          answer_mode          || existingConfig.answer_mode           || 'auto',
         hud_opacity:          hud_opacity          ?? existingConfig.hud_opacity           ?? 15,
@@ -271,6 +295,23 @@ class ConfigController {
 
     // Always return fallback list; try live fetch as bonus
     const fallback = FALLBACK_MODELS[providerId] || [];
+
+    // Ollama: fetch locally installed models from the daemon (no key needed).
+    if (providerId === 'ollama') {
+      try {
+        const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
+        if (r.ok) {
+          const data = await r.json();
+          const models = (data.models || [])
+            .map((m) => ({ id: m.name, name: m.name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          if (models.length) return res.json({ success: true, models, source: 'live' });
+        }
+      } catch {
+        // Ollama not running — fall through to fallback list
+      }
+      return res.json({ success: true, models: fallback, source: 'fallback' });
+    }
 
     if (!apiKey) {
       return res.json({ success: true, models: fallback, source: 'fallback' });
@@ -361,6 +402,19 @@ class ConfigController {
     const { providerId, key: rawKey } = req.body;
     if (!providerId) {
       return res.status(400).json({ success: false, error: 'providerId is required' });
+    }
+
+    // Ollama: local daemon, no API key. Test connectivity to /api/tags.
+    if (providerId === 'ollama') {
+      try {
+        const r = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(2000) });
+        if (!r.ok) return res.status(400).json({ success: false, error: `Ollama returned HTTP ${r.status}` });
+        const data = await r.json();
+        const count = (data.models || []).length;
+        return res.json({ success: true, message: `Ollama running — ${count} model(s) installed` });
+      } catch (err) {
+        return res.status(400).json({ success: false, error: `Could not reach Ollama at localhost:11434 — start it with "ollama serve"` });
+      }
     }
 
     // Use stored key if client sent placeholder or no key

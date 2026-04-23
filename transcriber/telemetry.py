@@ -325,6 +325,7 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             from opentelemetry._logs import set_logger_provider, get_logger
             from opentelemetry.sdk.metrics import MeterProvider
             from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+            from opentelemetry.sdk.metrics.view import View, ExplicitBucketHistogramAggregation
             from opentelemetry.sdk.resources import Resource
             from opentelemetry.sdk._logs import LoggerProvider
             from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
@@ -376,7 +377,25 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
                 export_interval_millis=10_000,
                 export_timeout_millis=5_000,
             )
-            _meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+            # Custom histogram bucket boundaries. OTel defaults are too coarse
+            # for sub-10-ms VAD calls and for the long tail of AI latency. The
+            # lists below are logarithmic-ish across the metric's expected
+            # range, giving usable P50/P95/P99 out of the box.
+            _fine_submicro = [0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 75, 100, 200, 500]
+            _ai_lat        = [100, 250, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000,
+                              6000, 7500, 10000, 15000, 20000, 30000]
+            _whisper_lat   = [25, 50, 75, 100, 150, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000]
+            _views = [
+                View(instrument_name='vad_latency_ms',
+                     aggregation=ExplicitBucketHistogramAggregation(boundaries=_fine_submicro)),
+                View(instrument_name='whisper_decode_ms',
+                     aggregation=ExplicitBucketHistogramAggregation(boundaries=_whisper_lat)),
+                View(instrument_name='speaker_id_latency_ms',
+                     aggregation=ExplicitBucketHistogramAggregation(boundaries=_whisper_lat)),
+                View(instrument_name='silence_wait_actual_ms',
+                     aggregation=ExplicitBucketHistogramAggregation(boundaries=_ai_lat)),
+            ]
+            _meter_provider = MeterProvider(resource=resource, metric_readers=[reader], views=_views)
             metrics.set_meter_provider(_meter_provider)
             _meter = metrics.get_meter(_service_name)
 
@@ -440,6 +459,19 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
                 "utterances_discarded_total",
                 description="Utterances filtered out before AI (with reason label)",
             )
+            # Seed counters with .add(0) so Prometheus' increase() has a
+            # baseline sample — without this the first real event is invisible
+            # to `sum(increase(X[$__range]))` and the counter reads N-1 for
+            # the first N events. Also seed the known discard reasons so the
+            # breakdown piechart doesn't look sparse at startup.
+            try:
+                COUNT_UTTERANCES_DETECTED.add(0)
+                COUNT_UTTERANCES_PASSED.add(0)
+                for _reason in ("greeting", "too_short", "hallucination",
+                                "gibberish", "auto_answer_disabled"):
+                    COUNT_UTTERANCES_DISCARDED.add(0, {"reason": _reason})
+            except Exception:
+                pass
 
             # OTel Python SDK <1.27 doesn't have UpDownCounter.set() — use observable
             # gauge proxies via a simple Counter-like wrapper that records the latest value.

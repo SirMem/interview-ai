@@ -7,16 +7,12 @@ import os
 import warnings
 warnings.filterwarnings("ignore", message=".*unauthenticated.*HF Hub.*", category=UserWarning)
 import sys
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import numpy as np
 
-from audio_recorder import AudioRecorder
 from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
@@ -40,7 +36,6 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global transcriber, socket_client, keyboard_handler, always_on_listener, speaker_identifier
-    global _transcription_executor
 
     logger.info("Initializing STT system components...")
 
@@ -115,14 +110,6 @@ async def lifespan(app: FastAPI):
             telemetry.GAUGE_SPEAKER_ID_MODEL_STATUS.set(1, {"status": _speaker_id_status})
         except Exception:
             pass
-
-        # MLX is protected by an internal lock in transcriber.py — one worker
-        # handles preprocessing concurrently while the other waits for the GPU.
-        _transcription_executor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="transcribe",
-        )
-        logger.info("Transcription thread pool initialized (max_workers=2)")
 
         socket_client = SocketClient()
         try:
@@ -206,8 +193,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    global recorder, is_recording, _audio_buffer
-
     logger.info("Shutting down STT system...")
 
     if always_on_listener:
@@ -215,14 +200,6 @@ async def lifespan(app: FastAPI):
 
     if keyboard_handler:
         keyboard_handler.stop()
-
-    if is_recording:
-        stop_recording_internal_sync()
-
-    if _transcription_executor:
-        logger.info("Shutting down transcription thread pool...")
-        _transcription_executor.shutdown(wait=True)
-        _transcription_executor = None
 
     if socket_client:
         socket_client.disconnect()
@@ -241,263 +218,20 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Real-time Speech-to-Text Transcription", lifespan=lifespan)
 
-recorder: Optional[AudioRecorder] = None
 transcriber: Optional[Transcriber] = None
 socket_client: Optional[SocketClient] = None
-recording_thread: Optional[threading.Thread] = None
 keyboard_handler: Optional[KeyboardHandler] = None
 always_on_listener: Optional[AlwaysOnListener] = None
 speaker_identifier: Optional[SpeakerIdentifier] = None
-_transcription_executor: Optional[ThreadPoolExecutor] = None
-
-is_recording: bool = False
-_send_realtime_chunks: bool = True
-
-# Minimum accumulated audio before attempting transcription.
-# 0.5 s is the minimum Whisper supports and halves first-chunk latency.
-_min_audio_duration: float = 0.5
-
-# Thread-safe audio accumulation buffer
-_audio_buffer: list = []
-_audio_buffer_lock = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-class StartRecordingResponse(BaseModel):
-    status: str
-    message: str
-
-
-class StopRecordingResponse(BaseModel):
-    status: str
-    message: str
-
-
-# ---------------------------------------------------------------------------
-# Audio processing
-# ---------------------------------------------------------------------------
-def process_audio_chunk(audio_chunk: np.ndarray):
-    """Accumulate an audio chunk and transcribe when enough audio is buffered.
-
-    All reads/writes to ``_audio_buffer`` are protected by ``_audio_buffer_lock``
-    so that concurrent worker threads cannot corrupt the buffer or produce
-    duplicate transcriptions for the same audio window.
-    """
-    global transcriber, socket_client, _audio_buffer, _send_realtime_chunks
-
-    try:
-        if audio_chunk is None or audio_chunk.size == 0:
-            return
-
-        if audio_chunk.ndim > 1:
-            audio_chunk = np.mean(audio_chunk, axis=1)
-
-        accumulated_audio: Optional[np.ndarray] = None
-
-        with _audio_buffer_lock:
-            _audio_buffer.append(audio_chunk)
-
-            if _send_realtime_chunks:
-                total_samples = sum(len(c) for c in _audio_buffer)
-                total_duration = total_samples / SAMPLE_RATE
-
-                if total_duration >= _min_audio_duration:
-                    # Snapshot and reset buffer atomically
-                    accumulated_audio = np.concatenate(_audio_buffer)
-
-                    # Keep 0.5 s of overlap for context continuity
-                    overlap_samples = int(SAMPLE_RATE * 0.5)
-                    last_chunk = _audio_buffer[-1]
-                    if len(last_chunk) > overlap_samples:
-                        _audio_buffer = [last_chunk[-overlap_samples:]]
-                    else:
-                        _audio_buffer = [last_chunk]
-
-        # Transcribe outside the lock (MLX is slow — ~200–500 ms)
-        if accumulated_audio is not None and transcriber:
-            text = transcriber.transcribe_chunk(accumulated_audio, SAMPLE_RATE)
-
-            if text and text.strip():
-                logger.info(f"🎤 Transcription: {text}")
-                print(f"🎤 Transcription: {text}")
-
-                if socket_client and socket_client.is_connected():
-                    socket_client.send_transcription_chunk(text)
-
-                if text and text.strip():
-                    telemetry.log('transcription', text=text.strip())
-
-    except Exception as e:
-        logger.error(f"Error processing audio chunk: {e}")
-        with _audio_buffer_lock:
-            _audio_buffer = []
-
-
-def recording_worker():
-    """Continuously pull audio chunks and dispatch them to the thread pool."""
-    global recorder, is_recording, _transcription_executor
-
-    logger.info("Recording worker started")
-
-    while is_recording and recorder:
-        try:
-            audio_chunk = recorder.get_audio_chunk(timeout=0.5)
-            if audio_chunk is not None:
-                if _transcription_executor:
-                    _transcription_executor.submit(process_audio_chunk, audio_chunk)
-                else:
-                    threading.Thread(
-                        target=process_audio_chunk,
-                        args=(audio_chunk,),
-                        daemon=True,
-                    ).start()
-        except Exception as e:
-            logger.error(f"Error in recording worker: {e}")
-            if not is_recording:
-                break
-
-    logger.info("Recording worker stopped")
-
-
-def start_recording_internal(enable_realtime_chunks: bool = False):
-    """Start recording. Called from both keyboard handler and API endpoint."""
-    global recorder, recording_thread, is_recording, _audio_buffer, _send_realtime_chunks
-
-    if is_recording:
-        logger.warning("Recording is already in progress")
-        return
-
-    try:
-        with _audio_buffer_lock:
-            _audio_buffer = []
-        _send_realtime_chunks = enable_realtime_chunks
-
-        recorder = AudioRecorder(callback=None)
-        recorder.start_recording()
-
-        is_recording = True
-        recording_thread = threading.Thread(target=recording_worker, daemon=True)
-        recording_thread.start()
-
-        mode = "real-time" if enable_realtime_chunks else "push-to-talk"
-        logger.info(f"Recording started ({mode} mode)")
-    except Exception as e:
-        logger.error(f"Failed to start recording: {e}")
-        is_recording = False
-        raise
-
-
-def stop_recording_internal_sync():
-    """Stop recording, transcribe remaining audio, and signal the server.
-
-    Execution order that guarantees no chunks are lost:
-    1. Set is_recording=False and stop audio input.
-    2. Join the recording worker (loop exits, no more jobs submitted).
-    3. Drain the transcription executor (wait for in-flight Whisper jobs to
-       finish and send their chunks) — this is the key step that prevents the
-       race where the final chunk arrives after process_transcription.
-    4. Transcribe any audio still in the buffer after the executor drains.
-    5. Only then emit process_transcription.
-    """
-    global recorder, recording_thread, is_recording, _audio_buffer, _transcription_executor
-
-    if not is_recording:
-        return
-
-    is_recording = False
-
-    if recorder:
-        recorder.stop_recording()
-
-    if recording_thread and recording_thread.is_alive():
-        recording_thread.join(timeout=2.0)
-
-    # Drain executor: wait for every in-flight transcription job to complete
-    # (and send its chunk) before we proceed.  Then recreate for next session.
-    if _transcription_executor:
-        _transcription_executor.shutdown(wait=True)
-        _transcription_executor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="transcribe",
-        )
-
-    # Safely grab remaining buffer
-    buffer_copy = []
-    with _audio_buffer_lock:
-        if _audio_buffer:
-            buffer_copy = list(_audio_buffer)
-        _audio_buffer = []
-
-    # Transcribe any audio that hadn't reached the min-duration threshold
-    if buffer_copy and transcriber:
-        try:
-            accumulated_audio = np.concatenate(buffer_copy)
-            min_samples = int(SAMPLE_RATE * 0.5)
-            if len(accumulated_audio) >= min_samples:
-                text = transcriber.transcribe_chunk(accumulated_audio, SAMPLE_RATE)
-                if text and text.strip():
-                    logger.info(f"🎤 Final Transcription: {text}")
-                    print(f"🎤 Final Transcription: {text}")
-
-                    if socket_client and socket_client.is_connected():
-                        # send_transcription_chunk is synchronous — no sleep needed
-                        socket_client.send_transcription_chunk(text)
-
-                    if text and text.strip():
-                        telemetry.log('transcription', text=text.strip())
-        except Exception as e:
-            logger.error(f"Error processing final accumulated audio: {e}")
-
-    # Trigger server-side AI processing
-    if socket_client and socket_client.is_connected():
-        socket_client.process_transcription()
-        logger.info("Sent process_transcription event")
-
-    logger.info("Recording stopped")
-
 
 
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
-@app.post("/start-recording", response_model=StartRecordingResponse)
-async def start_recording():
-    if is_recording:
-        raise HTTPException(status_code=400, detail="Recording is already in progress")
-    try:
-        start_recording_internal(enable_realtime_chunks=True)
-        return StartRecordingResponse(status="success", message="Recording started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start recording: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start recording: {str(e)}")
-
-
-@app.post("/stop-recording", response_model=StopRecordingResponse)
-async def stop_recording():
-    """Return immediately so the Node server can unblock the HUD state instantly.
-    The heavy work (executor drain, final Whisper call, process_transcription)
-    runs in a thread so it never blocks the event loop."""
-    if not is_recording:
-        return StopRecordingResponse(status="success", message="Not recording")
-    try:
-        # Run the blocking sync work in a thread — don't block the event loop.
-        # The total time to AI answer is unchanged; only listen_state_changed
-        # fires immediately instead of after all Whisper processing finishes.
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, stop_recording_internal_sync)
-        return StopRecordingResponse(status="success", message="Recording stopped successfully")
-    except Exception as e:
-        logger.error(f"Failed to stop recording: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to stop recording: {str(e)}")
-
-
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
-        "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
         "always_on_active": (always_on_listener is not None
                              and always_on_listener._running
