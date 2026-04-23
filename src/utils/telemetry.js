@@ -511,11 +511,17 @@ const SEV_MAP = {
 export function logEvent(event, level = 'INFO', fields = {}) {
   if (!_enabled || !_otelLogger) return;
   try {
+    const sanitized = _sanitize(fields);
+    // Body = JSON payload so Loki's `| json` parser + `{{.field}}` line_format
+    // work out of the box. Attributes stay populated (Grafana Cloud promotes
+    // them to structured metadata) so stream-selector filters like
+    // `| event="question_answered"` remain fast and index-backed.
+    const body = JSON.stringify({ event, ...sanitized });
     _otelLogger.emit({
       severityNumber: SEV_MAP[level.toUpperCase()] ?? SeverityNumber.INFO,
       severityText:   level.toUpperCase(),
-      body: event,
-      attributes: { event, service: _serviceName, ..._sanitize(fields) },
+      body,
+      attributes: { event, service: _serviceName, ...sanitized },
     });
   } catch (_) {
     // Telemetry must never break the hot path.

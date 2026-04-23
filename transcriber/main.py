@@ -411,7 +411,14 @@ async def load_speaker_id_endpoint(body: dict):
         # Swap in the new identifier globally
         speaker_identifier = new_identifier
         if always_on_listener is not None:
-            always_on_listener._speaker_id = speaker_identifier
+            # attach_speaker_id also creates the SpeakerIDWorker if the
+            # listener was constructed without one — without this the worker
+            # stays None forever and speaker_id_latency_ms never records.
+            always_on_listener.attach_speaker_id(speaker_identifier)
+            # If enrollment is now present, clear the auto-answer gate so
+            # utterances actually reach Node.
+            if speaker_identifier.has_enrollment:
+                always_on_listener.set_auto_answer_disabled(False)
 
         logger.info("Speaker ID model loaded dynamically (enrolled=%s, device=%s)",
                     speaker_identifier.has_enrollment, speaker_identifier.device)
@@ -478,6 +485,12 @@ async def enroll_voice():
         if success:
             logger.info("Voice enrollment completed successfully")
             log_writer.log('voice_enrolled', success=True)
+            # Enrollment changes the listener's gates: clear auto_answer_disabled
+            # (stt_final will now flow) and make sure the SpeakerIDWorker exists
+            # so identify() runs and speaker_id_latency_ms starts recording.
+            if always_on_listener is not None:
+                always_on_listener.attach_speaker_id(speaker_identifier)
+                always_on_listener.set_auto_answer_disabled(False)
             return {"status": "ok", "enrolled": True}
         else:
             raise HTTPException(status_code=500, detail="Enrollment computation failed — see logs")

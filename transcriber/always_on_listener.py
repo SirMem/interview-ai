@@ -116,6 +116,35 @@ class AlwaysOnListener:
         """Fix #7: flip the auto-answer gate at runtime (e.g., when enrollment changes)."""
         self._auto_answer_disabled = disabled
 
+    def attach_speaker_id(self, identifier):
+        """Wire a SpeakerIdentifier into a listener that was built without one.
+
+        Constructor only creates the SpeakerIDWorker when `speaker_id` is passed
+        at init time. If the user later turns speaker-ID on via the settings
+        page (hitting /load-speaker-id or /enroll-voice), the listener's
+        `_speaker_id` reference was updated but the worker stayed None — so
+        _submit_to_speaker_id_worker silently returned and no identify() call
+        was ever made. This method plugs that gap: it sets the reference and
+        also spins up + starts the worker if needed.
+        """
+        self._speaker_id = identifier
+        if identifier is None:
+            return
+        if self._speaker_id_worker is None:
+            self._speaker_id_worker = SpeakerIDWorker(
+                speaker_identifier=identifier,
+                on_pass=self._on_speaker_pass,
+                on_discard=self._on_speaker_discard,
+            )
+            if self._running:
+                self._speaker_id_worker.start()
+            logger.info("SpeakerIDWorker attached dynamically (enrolled=%s)",
+                        getattr(identifier, 'has_enrollment', False))
+        else:
+            # Worker already exists — just update the identifier reference inside
+            # it so fresh enrollment embeddings are picked up on next identify().
+            self._speaker_id_worker._speaker_id = identifier
+
     # ── SpeakerIDWorker callbacks (called from worker thread) ─────────────────
 
     def _on_speaker_pass(self, utterance_id: str):

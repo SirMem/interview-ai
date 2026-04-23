@@ -610,7 +610,14 @@ def log(event: str, level: str = 'INFO', **fields):
             'CRITICAL': SeverityNumber.FATAL,
         }
         severity = sev_map.get(level.upper(), SeverityNumber.INFO)
-        attributes = {'event': event, 'service': _service_name, **_jsonable(fields)}
+        sanitized = _jsonable(fields)
+        attributes = {'event': event, 'service': _service_name, **sanitized}
+
+        # Body = JSON payload so Loki's `| json` parser + `{{.field}}` line_format
+        # work on the raw log line. Attributes stay populated for index-backed
+        # stream-selector filtering (e.g. `| event="stt_final_emitted"`).
+        import json as _json
+        body = _json.dumps({'event': event, **sanitized})
 
         # SDK >=1.27 removed LogRecord from opentelemetry.sdk._logs; Logger.emit()
         # now accepts keyword arguments directly.
@@ -619,7 +626,7 @@ def log(event: str, level: str = 'INFO', **fields):
             observed_timestamp=int(time.time() * 1e9),
             severity_number=severity,
             severity_text=level.upper(),
-            body=event,
+            body=body,
             attributes=attributes,
         )
     except Exception as e:
