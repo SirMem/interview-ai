@@ -29,7 +29,9 @@ import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
+from opentelemetry.sdk._logs import LoggingHandler
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ _meter = None
 _otel_logger = None
 _meter_provider = None
 _logger_provider = None
+_logging_bridge = None   # LoggingHandler bridging stdlib WARNING+ → OTel
 _init_lock = threading.Lock()
 
 # Service identity, set at init time
@@ -73,6 +76,16 @@ GAUGE_GPU_MEMORY_USED_BYTES:   Any = None
 _sampler_thread: Optional[threading.Thread] = None
 _sampler_running: bool = False
 _sampler_interval_s: float = 10.0
+
+# Host-identity labels — populated by init_telemetry(), used by sampler + callers.
+# Mirrors Node.js _hostLabels: Grafana Cloud doesn't promote resource attrs to
+# metric labels, so we attach them explicitly on every instrument record.
+_host_labels: Dict[str, Any] = {}
+
+
+def get_host_labels() -> Dict[str, Any]:
+    """Return a copy of the host-identity labels for use as metric attributes."""
+    return dict(_host_labels)
 
 
 # ── No-op shims (used when disabled) ──────────────────────────────────────────
@@ -244,10 +257,14 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
          "service_prefix": "solvewatch"}
     """
     global _enabled, _meter, _otel_logger, _meter_provider, _logger_provider, _service_name
+    global _logging_bridge
     global HIST_VAD_LATENCY_MS, HIST_WHISPER_DECODE_MS, HIST_SPEAKER_ID_LATENCY_MS
     global HIST_SILENCE_WAIT_ACTUAL_MS
     global COUNT_UTTERANCES_DETECTED, COUNT_UTTERANCES_PASSED, COUNT_UTTERANCES_DISCARDED
     global GAUGE_LISTENER_ACTIVE, GAUGE_SPEAKER_ID_MODEL_STATUS, GAUGE_WHISPER_MODEL_LOADED
+    global GAUGE_HOST_CPU_PERCENT, GAUGE_HOST_MEMORY_PERCENT, GAUGE_HOST_MEMORY_USED_BYTES
+    global GAUGE_PROCESS_CPU_PERCENT, GAUGE_PROCESS_MEMORY_RSS_BYTES
+    global GAUGE_GPU_UTILIZATION_PERCENT, GAUGE_GPU_MEMORY_USED_BYTES
 
     with _init_lock:
         # Re-entrant: callers may flip the toggle from the settings page.
@@ -263,6 +280,8 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
                     _logger_provider.shutdown()
             except Exception:
                 pass
+            if _logging_bridge is not None:
+                logging.getLogger().removeHandler(_logging_bridge)
             _enabled = False
 
         cfg = (config or {}).get("telemetry") if config and "telemetry" in (config or {}) else (config or {})
@@ -334,6 +353,18 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             )
             resource = Resource.create(resource_attrs)
 
+            # Cache host-identity labels for instrument attributes — Grafana Cloud
+            # doesn't promote resource attrs to metric labels automatically.
+            global _host_labels
+            _host_labels = {k: v for k, v in {
+                'host_name':        resource_attrs.get('host.name', ''),
+                'host_owner':       resource_attrs.get('host.owner', ''),
+                'host_id':          resource_attrs.get('host.id', ''),
+                'host_arch':        resource_attrs.get('host.arch', ''),
+                'device_cpu_brand': resource_attrs.get('device.cpu.brand', ''),
+                'os_type':          resource_attrs.get('os.type', ''),
+            }.items() if v}
+
             # ── Metrics ──────────────────────────────────────────────────────
             metric_exporter = OTLPMetricExporter(
                 endpoint=f"{endpoint}/v1/metrics",
@@ -367,6 +398,13 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             )
             set_logger_provider(_logger_provider)
             _otel_logger = get_logger(_service_name)
+
+            # Bridge Python stdlib logging (WARNING+) → OTel/Loki so that
+            # logger.error() / logger.warning() calls appear in Grafana automatically.
+            _logging_bridge = LoggingHandler(level=logging.WARNING, logger_provider=_logger_provider)
+            # Exclude OTel's own internal loggers to prevent feedback loops.
+            _logging_bridge.addFilter(lambda r: not r.name.startswith('opentelemetry'))
+            logging.getLogger().addHandler(_logging_bridge)
 
             # ── Build metric handles ─────────────────────────────────────────
             # Don't pass `unit` — Grafana Cloud's OTLP→Mimir translator appends
@@ -441,6 +479,8 @@ def shutdown_telemetry():
             _logger_provider.shutdown()
     except Exception as e:
         logger.warning("Telemetry: logger shutdown error %s", e)
+    if _logging_bridge is not None:
+        logging.getLogger().removeHandler(_logging_bridge)
     _enabled = False
 
 
@@ -453,6 +493,7 @@ def _install_noop_handles():
     global GAUGE_HOST_CPU_PERCENT, GAUGE_HOST_MEMORY_PERCENT, GAUGE_HOST_MEMORY_USED_BYTES
     global GAUGE_PROCESS_CPU_PERCENT, GAUGE_PROCESS_MEMORY_RSS_BYTES
     global GAUGE_GPU_UTILIZATION_PERCENT, GAUGE_GPU_MEMORY_USED_BYTES
+
     HIST_VAD_LATENCY_MS         = _NOOP_HIST
     HIST_WHISPER_DECODE_MS      = _NOOP_HIST
     HIST_SPEAKER_ID_LATENCY_MS  = _NOOP_HIST
@@ -622,17 +663,18 @@ def _sampler_loop():
             try:
                 cpu_pct = psutil.cpu_percent(interval=None)
                 vm = psutil.virtual_memory()
-                GAUGE_HOST_CPU_PERCENT.set(cpu_pct)
-                GAUGE_HOST_MEMORY_PERCENT.set(vm.percent)
-                GAUGE_HOST_MEMORY_USED_BYTES.set(vm.used)
+                GAUGE_HOST_CPU_PERCENT.set(cpu_pct, _host_labels if _host_labels else None)
+                GAUGE_HOST_MEMORY_PERCENT.set(vm.percent, _host_labels if _host_labels else None)
+                GAUGE_HOST_MEMORY_USED_BYTES.set(vm.used, _host_labels if _host_labels else None)
             except Exception:
                 pass
 
-            # This process
+            # This process — include host_name so dashboard {host_name=~"$host"} matches
             if proc is not None:
                 try:
-                    GAUGE_PROCESS_CPU_PERCENT.set(proc.cpu_percent(interval=None))
-                    GAUGE_PROCESS_MEMORY_RSS_BYTES.set(proc.memory_info().rss)
+                    svc_label = {**_host_labels, "service_name": _service_name}
+                    GAUGE_PROCESS_CPU_PERCENT.set(proc.cpu_percent(interval=None), svc_label)
+                    GAUGE_PROCESS_MEMORY_RSS_BYTES.set(proc.memory_info().rss, svc_label)
                 except Exception:
                     pass
 

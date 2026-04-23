@@ -4,6 +4,8 @@ FastAPI server for real-time speech-to-text transcription
 import asyncio
 import logging
 import os
+import warnings
+warnings.filterwarnings("ignore", message=".*unauthenticated.*HF Hub.*", category=UserWarning)
 import sys
 import threading
 import time
@@ -68,10 +70,13 @@ async def lifespan(app: FastAPI):
         # Without this, the first real question pays a 2-5s cold-start penalty.
         if not transcriber.use_api:
             try:
-                logger.info("Pre-warming MLX Whisper (compiling Metal kernels)...")
+                logger.info("Pre-warming Whisper (compiling kernels)...")
                 _dummy_audio = np.zeros(16000, dtype=np.float32)  # 1s silence
-                transcriber._transcribe_local(_dummy_audio)
-                logger.info("MLX Whisper pre-warmed — Metal kernels compiled")
+                if transcriber.backend == "mlx":
+                    transcriber._transcribe_mlx(_dummy_audio)
+                else:
+                    transcriber._transcribe_local_cpu(_dummy_audio)
+                logger.info("Whisper pre-warmed successfully")
                 log_writer.log('transcriber_prewarmed', model=transcriber.model_size)
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
@@ -183,6 +188,8 @@ async def lifespan(app: FastAPI):
             logger.info("Keyboard handler disabled in configuration")
 
         logger.info("STT system ready")
+        # Ensure listener_active is always exported (0 = not listening yet)
+        telemetry.GAUGE_LISTENER_ACTIVE.set(0, telemetry.get_host_labels() or None)
         telemetry.log('transcriber_start', 'INFO',
                       pid=os.getpid(),
                       platform=sys.platform,
@@ -533,9 +540,11 @@ async def set_always_on_mode(body: dict):
     global always_on_listener
     enabled = body.get("enabled", True)
     if enabled:
-        if always_on_listener is None:
+        # Python threads cannot be restarted once stopped — recreate if needed.
+        if always_on_listener is None or not always_on_listener._running:
             try:
                 always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                telemetry.GAUGE_LISTENER_ACTIVE.set(0, telemetry.get_host_labels() or None)
             except Exception as e:
                 logger.error(f"Failed to initialize always-on listener: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to initialize listener: {str(e)}")

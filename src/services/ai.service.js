@@ -21,8 +21,20 @@ const AI_PRICING = {
   'gpt-4o-mini':                  { in: 0.15,  out: 0.60 },
   'gpt-4-turbo':                  { in: 10.00, out: 30.00 },
   'gpt-3.5-turbo':                { in: 0.50,  out: 1.50 },
+  'gpt-4.1':                      { in: 2.00,  out: 8.00 },
+  'gpt-4.1-mini':                 { in: 0.40,  out: 1.60 },
+  'gpt-4.1-nano':                 { in: 0.10,  out: 0.40 },
+  'gpt-4.5':                      { in: 75.00, out: 150.00 },
+  'gpt-5':                        { in: 2.50,  out: 15.00 },
+  'gpt-5.4':                      { in: 2.50,  out: 15.00 },
+  'gpt-5.4-mini':                 { in: 0.75,  out: 4.50 },
+  'gpt-5.4-nano':                 { in: 0.20,  out: 1.25 },
+  'gpt-5.4-pro':                  { in: 30.00, out: 180.00 },
   'o1':                           { in: 15.00, out: 60.00 },
   'o1-mini':                      { in: 1.10,  out: 4.40 },
+  'o3':                           { in: 10.00, out: 40.00 },
+  'o3-mini':                      { in: 1.10,  out: 4.40 },
+  'o4-mini':                      { in: 1.10,  out: 4.40 },
   // Groq
   'llama-3.3-70b-versatile':      { in: 0.59,  out: 0.79 },
   'llama-3.1-8b-instant':         { in: 0.05,  out: 0.08 },
@@ -83,6 +95,12 @@ const DEFAULT_MODELS = {
   gemini: 'gemini-2.5-flash',
   claude: 'claude-sonnet-4-5',
 };
+
+// 4xx (except 429 rate-limit) = our bug → ERROR; everything else is transient → WARN
+function _providerLogLevel(err) {
+  const s = err?.status ?? err?.statusCode;
+  return (s >= 400 && s < 500 && s !== 429) ? 'error' : 'warn';
+}
 
 class AIService {
   constructor() {
@@ -160,9 +178,10 @@ class AIService {
     return this.config?.models?.[providerId] || DEFAULT_MODELS[providerId] || undefined;
   }
 
-  // o1/o3/o4-series models use max_completion_tokens and don't support temperature
-  _isOModel(model) {
-    return /^o\d/.test(model || '');
+  // o-series and newer GPT models (gpt-4.1+, gpt-5+) use max_completion_tokens and don't support temperature
+  _requiresCompletionTokens(model) {
+    const m = model || '';
+    return /^o\d/.test(m) || /^gpt-[5-9]/.test(m) || /^gpt-4\.[1-9]/.test(m);
   }
 
   _openAIParams(model, messages, options, stream = false) {
@@ -172,7 +191,7 @@ class AIService {
       // Required for token usage to appear in the final stream chunk.
       base.stream_options = { include_usage: true };
     }
-    if (this._isOModel(model)) {
+    if (this._requiresCompletionTokens(model)) {
       base.max_completion_tokens = options.max_tokens || 2048;
     } else {
       base.temperature = options.temperature || 0.7;
@@ -447,7 +466,9 @@ class AIService {
           usage:    result.usage,
         };
       } catch (err) {
-        log.warn(`${providerId} failed`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${providerId} failed`, err)
+          : log.warn(`${providerId} failed`, { error: err.message, status: err?.status });
         this.markProviderAsFailed(providerId);
         lastError = err;
       }
@@ -627,7 +648,9 @@ class AIService {
 
         return;
       } catch (err) {
-        log.warn(`${providerId} streaming failed`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${providerId} streaming failed`, err)
+          : log.warn(`${providerId} streaming failed`, { error: err.message, status: err?.status });
         this.markProviderAsFailed(providerId);
         addCounter('ai_provider_failure_total', 1, {
           provider:    providerId,
@@ -874,7 +897,9 @@ Question: ${question}`;
           provider: answerMode, flow: 'transcription',
           error_class: (err && err.constructor && err.constructor.name) || 'Error',
         });
-        log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${answerMode} answer streaming failed, falling back`, err)
+          : log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message, status: err?.status });
       }
     }
 

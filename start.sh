@@ -37,12 +37,14 @@ DO_SETUP=false
 SETUP_ONLY=false
 NEW_LOGS=false
 DEBUG_MODE=false
+TELEMETRY_DEBUG_MODE=false
 for arg in "$@"; do
   case "$arg" in
     --setup)      DO_SETUP=true ;;
     --setup-only) DO_SETUP=true; SETUP_ONLY=true ;;
     --newlogs|-newlogs) NEW_LOGS=true ;;
     --debug|-debug) DEBUG_MODE=true ;;
+    --telemetry-debug) TELEMETRY_DEBUG_MODE=true ;;
   esac
 done
 
@@ -336,7 +338,8 @@ wait_for_port() {
 # ── 1. Node.js backend ────────────────────────────────────────────────────────
 # Structured events go to Grafana Cloud via OTel. Console output is suppressed.
 log "Starting Node.js backend (port $NODE_PORT)..."
-node src/server.js >/dev/null 2>&1 &
+_NODE_TDBG="0"; $TELEMETRY_DEBUG_MODE && _NODE_TDBG="1"
+TELEMETRY_DEBUG="$_NODE_TDBG" node src/server.js >/dev/null 2>&1 &
 NODE_PID=$!
 PIDS+=("$NODE_PID")
 wait_for_port "$NODE_PORT" "Node.js backend" "(see Grafana Cloud)"
@@ -371,6 +374,8 @@ fi
 log "Starting Python transcriber (model: $WHISPER_MODEL, backend: $_WHISPER_BACKEND)..."
 PYTHON_LOG_LEVEL="INFO"
 $DEBUG_MODE && PYTHON_LOG_LEVEL="DEBUG"
+_TDBG_VAL="0"
+$TELEMETRY_DEBUG_MODE && _TDBG_VAL="1"
 WHISPER_MODEL="$WHISPER_MODEL" WHISPER_BACKEND="$_WHISPER_BACKEND" \
   AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" LOG_LEVEL="$PYTHON_LOG_LEVEL" \
   "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
@@ -407,6 +412,7 @@ echo -e "  Stop everything → ${BOLD}Ctrl+C${RESET}"
 echo -e ""
 echo -e "  ${BOLD}STT model:${RESET} $WHISPER_MODEL"
 echo -e "  ${BOLD}Log level:${RESET} $PYTHON_LOG_LEVEL"
+$TELEMETRY_DEBUG_MODE && echo -e "  ${YELLOW}Telemetry debug:${RESET} ON → logs/telemetry-debug.ndjson"
 echo -e "  ${BOLD}Behaviour:${RESET} Questions are classified and answered automatically"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""

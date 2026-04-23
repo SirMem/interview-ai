@@ -18,6 +18,7 @@
  *   setGauge(name, value, attrs)
  *
  * Service name: `${service_prefix}.server` (default: solvewatch.server)
+ *
  */
 import os from 'os';
 import { execSync } from 'child_process';
@@ -384,6 +385,9 @@ async function _sampleOnce() {
 
 export function isEnabled() { return _enabled; }
 
+/** Host-identity labels to attach to any histogram/counter that needs $host filtering. */
+export function getHostLabels() { return { ..._hostLabels }; }
+
 /**
  * Validate that an OTLP endpoint accepts our auth token by POSTing an empty
  * metrics payload and reading the response. Returns:
@@ -424,7 +428,7 @@ export async function validateOtlpEndpoint(endpoint, token, timeoutMs = 5000) {
 export function recordHistogram(name, value, attrs = {}) {
   if (!_enabled) return;
   const h = _histograms.get(name);
-  if (!h) return; // unknown histogram name — silently ignore so a typo never crashes hot path
+  if (!h) return;
   try { h.record(Number(value), attrs); } catch (_) {}
 }
 
