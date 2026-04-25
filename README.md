@@ -72,14 +72,15 @@ No browser extension. No cloud audio. Runs on your machine.
 
 | | Feature | Details |
 |---|---------|---------|
-| 🎤 | **On-device STT** | Whisper via Apple MLX (Mac) or openai-whisper (Windows). Zero API key needed for transcription. Fully offline. |
+| 🎤 | **Flexible STT** | Three modes: **Local Whisper** (MLX on Apple Silicon, openai-whisper on Windows — fully offline), **OpenAI Whisper API** (cloud, no local model), or **Deepgram Cloud** (nova-2, ~300ms latency, $0.0059/min with $200 free credit). Switch in settings, no restart needed. |
 | 👁️ | **Invisible overlay** | `setContentProtection(true)` — same OS API used by banking apps. Excluded from Zoom, Meet, Teams, Loom, OBS, and all screen recording tools. Works for full-screen share, not just window share. |
 | ⚡ | **Sub-second answers** | First token in ~200 ms with Groq. Answers stream token-by-token into the HUD while the model is still generating. |
-| 🔁 | **Multi-provider fallback** | Configure a cascade: OpenAI → Groq → Gemini → Claude. If one fails or rate-limits, the next kicks in automatically. |
+| 🔁 | **Multi-provider fallback** | Configure a cascade: OpenAI → Groq → Gemini → Claude → Ollama. If one fails or rate-limits, the next kicks in automatically. |
 | 🧠 | **Conversation memory** | Remembers the last 3–5 Q&A pairs. Follow-up questions like *"what are its trade-offs?"* work correctly. |
 | 📸 | **Screenshot analysis** | Monitors a folder for new screenshots, runs OCR (Tesseract) + AI, and shows the answer in the HUD. Great for coding problems shared on screen. |
-| 🔒 | **No telemetry** | Zero analytics, zero crash reports. The only outbound calls are to your own API keys. |
-| 🆓 | **Free & open source** | MIT license. Use it for personal and commercial purposes. |
+| 👤 | **Speaker identification** | Local-mode only: SpeechBrain ECAPA-TDNN filters your voice so only the interviewer's questions trigger AI answers. Enroll a 30s sample once. Deepgram mode uses built-in diarization instead. |
+| 📊 | **Grafana observability** | Optional OpenTelemetry export to Grafana Cloud — AI latency, token spend, STT pipeline health, host metrics. Import `docs/grafana-dashboard.json` to get the pre-built dashboard. |
+| 🆓 | **Free & open source** | MIT license. The only outbound calls are to your own API keys. |
 
 ---
 
@@ -109,6 +110,9 @@ http://localhost:4000/settings
 | OpenAI | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | Gemini | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 | Claude | [console.anthropic.com/settings/api-keys](https://console.anthropic.com/settings/api-keys) |
+| Deepgram *(optional — cloud STT)* | [console.deepgram.com](https://console.deepgram.com) |
+
+Keys are saved to `.env` in the project root — hot-reloaded, no restart needed.
 
 ### 3 — Start the app
 
@@ -146,17 +150,25 @@ Three services run together, managed by `start.sh`:
 Microphone
   │
   ▼
-┌─────────────────────────────┐
-│  Python Transcriber         │  FastAPI + Whisper (MLX / openai-whisper)
-│  VAD → rolling buffer       │  LocalAgreement-2 streaming decoder
-│  → stt_partial every 300ms  │  On-device, no cloud, no API key
-│  → stt_final on silence     │
-└────────────┬────────────────┘
-             │ Socket.IO
-             ▼
+┌─────────────────────────────────────────┐
+│  Python Transcriber                     │
+│                                         │
+│  Local mode (default):                  │
+│    VAD → rolling buffer                 │  Whisper MLX (Apple Silicon) or
+│    LocalAgreement-2 streaming decoder   │  openai-whisper (Windows/CPU)
+│    → stt_partial every 300ms            │  Fully offline, no API key
+│    → stt_final on 700ms silence         │
+│                                         │
+│  Deepgram mode (DEEPGRAM_ENABLED=true): │
+│    DeepgramListener streams audio       │  nova-2 cloud STT, ~300ms latency
+│    → stt_partial (live words)           │  Built-in speaker diarization
+│    → stt_final on utterance end         │
+└──────────────────┬──────────────────────┘
+                   │ Socket.IO
+                   ▼
 ┌─────────────────────────────┐
 │  Node.js Backend            │  Express + Socket.IO
-│  Assembles prompt           │  Multi-provider AI with fallback chain
+│  Assembles prompt           │  OpenAI → Groq → Gemini → Claude → Ollama
 │  Streams answer tokens ─────┼──► Electron HUD
 │  Session memory             │
 └─────────────────────────────┘
@@ -225,23 +237,48 @@ Run `./start.sh --setup` — it pulls `llama3.2:1b` automatically.
 
 ## Configuration
 
-`config/api-keys.json` — hot-reloaded, no restart needed.
+All config lives in `.env` at the project root — hot-reloaded by the settings page, no restart needed. Copy from `.env.example` on first setup.
 
-```json
-{
-  "port": 4000,
-  "keys": { "openai": "...", "groq": "...", "gemini": "...", "anthropic": "..." },
-  "order": ["groq", "openai", "gemini", "claude"],
-  "models": { "openai": "gpt-4o-mini", "grok": "llama-3.3-70b-versatile", "gemini": "gemini-2.5-flash" },
-  "ollama_model": "llama3.2:1b",
-  "stt_model": "small",
-  "audio_input_device": "",
-  "hf_token": "hf_...",
-  "speaker_id_threshold": 0.70
-}
+```bash
+# AI providers (at least one required)
+OPENAI_API_KEY=sk-...
+GROQ_API_KEY=gsk_...
+GEMINI_API_KEY=AIza...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Provider order and which are active
+PROVIDER_ORDER=openai,grok,gemini,claude
+PROVIDER_ENABLED=openai,grok,gemini,claude
+
+# Models (optional — defaults shown)
+MODEL_OPENAI=gpt-4o-mini
+MODEL_GROK=llama-3.3-70b-versatile
+MODEL_GEMINI=gemini-2.5-flash
+MODEL_CLAUDE=claude-sonnet-4-5
+OLLAMA_MODEL=llama3.2:1b
+
+# STT — local Whisper model size (tiny/base/small/medium)
+STT_MODEL=small
+
+# Deepgram Cloud STT (optional — set to true to use instead of local Whisper)
+DEEPGRAM_ENABLED=false
+DEEPGRAM_API_KEY=
+DEEPGRAM_MODEL=nova-2
+
+# Speaker identification (local Whisper mode only)
+SPEAKER_ID_ENABLED=false
+SPEAKER_ID_THRESHOLD=0.70
+
+# Observability — Grafana Cloud OTLP (optional)
+TELEMETRY_ENABLED=false
+OTLP_ENDPOINT=https://otlp-gateway-prod-us-east-0.grafana.net/otlp
+GRAFANA_INSTANCE_ID=
+GRAFANA_ACCESS_TOKEN=
+
+PORT=4000
 ```
 
-Copy from `config/api-keys.json.example` on first setup.
+Existing installs with `config/api-keys.json` are migrated automatically on the first `./start.sh` run.
 
 ---
 
@@ -249,9 +286,12 @@ Copy from `config/api-keys.json.example` on first setup.
 
 Planned features — contributions welcome:
 
+- [x] Deepgram Cloud STT (nova-2, ~300ms latency)
+- [x] Ollama local LLM fallback
+- [x] Grafana Cloud observability (OTel metrics + logs)
+- [x] Speaker identification (local Whisper mode)
 - [ ] Linux support
 - [ ] Browser extension mode (no Electron required)
-- [ ] Remote AI endpoint / self-hosted LLM support
 - [ ] Answer history panel with copy-to-clipboard
 - [ ] Custom hotkey configuration in settings UI
 - [ ] Automated release builds (DMG for macOS, EXE installer for Windows)
