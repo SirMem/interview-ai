@@ -18,9 +18,14 @@ from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
 from speaker_id import SpeakerIdentifier
-import log_writer
+
 import telemetry
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, KEYBOARD_ENABLED, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED, _app_cfg
+from config import (
+    SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL,
+    KEYBOARD_ENABLED, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED,
+    DEEPGRAM_ENABLED, DEEPGRAM_API_KEY,
+    get_telemetry_cfg, _app_cfg,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +33,16 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Deepgram toggle — read from .env at startup via config module
+_DEEPGRAM_ENABLED = DEEPGRAM_ENABLED
+_DEEPGRAM_API_KEY = DEEPGRAM_API_KEY
+if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+    try:
+        from deepgram_listener import DeepgramListener
+    except ImportError as _e:
+        logger.warning("deepgram_listener import failed (%s) — falling back to AlwaysOnListener", _e)
+        _DEEPGRAM_ENABLED = False
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +57,7 @@ async def lifespan(app: FastAPI):
     _start_time = time.monotonic()
 
     # Initialize OpenTelemetry → Grafana Cloud (no-op when telemetry.enabled=false).
-    telemetry.init_telemetry(_app_cfg)
+    telemetry.init_telemetry(get_telemetry_cfg())
     # Background sampler that emits host CPU / memory / GPU gauges every 10 s.
     # Cheap (~1 ms per tick) and stays active even when telemetry is disabled
     # (gauges are no-ops in that case).
@@ -52,7 +67,7 @@ async def lifespan(app: FastAPI):
     try:
         transcriber = Transcriber()
         logger.info("Transcriber initialized")
-        log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
+        telemetry.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
         try:
             telemetry.GAUGE_WHISPER_MODEL_LOADED.set(
                 1, {"model_name": transcriber.model_size or 'unknown',
@@ -72,7 +87,7 @@ async def lifespan(app: FastAPI):
                 else:
                     transcriber._transcribe_local_cpu(_dummy_audio)
                 logger.info("Whisper pre-warmed successfully")
-                log_writer.log('transcriber_prewarmed', model=transcriber.model_size)
+                telemetry.log('transcriber_prewarmed', model=transcriber.model_size)
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
 
@@ -97,7 +112,7 @@ async def lifespan(app: FastAPI):
                     _speaker_id_status = 'load_failed'
                     logger.error("SpeakerIdentifier: model failed to load")
                     speaker_identifier = None
-                log_writer.log('speaker_id_initialized', status=_speaker_id_status)
+                telemetry.log('speaker_id_initialized', status=_speaker_id_status)
             except Exception as _e:
                 logger.error(f"SpeakerIdentifier init failed: {_e}")
                 speaker_identifier = None
@@ -128,12 +143,16 @@ async def lifespan(app: FastAPI):
                            _speaker_id_status)
 
         try:
-            always_on_listener = AlwaysOnListener(
-                transcriber, socket_client,
-                speaker_id=speaker_identifier,
-                auto_answer_disabled=_auto_answer_disabled,
-            )
-            logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
+            if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                always_on_listener = DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+                logger.info("DeepgramListener ready — nova-2 cloud STT (press ⌘⇧X or click Listen to start)")
+            else:
+                always_on_listener = AlwaysOnListener(
+                    transcriber, socket_client,
+                    speaker_id=speaker_identifier,
+                    auto_answer_disabled=_auto_answer_disabled,
+                )
+                logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
         except Exception as e:
             logger.warning(f"Could not initialize always-on listener: {e}")
             always_on_listener = None
@@ -153,12 +172,12 @@ async def lifespan(app: FastAPI):
                         return
                     if always_on_listener._running:
                         always_on_listener.stop()
-                        log_writer.log('listen_stopped', source='keyboard')
+                        telemetry.log('listen_stopped', source='keyboard')
                         if socket_client and socket_client.is_connected():
                             socket_client.send_listen_state(False)
                     else:
                         always_on_listener.start()
-                        log_writer.log('listen_started', source='keyboard')
+                        telemetry.log('listen_started', source='keyboard')
                         if socket_client and socket_client.is_connected():
                             socket_client.send_listen_state(True)
 
@@ -241,18 +260,20 @@ async def health_check():
 
 @app.post("/reload-telemetry")
 async def reload_telemetry():
-    """Re-read api-keys.json and reinitialize the OTel exporters.
+    """Re-read .env and reinitialize the OTel exporters.
 
     Called by the Node settings page after the user enables/changes telemetry
     so they don't have to restart the transcriber. Idempotent — safe to call
     when telemetry is already configured (tear-down + re-init).
     """
-    import json as _json
+    import importlib
     import pathlib as _pathlib
     try:
-        cfg_path = _pathlib.Path(__file__).parent.parent / 'config' / 'api-keys.json'
-        with cfg_path.open('r') as f:
-            new_cfg = _json.load(f)
+        from dotenv import load_dotenv as _load_dotenv
+        _load_dotenv(_pathlib.Path(__file__).parent.parent / '.env', override=True)
+        import config as _config_module
+        importlib.reload(_config_module)
+        new_cfg = _config_module.get_telemetry_cfg()
     except Exception as e:
         logger.error(f"reload-telemetry: could not read config: {e}")
         raise HTTPException(status_code=500, detail=f"Could not read config: {e}")
@@ -269,6 +290,53 @@ async def reload_telemetry():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/reload-stt-config")
+async def reload_stt_config():
+    """Re-read .env and hot-swap the STT listener if Deepgram settings changed.
+
+    Called by the Node settings page after the user changes STT provider or
+    Deepgram parameters. Recreates the listener with the new config if it was
+    already running.
+    """
+    global always_on_listener, _DEEPGRAM_ENABLED, _DEEPGRAM_API_KEY
+    import importlib
+    import pathlib as _pathlib
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        _load_dotenv(_pathlib.Path(__file__).parent.parent / '.env', override=True)
+        import config as _config_module
+        importlib.reload(_config_module)
+        new_dg_enabled = _config_module.DEEPGRAM_ENABLED
+        new_dg_key = _config_module.DEEPGRAM_API_KEY
+    except Exception as e:
+        logger.error("reload-stt-config: could not reload config: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    was_running = always_on_listener is not None and always_on_listener._running
+    changed = (new_dg_enabled != _DEEPGRAM_ENABLED or new_dg_key != _DEEPGRAM_API_KEY)
+
+    _DEEPGRAM_ENABLED = new_dg_enabled
+    _DEEPGRAM_API_KEY = new_dg_key
+
+    if changed and was_running:
+        always_on_listener.stop()
+        try:
+            if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                import importlib as _il
+                import deepgram_listener as _dg_mod
+                _il.reload(_dg_mod)
+                always_on_listener = _dg_mod.DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+            else:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+            always_on_listener.start()
+            logger.info("reload-stt-config: listener recreated (deepgram=%s)", _DEEPGRAM_ENABLED)
+        except Exception as e:
+            logger.error("reload-stt-config: failed to recreate listener: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "ok", "deepgram_enabled": new_dg_enabled, "changed": changed}
+
+
 @app.post("/always-on-mode")
 async def set_always_on_mode(body: dict):
     global always_on_listener
@@ -277,7 +345,10 @@ async def set_always_on_mode(body: dict):
         # Python threads cannot be restarted once stopped — recreate if needed.
         if always_on_listener is None or not always_on_listener._running:
             try:
-                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                    always_on_listener = DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+                else:
+                    always_on_listener = AlwaysOnListener(transcriber, socket_client)
                 telemetry.GAUGE_LISTENER_ACTIVE.set(0, telemetry.get_host_labels() or None)
             except Exception as e:
                 logger.error(f"Failed to initialize always-on listener: {e}")
@@ -316,7 +387,7 @@ async def set_stt_model(body: dict):
     try:
         transcriber = Transcriber(model_size=model)
         logger.info(f"STT model switched to: {model}")
-        log_writer.log('stt_model_switched', model=model)
+        telemetry.log('stt_model_switched', model=model)
     except Exception as e:
         logger.error(f"Failed to switch STT model: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
@@ -351,7 +422,7 @@ async def set_vad_config(body: dict):
         if always_on_listener:
             always_on_listener.resume()
         logger.info(f"VAD engine switched: {old_engine} -> {new_engine}")
-        log_writer.log('vad_engine_switched', from_engine=old_engine, to_engine=new_engine, config=body)
+        telemetry.log('vad_engine_switched', from_engine=old_engine, to_engine=new_engine, config=body)
 
     # Update the always-on listener (which also updates the transcriber's VAD params)
     if always_on_listener:
@@ -361,7 +432,7 @@ async def set_vad_config(body: dict):
         transcriber.vad.update_config(body)
 
     logger.info(f"VAD config updated: {body}")
-    log_writer.log('vad_config_updated', config=body)
+    telemetry.log('vad_config_updated', config=body)
     return {"status": "ok", "engine": transcriber.vad.engine_name if transcriber else None, "config": body}
 
 
@@ -393,7 +464,7 @@ async def load_speaker_id_endpoint(body: dict):
     threshold = float(body.get("threshold") or SPEAKER_ID_THRESHOLD)
 
     logger.info("Loading speaker ID model on-demand (ECAPA-TDNN)...")
-    log_writer.log('speaker_id_load_requested')
+    telemetry.log('speaker_id_load_requested')
 
     try:
         new_identifier = SpeakerIdentifier(threshold=threshold)
@@ -422,7 +493,7 @@ async def load_speaker_id_endpoint(body: dict):
 
         logger.info("Speaker ID model loaded dynamically (enrolled=%s, device=%s)",
                     speaker_identifier.has_enrollment, speaker_identifier.device)
-        log_writer.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
+        telemetry.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
 
         return {
             "success":      True,
@@ -464,7 +535,7 @@ async def enroll_voice():
         always_on_listener.pause()
 
     logger.info(f"Starting voice enrollment — recording {ENROLL_SECONDS}s from mic...")
-    log_writer.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
+    telemetry.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
 
     try:
         # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
@@ -484,7 +555,7 @@ async def enroll_voice():
         success = speaker_identifier.enroll_from_audio(audio_flat, SAMPLE_RATE)
         if success:
             logger.info("Voice enrollment completed successfully")
-            log_writer.log('voice_enrolled', success=True)
+            telemetry.log('voice_enrolled', success=True)
             # Enrollment changes the listener's gates: clear auto_answer_disabled
             # (stt_final will now flow) and make sure the SpeakerIDWorker exists
             # so identify() runs and speaker_id_latency_ms starts recording.
@@ -506,22 +577,141 @@ async def enroll_voice():
             always_on_listener.resume()
 
 
+@app.post("/enroll-deepgram-speaker")
+async def enroll_deepgram_speaker(body: dict):
+    """Start or finish Deepgram diarization enrollment.
+
+    POST {"action": "start"}  — begin enrollment, user speaks for a few seconds
+    POST {"action": "finish"} — lock in the user's speaker ID
+    """
+    if not _DEEPGRAM_ENABLED:
+        raise HTTPException(status_code=400, detail="Deepgram not enabled in config")
+    if always_on_listener is None or not hasattr(always_on_listener, 'start_enrollment'):
+        raise HTTPException(status_code=503, detail="DeepgramListener not initialized — start the listener first")
+
+    action = (body or {}).get("action", "")
+    if action == "start":
+        always_on_listener.start_enrollment()
+        return {"status": "ok", "action": "start", "message": "Speak now — your voice is being registered"}
+    elif action == "finish":
+        always_on_listener.finish_enrollment()
+        speaker_id = always_on_listener._user_speaker_id
+        if speaker_id is None:
+            return {"status": "warning", "user_speaker_id": None, "message": "No speech detected during enrollment — filter disabled"}
+        return {"status": "ok", "user_speaker_id": speaker_id, "message": f"Enrolled — you are speaker {speaker_id}, interviewer goes to AI"}
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'start' or 'finish'")
+
+
+@app.delete("/enroll-deepgram-speaker")
+async def clear_deepgram_enrollment():
+    """Delete saved Deepgram enrollment audio.
+
+    Next listener start will run fresh auto-enrollment (DEEPGRAM_ENROLL_SECONDS).
+    Safe to call whether or not the listener is currently running.
+    """
+    from deepgram_listener import _ENROLLMENT_PATH
+
+    if always_on_listener is not None and hasattr(always_on_listener, 'clear_enrollment'):
+        always_on_listener.clear_enrollment()
+        cleared = True
+    else:
+        if _ENROLLMENT_PATH.exists():
+            _ENROLLMENT_PATH.unlink()
+            cleared = True
+            logger.info("Deepgram enrollment audio cleared (listener not active)")
+        else:
+            cleared = False
+
+    return {"status": "ok", "cleared": cleared}
+
+
 @app.get("/enrollment-status")
 async def get_enrollment_status():
     """Return current speaker ID model and enrollment status."""
+    dg_saved = False
+    if _DEEPGRAM_ENABLED:
+        try:
+            from deepgram_listener import _ENROLLMENT_PATH
+            dg_saved = _ENROLLMENT_PATH.exists()
+        except Exception:
+            pass
+
     if speaker_identifier is None:
         return {
             "model_loaded": False,
             "enrolled": False,
             "threshold": None,
             "reason": "Speaker ID disabled or model failed to load",
+            "deepgram_enrollment_saved": dg_saved,
         }
     return {
         "model_loaded": speaker_identifier.is_model_loaded,
         "enrolled":     speaker_identifier.has_enrollment,
         "threshold":    speaker_identifier.threshold,
         "device":       speaker_identifier.device,
+        "deepgram_enrollment_saved": dg_saved,
     }
+
+
+@app.post("/enroll-deepgram-voice")
+async def enroll_deepgram_voice(body: dict = None):
+    """Record user's voice and save to config/deepgram_enrollment.pcm.
+
+    Just captures mic audio — no Deepgram connection needed.
+    On the next listener start the audio is replayed to Deepgram so it can
+    identify and filter the user's speaker ID from AI answers.
+    """
+    duration = max(5, min(int((body or {}).get('duration', 12)), 30))
+
+    listener_was_running = (
+        always_on_listener is not None
+        and getattr(always_on_listener, '_running', False)
+    )
+    if listener_was_running:
+        always_on_listener.pause()
+        await asyncio.sleep(0.3)
+
+    try:
+        import sounddevice as sd
+        from pathlib import Path as _Path
+
+        _SAMPLE_RATE_INT = 16000
+        _ENROLL_PATH = _Path(__file__).parent.parent / 'config' / 'deepgram_enrollment.pcm'
+
+        logger.info("Deepgram voice enrollment: recording %ds from mic…", duration)
+        telemetry.log('deepgram_enrollment_started', duration_s=duration)
+
+        loop = asyncio.get_event_loop()
+        audio = await loop.run_in_executor(
+            None,
+            lambda: sd.rec(
+                int(duration * _SAMPLE_RATE_INT),
+                samplerate=_SAMPLE_RATE_INT,
+                channels=1,
+                dtype='float32',
+                blocking=True,
+            )
+        )
+        audio_flat = audio.flatten()
+
+        _ENROLL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ENROLL_PATH.write_bytes(audio_flat.astype(np.float32).tobytes())
+
+        # Reset cached speaker ID so next listener start re-identifies from replay
+        if always_on_listener is not None and hasattr(always_on_listener, '_user_speaker_id'):
+            always_on_listener._user_speaker_id = None
+
+        logger.info("Deepgram enrollment audio saved: %d samples → %s", len(audio_flat), _ENROLL_PATH)
+        telemetry.log('deepgram_enrollment_saved', samples=int(len(audio_flat)), duration_s=duration)
+        return {"status": "ok", "samples": int(len(audio_flat)), "duration": duration}
+
+    except Exception as e:
+        logger.error("Deepgram enrollment failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if listener_was_running and always_on_listener is not None:
+            always_on_listener.resume()
 
 
 # ── Whisper model management (local CPU backend) ──────────────────────────────

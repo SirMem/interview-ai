@@ -20,7 +20,9 @@
  * Service name: `${service_prefix}.server` (default: solvewatch.server)
  *
  */
+import fs from 'fs';
 import os from 'os';
+import path from 'path';
 import { execSync } from 'child_process';
 import { randomUUID, createHash } from 'crypto';
 import { metrics, ValueType } from '@opentelemetry/api';
@@ -37,6 +39,32 @@ let _loggerProvider = null;
 let _meter = null;
 let _otelLogger = null;
 let _serviceName = 'solvewatch.server';
+
+// ── Fallback local log (written when OTel is disabled or unavailable) ─────────
+let _fallbackStream = null;
+
+function _openFallbackLog() {
+  try {
+    const logsDir = path.join(process.cwd(), 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    // Close any existing stream before re-opening (hot-reload path)
+    if (_fallbackStream) { try { _fallbackStream.end(); } catch (_) {} }
+    // 'w' flag truncates the file on every server start
+    _fallbackStream = fs.createWriteStream(
+      path.join(logsDir, 'telemetry_node.jsonl'), { flags: 'w', encoding: 'utf8' }
+    );
+  } catch (e) {
+    console.warn('[telemetry] fallback log could not be opened:', e.message);
+    _fallbackStream = null;
+  }
+}
+
+function _fallbackWrite(record) {
+  if (!_fallbackStream) return;
+  try {
+    _fallbackStream.write(JSON.stringify({ ts: new Date().toISOString(), ...record }) + '\n');
+  } catch (_) {}
+}
 
 const _histograms = new Map();
 const _counters   = new Map();
@@ -190,9 +218,13 @@ export async function initTelemetry(rawConfig) {
     await shutdownTelemetry();
   }
 
+  // Always (re)open the fallback log on every init — this truncates the file
+  // so each server start gets a fresh local log regardless of enabled state.
+  _openFallbackLog();
+
   const cfg = (rawConfig && rawConfig.telemetry) || rawConfig || {};
   if (!cfg.enabled) {
-    console.warn('[telemetry] disabled — metrics + logs are no-ops');
+    console.warn('[telemetry] disabled — writing metrics + logs to logs/telemetry_node.jsonl');
     return;
   }
 
@@ -476,21 +508,30 @@ export async function validateOtlpEndpoint(endpoint, token, timeoutMs = 5000) {
 // ── Metric helpers (no-op when disabled) ────────────────────────────────────
 
 export function recordHistogram(name, value, attrs = {}) {
-  if (!_enabled) return;
+  if (!_enabled) {
+    _fallbackWrite({ type: 'histogram', metric: name, value: Number(value), attrs });
+    return;
+  }
   const h = _histograms.get(name);
   if (!h) return;
   try { h.record(Number(value), attrs); } catch (_) {}
 }
 
 export function addCounter(name, value = 1, attrs = {}) {
-  if (!_enabled) return;
+  if (!_enabled) {
+    if (value !== 0) _fallbackWrite({ type: 'counter', metric: name, value, attrs });
+    return;
+  }
   const c = _counters.get(name);
   if (!c) return;
   try { c.add(value, attrs); } catch (_) {}
 }
 
 export function setGauge(name, value, attrs = {}) {
-  if (!_enabled) return;
+  if (!_enabled) {
+    _fallbackWrite({ type: 'gauge', metric: name, value, attrs });
+    return;
+  }
   const g = _gaugeStores.get(name);
   if (!g) return;
   g.set(value, attrs);
@@ -509,7 +550,10 @@ const SEV_MAP = {
 };
 
 export function logEvent(event, level = 'INFO', fields = {}) {
-  if (!_enabled || !_otelLogger) return;
+  if (!_enabled || !_otelLogger) {
+    _fallbackWrite({ type: 'log', event, level: level.toUpperCase(), ..._sanitize(fields) });
+    return;
+  }
   try {
     const sanitized = _sanitize(fields);
     // Body = JSON payload so Loki's `| json` parser + `{{.field}}` line_format

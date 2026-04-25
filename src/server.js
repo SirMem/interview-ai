@@ -1,8 +1,8 @@
 import http from 'http';
 import { Server } from 'socket.io';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import app from './app.js';
 import screenshotMonitorService from './services/screenshot-monitor.service.js';
 import DataHandler from './sockets/dataHandler.js';
@@ -11,14 +11,26 @@ import { CONFIG, getLocalIP } from './config/constants.js';
 import logger from './utils/logger.js';
 import { initTelemetry, shutdownTelemetry, startSystemMetricsSampler, isEnabled as isTelemetryEnabled, logEvent } from './utils/telemetry.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env before anything else — all three services read the same file
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
 const log = logger('Server');
 
-// ── Telemetry — read config and initialize OTel exporters at startup ─────────
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// ── Telemetry — read from process.env and initialize OTel exporters ──────────
 (async () => {
   try {
-    const cfgPath = path.join(__dirname, '..', 'config', 'api-keys.json');
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const cfg = {
+      telemetry: {
+        enabled:        process.env.TELEMETRY_ENABLED === 'true',
+        otlp_endpoint:  process.env.OTLP_ENDPOINT   || '',
+        instance_id:    process.env.GRAFANA_INSTANCE_ID  || '',
+        access_token:   process.env.GRAFANA_ACCESS_TOKEN || '',
+        service_prefix: process.env.TELEMETRY_SERVICE_PREFIX || 'solvewatch',
+      },
+      host_owner: process.env.HOST_OWNER || '',
+    };
     await initTelemetry(cfg);
     if (isTelemetryEnabled()) {
       // Background sampler emits host_cpu_percent / host_memory_* / gpu_* gauges

@@ -6,6 +6,14 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load .env from project root so SOCKET_URL and HUD_OPACITY are available
+try {
+  const { createRequire } = await import('module');
+  const require = createRequire(import.meta.url);
+  const dotenv = require('dotenv');
+  dotenv.config({ path: path.join(__dirname, '..', '.env') });
+} catch { /* dotenv not available or already loaded */ }
+
 const SOCKET_URL = process.env.SOCKET_URL || 'http://localhost:4000';
 
 let overlayWindow      = null;

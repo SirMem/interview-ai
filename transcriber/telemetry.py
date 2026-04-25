@@ -20,6 +20,7 @@ Service name: f"{service_prefix}.transcriber" (default: solvewatch.transcriber)
 """
 from __future__ import annotations
 
+import json as _json_mod
 import logging
 import os
 import platform
@@ -63,6 +64,12 @@ GAUGE_LISTENER_ACTIVE:        Any = None
 GAUGE_SPEAKER_ID_MODEL_STATUS: Any = None
 GAUGE_WHISPER_MODEL_LOADED:    Any = None
 
+# Deepgram cloud STT metrics
+COUNTER_DEEPGRAM_EVENTS:        Any = None   # event_type: speech_final | utterance_end | speaker_filtered | too_short | connection_error
+GAUGE_DEEPGRAM_CONNECTED:       Any = None   # 1 = WebSocket open, 0 = disconnected
+COUNTER_DEEPGRAM_AUDIO_SECONDS: Any = None   # total seconds of audio streamed to Deepgram
+COUNTER_DEEPGRAM_COST_USD:      Any = None   # estimated cost at nova-2 rate ($0.0059/min)
+
 # System-resource gauges (populated by the periodic sampler).
 GAUGE_HOST_CPU_PERCENT:        Any = None
 GAUGE_HOST_MEMORY_PERCENT:     Any = None
@@ -88,7 +95,7 @@ def get_host_labels() -> Dict[str, Any]:
     return dict(_host_labels)
 
 
-# ── No-op shims (used when disabled) ──────────────────────────────────────────
+# ── No-op shims (used only before init_telemetry() runs) ─────────────────────
 
 class _NoopHistogram:
     def record(self, value, attributes=None): pass
@@ -102,6 +109,60 @@ class _NoopGauge:
 _NOOP_HIST  = _NoopHistogram()
 _NOOP_COUNT = _NoopCounter()
 _NOOP_GAUGE = _NoopGauge()
+
+# ── Fallback local log (written when OTel is disabled or unavailable) ─────────
+
+_fallback_handle = None
+_fallback_lock   = threading.Lock()
+
+
+def _open_fallback_log():
+    """Open (truncate) logs/telemetry_python.jsonl. Called on every init_telemetry()."""
+    global _fallback_handle
+    try:
+        logs_dir = Path(__file__).parent.parent / 'logs'
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        if _fallback_handle is not None:
+            try: _fallback_handle.close()
+            except Exception: pass
+        # 'w' truncates the file — fresh log on every server start
+        _fallback_handle = open(logs_dir / 'telemetry_python.jsonl', 'w',
+                                encoding='utf-8', buffering=1)  # line-buffered
+    except Exception as e:
+        logger.warning("Fallback telemetry log could not be opened: %s", e)
+
+
+def _fallback_write(record: dict):
+    """Append a JSON line to the local fallback log. Thread-safe."""
+    if _fallback_handle is None:
+        return
+    try:
+        record.setdefault('ts', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        line = _json_mod.dumps(record, default=str) + '\n'
+        with _fallback_lock:
+            _fallback_handle.write(line)
+    except Exception:
+        pass
+
+
+class _FallbackHistogram:
+    def __init__(self, name: str): self._name = name
+    def record(self, value, attributes=None):
+        _fallback_write({'type': 'histogram', 'metric': self._name,
+                         'value': value, 'attrs': attributes or {}})
+
+class _FallbackCounter:
+    def __init__(self, name: str): self._name = name
+    def add(self, value, attributes=None):
+        if value == 0: return  # skip seed/warm-up calls
+        _fallback_write({'type': 'counter', 'metric': self._name,
+                         'value': value, 'attrs': attributes or {}})
+
+class _FallbackGauge:
+    def __init__(self, name: str): self._name = name
+    def set(self, value, attributes=None):
+        _fallback_write({'type': 'gauge', 'metric': self._name,
+                         'value': value, 'attrs': attributes or {}})
 
 
 # ── Resource attribute discovery (multi-machine identity) ────────────────────
@@ -262,6 +323,8 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
     global HIST_SILENCE_WAIT_ACTUAL_MS
     global COUNT_UTTERANCES_DETECTED, COUNT_UTTERANCES_PASSED, COUNT_UTTERANCES_DISCARDED
     global GAUGE_LISTENER_ACTIVE, GAUGE_SPEAKER_ID_MODEL_STATUS, GAUGE_WHISPER_MODEL_LOADED
+    global COUNTER_DEEPGRAM_EVENTS, GAUGE_DEEPGRAM_CONNECTED
+    global COUNTER_DEEPGRAM_AUDIO_SECONDS, COUNTER_DEEPGRAM_COST_USD
     global GAUGE_HOST_CPU_PERCENT, GAUGE_HOST_MEMORY_PERCENT, GAUGE_HOST_MEMORY_USED_BYTES
     global GAUGE_PROCESS_CPU_PERCENT, GAUGE_PROCESS_MEMORY_RSS_BYTES
     global GAUGE_GPU_UTILIZATION_PERCENT, GAUGE_GPU_MEMORY_USED_BYTES
@@ -289,9 +352,16 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
         if not isinstance(cfg, dict):
             cfg = {}
 
+        prefix = cfg.get("service_prefix") or "solvewatch"
+        _service_name = f"{prefix}.transcriber"
+
+        # Always open (truncate) the fallback log on every startup — this is the
+        # local file that receives all events when OTel is disabled.
+        _open_fallback_log()
+
         if not cfg.get("enabled"):
-            _install_noop_handles()
-            logger.warning("Telemetry disabled — metrics + logs are no-ops")
+            _install_fallback_handles(prefix)
+            logger.warning("Telemetry disabled — writing metrics + logs to logs/telemetry_python.jsonl")
             return
 
         endpoint     = (cfg.get("otlp_endpoint") or "").rstrip("/")
@@ -311,13 +381,11 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             token = access_tok if access_tok.startswith(("Bearer ", "Basic ")) else f"Bearer {access_tok}"
         else:
             token = ""
-        prefix   = cfg.get("service_prefix") or "solvewatch"
-        _service_name = f"{prefix}.transcriber"
 
         if not endpoint:
             _enabled = False
-            _install_noop_handles()
-            logger.warning("Telemetry enabled but no otlp_endpoint configured — falling back to no-op")
+            _install_fallback_handles(prefix)
+            logger.warning("Telemetry enabled but no otlp_endpoint configured — writing to logs/telemetry_python.jsonl")
             return
 
         try:
@@ -333,8 +401,8 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
         except Exception as e:
             _enabled = False
-            _install_noop_handles()
-            logger.error("Telemetry: OTel imports failed (%s) — falling back to no-op", e)
+            _install_fallback_handles(prefix)
+            logger.error("Telemetry: OTel imports failed (%s) — writing to logs/telemetry_python.jsonl", e)
             return
 
         try:
@@ -479,6 +547,28 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             GAUGE_SPEAKER_ID_MODEL_STATUS = _SyncGauge(_meter, "speaker_id_model_status", "Speaker ID model status (labeled)")
             GAUGE_WHISPER_MODEL_LOADED    = _SyncGauge(_meter, "whisper_model_loaded",    "Whisper model loaded (labeled)")
 
+            # Deepgram cloud STT metrics
+            COUNTER_DEEPGRAM_EVENTS = _meter.create_counter(
+                name=f"{prefix}.deepgram_events_total",
+                description="Deepgram streaming events by type (speech_final, utterance_end, speaker_filtered, too_short, connection_error)",
+            )
+            GAUGE_DEEPGRAM_CONNECTED       = _SyncGauge(_meter, f"{prefix}.deepgram_connected", "Deepgram WebSocket open (1) or disconnected (0)")
+            COUNTER_DEEPGRAM_AUDIO_SECONDS = _meter.create_counter(
+                name=f"{prefix}.deepgram_audio_seconds_total",
+                description="Total seconds of audio streamed to Deepgram",
+            )
+            COUNTER_DEEPGRAM_COST_USD = _meter.create_counter(
+                name=f"{prefix}.deepgram_cost_usd_total",
+                description="Estimated Deepgram STT cost in USD (nova-2 at $0.0059/min)",
+            )
+            # Warm up counters so they appear in Grafana before any events fire
+            try:
+                for _ev_type in ("speech_final", "utterance_end", "speaker_filtered",
+                                 "too_short", "connection_error"):
+                    COUNTER_DEEPGRAM_EVENTS.add(0, {"event_type": _ev_type})
+            except Exception:
+                pass
+
             # System resource gauges (populated by sampler thread).
             GAUGE_HOST_CPU_PERCENT        = _SyncGauge(_meter, "host_cpu_percent",         "Overall host CPU utilization (%)")
             GAUGE_HOST_MEMORY_PERCENT     = _SyncGauge(_meter, "host_memory_percent",      "Overall host memory utilization (%)")
@@ -492,8 +582,8 @@ def init_telemetry(config: Optional[Dict[str, Any]]):
             logger.info("Telemetry initialized (service=%s, endpoint=%s)", _service_name, endpoint)
         except Exception as e:
             _enabled = False
-            _install_noop_handles()
-            logger.error("Telemetry init failed (%s) — falling back to no-op", e)
+            _install_fallback_handles(prefix)
+            logger.error("Telemetry init failed (%s) — writing to logs/telemetry_python.jsonl", e)
 
 
 def shutdown_telemetry():
@@ -517,36 +607,74 @@ def shutdown_telemetry():
 
 
 def _install_noop_handles():
-    """Install no-op metric handles so call sites don't have to branch on enabled."""
+    """No-op handles — only used before init_telemetry() runs (import-time safety)."""
     global HIST_VAD_LATENCY_MS, HIST_WHISPER_DECODE_MS, HIST_SPEAKER_ID_LATENCY_MS
     global HIST_SILENCE_WAIT_ACTUAL_MS
     global COUNT_UTTERANCES_DETECTED, COUNT_UTTERANCES_PASSED, COUNT_UTTERANCES_DISCARDED
     global GAUGE_LISTENER_ACTIVE, GAUGE_SPEAKER_ID_MODEL_STATUS, GAUGE_WHISPER_MODEL_LOADED
+    global COUNTER_DEEPGRAM_EVENTS, GAUGE_DEEPGRAM_CONNECTED
+    global COUNTER_DEEPGRAM_AUDIO_SECONDS, COUNTER_DEEPGRAM_COST_USD
     global GAUGE_HOST_CPU_PERCENT, GAUGE_HOST_MEMORY_PERCENT, GAUGE_HOST_MEMORY_USED_BYTES
     global GAUGE_PROCESS_CPU_PERCENT, GAUGE_PROCESS_MEMORY_RSS_BYTES
     global GAUGE_GPU_UTILIZATION_PERCENT, GAUGE_GPU_MEMORY_USED_BYTES
-
-    HIST_VAD_LATENCY_MS         = _NOOP_HIST
-    HIST_WHISPER_DECODE_MS      = _NOOP_HIST
-    HIST_SPEAKER_ID_LATENCY_MS  = _NOOP_HIST
-    HIST_SILENCE_WAIT_ACTUAL_MS = _NOOP_HIST
-    COUNT_UTTERANCES_DETECTED   = _NOOP_COUNT
-    COUNT_UTTERANCES_PASSED     = _NOOP_COUNT
-    COUNT_UTTERANCES_DISCARDED  = _NOOP_COUNT
-    GAUGE_LISTENER_ACTIVE         = _NOOP_GAUGE
-    GAUGE_SPEAKER_ID_MODEL_STATUS = _NOOP_GAUGE
-    GAUGE_WHISPER_MODEL_LOADED    = _NOOP_GAUGE
-    GAUGE_HOST_CPU_PERCENT        = _NOOP_GAUGE
-    GAUGE_HOST_MEMORY_PERCENT     = _NOOP_GAUGE
-    GAUGE_HOST_MEMORY_USED_BYTES  = _NOOP_GAUGE
-    GAUGE_PROCESS_CPU_PERCENT     = _NOOP_GAUGE
+    HIST_VAD_LATENCY_MS          = _NOOP_HIST
+    HIST_WHISPER_DECODE_MS       = _NOOP_HIST
+    HIST_SPEAKER_ID_LATENCY_MS   = _NOOP_HIST
+    HIST_SILENCE_WAIT_ACTUAL_MS  = _NOOP_HIST
+    COUNT_UTTERANCES_DETECTED    = _NOOP_COUNT
+    COUNT_UTTERANCES_PASSED      = _NOOP_COUNT
+    COUNT_UTTERANCES_DISCARDED   = _NOOP_COUNT
+    GAUGE_LISTENER_ACTIVE          = _NOOP_GAUGE
+    GAUGE_SPEAKER_ID_MODEL_STATUS  = _NOOP_GAUGE
+    GAUGE_WHISPER_MODEL_LOADED     = _NOOP_GAUGE
+    COUNTER_DEEPGRAM_EVENTS        = _NOOP_COUNT
+    GAUGE_DEEPGRAM_CONNECTED       = _NOOP_GAUGE
+    COUNTER_DEEPGRAM_AUDIO_SECONDS = _NOOP_COUNT
+    COUNTER_DEEPGRAM_COST_USD      = _NOOP_COUNT
+    GAUGE_HOST_CPU_PERCENT         = _NOOP_GAUGE
+    GAUGE_HOST_MEMORY_PERCENT      = _NOOP_GAUGE
+    GAUGE_HOST_MEMORY_USED_BYTES   = _NOOP_GAUGE
+    GAUGE_PROCESS_CPU_PERCENT      = _NOOP_GAUGE
     GAUGE_PROCESS_MEMORY_RSS_BYTES = _NOOP_GAUGE
-    GAUGE_GPU_UTILIZATION_PERCENT = _NOOP_GAUGE
-    GAUGE_GPU_MEMORY_USED_BYTES   = _NOOP_GAUGE
+    GAUGE_GPU_UTILIZATION_PERCENT  = _NOOP_GAUGE
+    GAUGE_GPU_MEMORY_USED_BYTES    = _NOOP_GAUGE
 
 
-# Install no-op handles immediately at import time so accidental early calls
-# (before init_telemetry runs) don't AttributeError.
+def _install_fallback_handles(prefix: str = 'solvewatch'):
+    """Fallback handles — write to local logs/telemetry_python.jsonl when OTel is off."""
+    global HIST_VAD_LATENCY_MS, HIST_WHISPER_DECODE_MS, HIST_SPEAKER_ID_LATENCY_MS
+    global HIST_SILENCE_WAIT_ACTUAL_MS
+    global COUNT_UTTERANCES_DETECTED, COUNT_UTTERANCES_PASSED, COUNT_UTTERANCES_DISCARDED
+    global GAUGE_LISTENER_ACTIVE, GAUGE_SPEAKER_ID_MODEL_STATUS, GAUGE_WHISPER_MODEL_LOADED
+    global COUNTER_DEEPGRAM_EVENTS, GAUGE_DEEPGRAM_CONNECTED
+    global COUNTER_DEEPGRAM_AUDIO_SECONDS, COUNTER_DEEPGRAM_COST_USD
+    global GAUGE_HOST_CPU_PERCENT, GAUGE_HOST_MEMORY_PERCENT, GAUGE_HOST_MEMORY_USED_BYTES
+    global GAUGE_PROCESS_CPU_PERCENT, GAUGE_PROCESS_MEMORY_RSS_BYTES
+    global GAUGE_GPU_UTILIZATION_PERCENT, GAUGE_GPU_MEMORY_USED_BYTES
+    HIST_VAD_LATENCY_MS          = _FallbackHistogram('vad_latency_ms')
+    HIST_WHISPER_DECODE_MS       = _FallbackHistogram('whisper_decode_ms')
+    HIST_SPEAKER_ID_LATENCY_MS   = _FallbackHistogram('speaker_id_latency_ms')
+    HIST_SILENCE_WAIT_ACTUAL_MS  = _FallbackHistogram('silence_wait_actual_ms')
+    COUNT_UTTERANCES_DETECTED    = _FallbackCounter('utterances_detected_total')
+    COUNT_UTTERANCES_PASSED      = _FallbackCounter('utterances_passed_total')
+    COUNT_UTTERANCES_DISCARDED   = _FallbackCounter('utterances_discarded_total')
+    GAUGE_LISTENER_ACTIVE          = _FallbackGauge('listener_active')
+    GAUGE_SPEAKER_ID_MODEL_STATUS  = _FallbackGauge('speaker_id_model_status')
+    GAUGE_WHISPER_MODEL_LOADED     = _FallbackGauge('whisper_model_loaded')
+    COUNTER_DEEPGRAM_EVENTS        = _FallbackCounter(f'{prefix}.deepgram_events_total')
+    GAUGE_DEEPGRAM_CONNECTED       = _FallbackGauge(f'{prefix}.deepgram_connected')
+    COUNTER_DEEPGRAM_AUDIO_SECONDS = _FallbackCounter(f'{prefix}.deepgram_audio_seconds_total')
+    COUNTER_DEEPGRAM_COST_USD      = _FallbackCounter(f'{prefix}.deepgram_cost_usd_total')
+    GAUGE_HOST_CPU_PERCENT         = _FallbackGauge('host_cpu_percent')
+    GAUGE_HOST_MEMORY_PERCENT      = _FallbackGauge('host_memory_percent')
+    GAUGE_HOST_MEMORY_USED_BYTES   = _FallbackGauge('host_memory_used_bytes')
+    GAUGE_PROCESS_CPU_PERCENT      = _FallbackGauge('process_cpu_percent')
+    GAUGE_PROCESS_MEMORY_RSS_BYTES = _FallbackGauge('process_memory_rss_bytes')
+    GAUGE_GPU_UTILIZATION_PERCENT  = _FallbackGauge('gpu_utilization_percent')
+    GAUGE_GPU_MEMORY_USED_BYTES    = _FallbackGauge('gpu_memory_used_bytes')
+
+
+# Install no-op handles at import time so early calls before init_telemetry() run safely.
 _install_noop_handles()
 
 
@@ -592,11 +720,11 @@ def _attrs_from_key(key) -> Dict[str, Any]:
 def log(event: str, level: str = 'INFO', **fields):
     """Emit a structured log record.
 
-    Same signature as the old log_writer.log(). When telemetry is disabled this
-    is a no-op (the `logger` from the standard library still receives normal
-    Python logs separately — this function only feeds OTel/Loki).
+    When telemetry is enabled: sends to OTel/Loki.
+    When disabled: writes to logs/telemetry_python.jsonl instead.
     """
     if not _enabled or _otel_logger is None:
+        _fallback_write({'type': 'log', 'event': event, 'level': level.upper(), **fields})
         return
     try:
         from opentelemetry._logs import SeverityNumber

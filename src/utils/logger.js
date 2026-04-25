@@ -1,9 +1,4 @@
-/**
- * Production-level logger utility
- * Provides structured logging with appropriate log levels.
- * Every log call also writes to logs/app.jsonl via file-logger.
- */
-import { logEvent } from './file-logger.js';
+import { logEvent } from './telemetry.js';
 
 const LOG_LEVELS = {
   ERROR: 0,

@@ -3,7 +3,7 @@ import aiService, { aiCostUSD } from './ai.service.js';
 import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
 import { recordHistogram, addCounter } from '../utils/telemetry.js';
-import { logEvent } from '../utils/file-logger.js';
+import { logEvent } from '../utils/telemetry.js';
 
 dotenv.config();
 

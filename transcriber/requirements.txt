@@ -40,6 +40,9 @@ psutil>=5.9.0
 # Optional: NVIDIA GPU metrics. Safe to keep installed on macOS — import is guarded.
 nvidia-ml-py>=12.0.0; sys_platform != "darwin"
 
+# Deepgram cloud STT (temporary integration — deepgram_enabled flag in config)
+deepgram-sdk>=6.0.0
+
 # Utilities
 pydantic>=2.5.0
 python-dotenv>=1.0.0

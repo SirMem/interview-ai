@@ -37,7 +37,7 @@ from config import (
 from vad.metrics import VADMetrics
 from streaming_stt import StreamingSTT
 from speaker_id import SpeakerIDWorker, _PendingSpeechSegment
-import log_writer
+import telemetry as log_writer
 
 logger = logging.getLogger(__name__)
 

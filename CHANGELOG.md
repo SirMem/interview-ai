@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.2.0] — 2026-04-25
+
+### Added
+- **Deepgram Cloud STT** — `DEEPGRAM_ENABLED=true` in `.env` switches the transcriber from local Whisper to Deepgram nova-2 cloud streaming. Configurable via settings page: model, language, endpointing, utterance-end timeout, speaker diarize, smart format, min word count.
+- **Telemetry fallback log** — when OTel is disabled or the endpoint is unreachable, metrics and log events are now written to `logs/telemetry_node.jsonl` (NDJSON, truncated on each start) instead of being silently dropped.
+- **`.env` as single config source** — all runtime settings (API keys, ports, model choices, feature flags, telemetry credentials) now live in a root-level `.env` file shared by Node, Python transcriber, and Electron. `start.sh` loads it directly via a safe `KEY=VALUE` parser (no shell eval).
+- **One-time `api-keys.json → .env` migration** — `start.sh` detects the legacy `config/api-keys.json` and automatically migrates known keys into `.env`, then writes `config/.migrated` so it never runs again. The old file is left in place as a backup.
+- **`.env.example`** — checked-in template with all supported keys and inline comments.
+
+### Changed
+- `src/server.js` — telemetry config now read from `process.env` (`TELEMETRY_ENABLED`, `OTLP_ENDPOINT`, `GRAFANA_INSTANCE_ID`, `GRAFANA_ACCESS_TOKEN`, `TELEMETRY_SERVICE_PREFIX`) instead of `config/api-keys.json`; `dotenv` loaded at the top of the entry point.
+- `src/config/constants.js` — `PORT` and `SCREENSHOTS_PATH` now read from `process.env`; `api-keys.json` parsing removed.
+- `src/controllers/config.controller.js` — reads and writes `.env` file in-place (preserves comments and key order); supports full Deepgram settings block.
+- `src/utils/logger.js` — now delegates `logEvent` to `telemetry.js` directly; `file-logger.js` import removed.
+- `electron/main.js` — loads `.env` at startup so `SOCKET_URL` and `HUD_OPACITY` are available without manual env injection.
+- `transcriber/config.py` — all config now read from environment variables; `get_telemetry_cfg()` helper added for clean telemetry init.
+- `transcriber/main.py` — uses `get_telemetry_cfg()` for OTel init; `log_writer` calls replaced with `telemetry.log()`; conditionally boots `DeepgramListener` when `DEEPGRAM_ENABLED=true`.
+- `start.sh` — overhauled: loads `.env` safely, runs migration, passes env to all three services; removed JSON parsing dependency.
+- Grafana dashboard (`docs/grafana-dashboard.json`) — expanded with Deepgram STT panels (panel 500 row).
+
+### Removed
+- `src/utils/file-logger.js` — replaced by `telemetry.logEvent()` fallback path.
+- `src/utils/memory-logger.js` — same replacement.
+- `transcriber/log_writer.py` — replaced by `telemetry.log()` calls throughout transcriber.
+
+---
+
 ## [2.1.0] — 2026-04-22
 
 ### Added

@@ -194,17 +194,8 @@ class Transcriber:
 
     @staticmethod
     def _load_openai_key() -> str:
-        import os, json as _json, pathlib
-        key = os.getenv("OPENAI_API_KEY", "")
-        if key:
-            return key
-        try:
-            cfg_path = pathlib.Path(__file__).parent.parent / "config" / "api-keys.json"
-            with open(cfg_path) as f:
-                cfg = _json.load(f)
-            return cfg.get("keys", {}).get("openai", "")
-        except Exception:
-            return ""
+        import os
+        return os.getenv("OPENAI_API_KEY", "")
 
     def _transcribe_api(self, audio: np.ndarray, sample_rate: int) -> str:
         from openai import OpenAI

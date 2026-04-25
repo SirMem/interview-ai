@@ -21,14 +21,87 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-NODE_PORT=$(python3 -c "
-import json
+# ── Load .env (single source of truth for all three services) ─────────────────
+# Safely parse .env: strips comments, blank lines, and exports each KEY=VALUE
+# without running unquoted values (e.g. "backend engineer") as shell commands.
+load_env() {
+  local file="$1"
+  while IFS= read -r line || [ -n "$line" ]; do
+    # skip blank lines and comments
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
+    # strip leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    # must look like KEY=... (no spaces before =)
+    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    # strip surrounding quotes from value if present
+    if [[ "$val" =~ ^\"(.*)\"$ || "$val" =~ ^\'(.*)\'$ ]]; then
+      val="${BASH_REMATCH[1]}"
+    fi
+    export "$key=$val"
+  done < "$file"
+}
+
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  load_env "$SCRIPT_DIR/.env"
+elif [ -f "$SCRIPT_DIR/.env.example" ]; then
+  echo "[start] .env not found — copying from .env.example. Edit it before starting."
+  cp "$SCRIPT_DIR/.env.example" "$SCRIPT_DIR/.env"
+  load_env "$SCRIPT_DIR/.env"
+fi
+
+# ── Migrate api-keys.json → .env (one-time, for existing installs) ─────────────
+if [ -f "$SCRIPT_DIR/config/api-keys.json" ] && [ ! -f "$SCRIPT_DIR/config/.migrated" ]; then
+  echo "[start] Detected legacy config/api-keys.json — migrating values to .env..."
+  python3 - "$SCRIPT_DIR" <<'PYEOF'
+import json, sys, pathlib, re
+root = pathlib.Path(sys.argv[1])
+env_path = root / '.env'
+json_path = root / 'config' / 'api-keys.json'
 try:
-  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
-  print(c.get('port', 4000))
-except: print(4000)
-" 2>/dev/null)
-NODE_PORT="${NODE_PORT:-4000}"
+    cfg = json.loads(json_path.read_text())
+except Exception as e:
+    print(f"  [warn] Could not read api-keys.json: {e}")
+    sys.exit(0)
+content = env_path.read_text() if env_path.exists() else ''
+def set_key(c, key, val):
+    if val is None or val == '': return c
+    r = re.compile(f'^{key}=.*$', re.M)
+    v = str(val)
+    return r.sub(f'{key}={v}', c) if r.search(c) else c + f'\n{key}={v}'
+keys_map = {
+    'keys.openai':  'OPENAI_API_KEY',  'keys.grok':   'GROQ_API_KEY',
+    'keys.gemini':  'GEMINI_API_KEY',  'keys.claude': 'ANTHROPIC_API_KEY',
+    'ollama_model': 'OLLAMA_MODEL',    'stt_model':   'STT_MODEL',
+    'answer_mode':  'ANSWER_MODE',     'hud_opacity':  'HUD_OPACITY',
+    'screenshots_path': 'SCREENSHOTS_PATH', 'interview_role': 'INTERVIEW_ROLE',
+    'speaker_id_threshold': 'SPEAKER_ID_THRESHOLD',
+    'speaker_id_enabled': 'SPEAKER_ID_ENABLED',
+    'deepgram_api_key': 'DEEPGRAM_API_KEY',
+    'deepgram_enabled': 'DEEPGRAM_ENABLED',
+}
+for dot_key, env_key in keys_map.items():
+    parts = dot_key.split('.')
+    val = cfg
+    for p in parts:
+        if isinstance(val, dict): val = val.get(p)
+        else: val = None; break
+    if val is not None:
+        content = set_key(content, env_key, str(val).lower() if isinstance(val, bool) else val)
+env_path.write_text(content)
+print(f"  [ok] Values migrated to .env")
+PYEOF
+  # Mark as migrated and back up the old file
+  touch "$SCRIPT_DIR/config/.migrated"
+  mv "$SCRIPT_DIR/config/api-keys.json" "$SCRIPT_DIR/config/api-keys.json.backup" 2>/dev/null || true
+  echo "[start] config/api-keys.json backed up to api-keys.json.backup"
+  # Reload .env with migrated values
+  load_env "$SCRIPT_DIR/.env"
+fi
+
+NODE_PORT="${PORT:-4000}"
 PIDS=()
 OLLAMA_STARTED=false   # true only when this script launched ollama
 
@@ -158,19 +231,8 @@ if $DO_SETUP; then
   # Give it a few seconds to start up
   sleep 3
 
-  # Determine which ollama model to pull from config (default: llama3.2:1b)
-  OLLAMA_MODEL="llama3.2:1b"
-  if [[ -f "$SCRIPT_DIR/config/api-keys.json" ]]; then
-    _MODEL=$(python3 -c "
-import json, sys
-try:
-  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
-  m = c.get('ollama_model') or c.get('keys',{}).get('ollama_model','')
-  print(m if m else '')
-except: pass
-" 2>/dev/null)
-    [[ -n "$_MODEL" ]] && OLLAMA_MODEL="$_MODEL"
-  fi
+  # Determine which ollama model to pull from .env (default: llama3.2:1b)
+  OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:1b}"
 
   log "Pulling Ollama model: ${BOLD}$OLLAMA_MODEL${RESET} (this may take a few minutes on first run)..."
   if ollama pull "$OLLAMA_MODEL"; then
@@ -221,7 +283,7 @@ except: pass
   echo -e "  ${BOLD}Next steps:${RESET}"
   echo ""
   echo -e "  1. Add your API keys:"
-  echo -e "     ${DIM}Open ${BOLD}config/api-keys.json${RESET}${DIM} (copy from api-keys.json.example)${RESET}"
+  echo -e "     ${DIM}Edit ${BOLD}.env${RESET}${DIM} in the project root (copy from .env.example)${RESET}"
   echo -e "     ${DIM}Or open the settings page at ${BOLD}http://localhost:$NODE_PORT/settings${RESET}${DIM} after starting${RESET}"
   echo ""
   echo -e "  2. Keys you may need (need at least one):"
@@ -254,14 +316,9 @@ fi
 #  RUNTIME SECTION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# ── Read audio device from config ─────────────────────────────────────────────
-AUDIO_INPUT_DEVICE=$(python3 -c "
-import json
-try:
-  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
-  print(c.get('audio_input_device', ''))
-except: print('')
-" 2>/dev/null)
+# ── Read audio device from .env ───────────────────────────────────────────────
+# AUDIO_INPUT_DEVICE is set by sourcing .env above (empty = default mic)
+AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}"
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 command -v node    >/dev/null 2>&1 || die "node not found. Run: ./start.sh --setup"
@@ -290,31 +347,11 @@ else
   warn "Ollama not installed — local LLM classifier unavailable. Run: ./start.sh --setup"
 fi
 
-# ── Read whisper model from config ────────────────────────────────────────────
-WHISPER_MODEL="small"
-if [[ -f "$SCRIPT_DIR/config/api-keys.json" ]]; then
-  _WM=$(python3 -c "
-import json
-try:
-  c = json.load(open('$SCRIPT_DIR/config/api-keys.json'))
-  print(c.get('stt_model','small'))
-except: print('small')
-" 2>/dev/null)
-  [[ -n "$_WM" ]] && WHISPER_MODEL="$_WM"
-fi
+# ── Read whisper model from .env ─────────────────────────────────────────────
+WHISPER_MODEL="${STT_MODEL:-small}"
 
-# ── Log file setup ────────────────────────────────────────────────────────────
-# Structured logs now flow to Grafana Cloud via OpenTelemetry — see
-# config/api-keys.json `telemetry` block. The local logs/ directory is only
-# kept for the live-tail Python text log (a debugging convenience).
+# Ensure logs/ exists — telemetry fallback files are written here when OTel is off.
 mkdir -p "$SCRIPT_DIR/logs"
-PYTHON_LOG="$SCRIPT_DIR/logs/transcriber.log"
-
-if $NEW_LOGS; then
-  log "Clearing local text log (--newlogs)..."
-  rm -f "$SCRIPT_DIR/logs/"*.log
-  ok "Local logs cleared."
-fi
 
 echo ""
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -379,7 +416,7 @@ $TELEMETRY_DEBUG_MODE && _TDBG_VAL="1"
 WHISPER_MODEL="$WHISPER_MODEL" WHISPER_BACKEND="$_WHISPER_BACKEND" \
   AUDIO_INPUT_DEVICE="${AUDIO_INPUT_DEVICE:-}" LOG_LEVEL="$PYTHON_LOG_LEVEL" \
   "$TRANSCRIBER_DIR/venv/bin/python" "$TRANSCRIBER_DIR/main.py" \
-  >"$PYTHON_LOG" 2>&1 &
+  > >(sed "s/^/${YELLOW}[transcriber]${RESET} /") 2>&1 &
 PYTHON_PID=$!
 PIDS+=("$PYTHON_PID")
 ok "Python transcriber started (PID $PYTHON_PID)."
@@ -402,8 +439,8 @@ echo -e "  Transcriber  → PID $PYTHON_PID"
 echo -e "  Electron HUD → PID $ELECTRON_PID"
 echo -e ""
 echo -e "  ${BOLD}Logs:${RESET}"
-echo -e "  Structured       → ${DIM}Grafana Cloud (telemetry block in api-keys.json)${RESET}"
-echo -e "  Transcriber text → ${DIM}logs/transcriber.log${RESET}"
+echo -e "  Telemetry (OTel) → ${DIM}Grafana Cloud (telemetry block in .env)${RESET}"
+echo -e "  Fallback (local) → ${DIM}logs/telemetry_node.jsonl + logs/telemetry_python.jsonl${RESET}"
 echo -e ""
 echo -e "  ${BOLD}Quick links:${RESET}"
 echo -e "  Settings page   → ${CYAN}http://localhost:$NODE_PORT/settings${RESET}"
@@ -412,13 +449,9 @@ echo -e "  Stop everything → ${BOLD}Ctrl+C${RESET}"
 echo -e ""
 echo -e "  ${BOLD}STT model:${RESET} $WHISPER_MODEL"
 echo -e "  ${BOLD}Log level:${RESET} $PYTHON_LOG_LEVEL"
-$TELEMETRY_DEBUG_MODE && echo -e "  ${YELLOW}Telemetry debug:${RESET} ON → logs/telemetry-debug.ndjson"
+$TELEMETRY_DEBUG_MODE && echo -e "  ${YELLOW}Telemetry debug:${RESET} ON"
 echo -e "  ${BOLD}Behaviour:${RESET} Questions are classified and answered automatically"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
-
-# ── Tail logs live ────────────────────────────────────────────────────────────
-tail -f "$PYTHON_LOG" | sed "s/^/${YELLOW}[transcriber]${RESET} /" &
-PIDS+=("$!")
 
 wait "$NODE_PID" "$PYTHON_PID" "$ELECTRON_PID"

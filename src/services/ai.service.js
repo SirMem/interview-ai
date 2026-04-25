@@ -8,6 +8,8 @@ import path from 'path';
 import logger from '../utils/logger.js';
 import { addCounter } from '../utils/telemetry.js';
 
+// .env is loaded by server.js before this module is imported;
+// dotenv.config() here is a no-op guard in case of standalone imports.
 dotenv.config();
 const log = logger('AIService');
 
@@ -84,7 +86,7 @@ function _costFor(model, inTokens, outTokens) {
   return ((inTokens || 0) * p.in + (outTokens || 0) * p.out) / 1_000_000;
 }
 
-const CONFIG_FILE_PATH = path.join(process.cwd(), 'config', 'api-keys.json');
+const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 
 const PROMPT_FILE_MAP = {
   system: 'system-prompt.txt',
@@ -131,28 +133,28 @@ class AIService {
 
   loadConfig() {
     try {
-      if (fs.existsSync(CONFIG_FILE_PATH)) {
-        const configData = fs.readFileSync(CONFIG_FILE_PATH, 'utf8');
-        this.config = JSON.parse(configData);
-      } else {
-        this.config = { keys: {}, order: [], models: {} };
-        if (process.env.OPENAI_API_KEY) {
-          this.config.keys.openai = process.env.OPENAI_API_KEY;
-          this.config.order.push('openai');
-        }
-        if (process.env.GROQ_API_KEY) {
-          this.config.keys.grok = process.env.GROQ_API_KEY;
-          this.config.order.push('grok');
-        }
-        if (process.env.GEMINI_API_KEY) {
-          this.config.keys.gemini = process.env.GEMINI_API_KEY;
-          this.config.order.push('gemini');
-        }
-        if (process.env.ANTHROPIC_API_KEY) {
-          this.config.keys.claude = process.env.ANTHROPIC_API_KEY;
-          this.config.order.push('claude');
-        }
-      }
+      // Reload .env into process.env so any settings-page write is picked up immediately
+      dotenv.config({ path: ENV_FILE_PATH, override: true });
+      this.config = {
+        keys: {
+          openai: process.env.OPENAI_API_KEY    || '',
+          grok:   process.env.GROQ_API_KEY      || '',
+          gemini: process.env.GEMINI_API_KEY    || '',
+          claude: process.env.ANTHROPIC_API_KEY || '',
+        },
+        order:   (process.env.PROVIDER_ORDER   || 'openai,grok,gemini,claude').split(',').map(s => s.trim()),
+        enabled: (process.env.PROVIDER_ENABLED || '').split(',').map(s => s.trim()).filter(Boolean),
+        models: {
+          openai: process.env.MODEL_OPENAI || 'gpt-4o-mini',
+          grok:   process.env.MODEL_GROK   || 'llama-3.3-70b-versatile',
+          gemini: process.env.MODEL_GEMINI || 'gemini-2.5-flash',
+          claude: process.env.MODEL_CLAUDE || 'claude-sonnet-4-5',
+        },
+        ollama_model:    process.env.OLLAMA_MODEL    || 'llama3.2:1b',
+        ollama_enabled:  process.env.OLLAMA_ENABLED  !== 'false',
+        answer_mode:     process.env.ANSWER_MODE     || 'auto',
+        interview_role:  process.env.INTERVIEW_ROLE  || '',
+      };
     } catch (err) {
       log.error('Error loading AI config', err);
       this.config = { keys: {}, order: [], models: {} };
@@ -162,21 +164,17 @@ class AIService {
   _watchConfig() {
     let debounceTimer = null;
     try {
-      const dir = path.dirname(CONFIG_FILE_PATH);
-      const filename = path.basename(CONFIG_FILE_PATH);
-      if (fs.existsSync(dir)) {
-        fs.watch(dir, (event, changedFile) => {
-          if (changedFile === filename) {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-              this.loadConfig();
-              log.info('Config reloaded due to file change');
-            }, 150);
-          }
+      if (fs.existsSync(ENV_FILE_PATH)) {
+        fs.watch(ENV_FILE_PATH, () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            this.loadConfig();
+            log.info('Config reloaded due to .env file change');
+          }, 150);
         });
       }
     } catch (err) {
-      log.warn('Could not watch config file for changes', { error: err.message });
+      log.warn('Could not watch .env file for changes', { error: err.message });
     }
   }
 

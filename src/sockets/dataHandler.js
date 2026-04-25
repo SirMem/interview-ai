@@ -16,7 +16,7 @@ import { EventEmitter } from 'events';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import logger from '../utils/logger.js';
-import { logEvent } from '../utils/file-logger.js';
+import { logEvent } from '../utils/telemetry.js';
 import { recordHistogram, addCounter } from '../utils/telemetry.js';
 import aiService, { aiCostUSD } from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
@@ -648,14 +648,17 @@ class DataHandler extends EventEmitter {
   async handleLoadSpeakerId(socket, data = {}) {
     const threshold = data.threshold ?? 0.70;
 
-    const configPath = join(process.cwd(), 'config', 'api-keys.json');
+    // Persist speaker ID settings to .env
+    const envPath = join(process.cwd(), '.env');
     try {
-      const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
-      cfg.speaker_id_enabled   = true;
-      cfg.speaker_id_threshold = threshold;
-      // Drop any legacy hf_token field from the persisted config.
-      if ('hf_token' in cfg) delete cfg.hf_token;
-      writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+      let content = readFileSync(envPath, 'utf8');
+      const setKey = (c, key, val) => {
+        const re = new RegExp(`^${key}=.*$`, 'm');
+        return re.test(c) ? c.replace(re, `${key}=${val}`) : c + `\n${key}=${val}`;
+      };
+      content = setKey(content, 'SPEAKER_ID_ENABLED', 'true');
+      content = setKey(content, 'SPEAKER_ID_THRESHOLD', String(threshold));
+      writeFileSync(envPath, content, 'utf8');
     } catch (e) {
       log.warn('Could not persist speaker_id config', { error: e.message });
     }

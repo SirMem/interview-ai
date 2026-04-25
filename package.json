@@ -43,6 +43,7 @@
     "@opentelemetry/sdk-metrics": "^1.25.0",
     "@opentelemetry/semantic-conventions": "^1.25.0",
     "axios": "^1.6.2",
+    "caveman": "^0.1.6",
     "clipboardy": "^5.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

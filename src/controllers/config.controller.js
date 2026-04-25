@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import Groq from 'groq-sdk';
 import Anthropic from '@anthropic-ai/sdk';
@@ -15,7 +16,7 @@ import {
 
 const log = logger('ConfigController');
 
-const CONFIG_FILE_PATH = path.join(process.cwd(), 'config', 'api-keys.json');
+const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 
 const KNOWN_PROVIDER_LABELS = {
   openai: 'OpenAI',
@@ -68,22 +69,81 @@ const DEFAULT_MODELS = {
 };
 
 class ConfigController {
-  getConfigFilePath() {
-    const configDir = path.dirname(CONFIG_FILE_PATH);
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+  // ── .env helpers ──────────────────────────────────────────────────────────
+
+  _reloadEnv() {
+    dotenv.config({ path: ENV_FILE_PATH, override: true });
+  }
+
+  /**
+   * Update specific keys in .env in-place, preserving all comments and order.
+   * Appends keys that do not yet exist. Reloads process.env after writing.
+   */
+  _writeDotEnvKeys(updates) {
+    let content = '';
+    if (fs.existsSync(ENV_FILE_PATH)) {
+      content = fs.readFileSync(ENV_FILE_PATH, 'utf8');
     }
-    return CONFIG_FILE_PATH;
+    for (const [key, rawValue] of Object.entries(updates)) {
+      const value = rawValue === null || rawValue === undefined ? '' : String(rawValue);
+      const re = new RegExp(`^${key}=.*$`, 'm');
+      if (re.test(content)) {
+        content = content.replace(re, `${key}=${value}`);
+      } else {
+        content += (content.endsWith('\n') ? '' : '\n') + `${key}=${value}\n`;
+      }
+    }
+    fs.writeFileSync(ENV_FILE_PATH, content, 'utf8');
+    dotenv.config({ path: ENV_FILE_PATH, override: true });
   }
 
   _readConfig() {
-    const configPath = this.getConfigFilePath();
-    if (!fs.existsSync(configPath)) return null;
-    try {
-      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    } catch {
-      return null;
-    }
+    this._reloadEnv();
+    return {
+      keys: {
+        openai: process.env.OPENAI_API_KEY    || '',
+        grok:   process.env.GROQ_API_KEY      || '',
+        gemini: process.env.GEMINI_API_KEY    || '',
+        claude: process.env.ANTHROPIC_API_KEY || '',
+      },
+      order:   (process.env.PROVIDER_ORDER   || 'openai,grok,gemini,claude').split(',').map(s => s.trim()),
+      enabled: (process.env.PROVIDER_ENABLED || '').split(',').map(s => s.trim()).filter(Boolean),
+      models: {
+        openai: process.env.MODEL_OPENAI || 'gpt-4o-mini',
+        grok:   process.env.MODEL_GROK   || 'llama-3.3-70b-versatile',
+        gemini: process.env.MODEL_GEMINI || 'gemini-2.5-flash',
+        claude: process.env.MODEL_CLAUDE || 'claude-sonnet-4-5',
+      },
+      ollama_model:         process.env.OLLAMA_MODEL                           || 'llama3.2:1b',
+      ollama_enabled:       process.env.OLLAMA_ENABLED                         !== 'false',
+      answer_mode:          process.env.ANSWER_MODE                            || 'auto',
+      interview_role:       process.env.INTERVIEW_ROLE                         || '',
+      stt_model:            process.env.STT_MODEL                              || 'small',
+      hud_opacity:          parseInt(process.env.HUD_OPACITY, 10)              || 27,
+      screenshots_path:     process.env.SCREENSHOTS_PATH                       || '',
+      speaker_id_threshold: parseFloat(process.env.SPEAKER_ID_THRESHOLD)       || 0.6,
+      speaker_id_enabled:   process.env.SPEAKER_ID_ENABLED                     === 'true',
+      deepgram_enabled:     process.env.DEEPGRAM_ENABLED                       === 'true',
+      deepgram_api_key:     process.env.DEEPGRAM_API_KEY                       || '',
+      deepgram_model:       process.env.DEEPGRAM_MODEL                         || 'nova-2',
+      deepgram_language:    process.env.DEEPGRAM_LANGUAGE                      || 'en',
+      deepgram_endpointing_ms:   parseInt(process.env.DEEPGRAM_ENDPOINTING_MS, 10)   || 300,
+      deepgram_utterance_end_ms: parseInt(process.env.DEEPGRAM_UTTERANCE_END_MS, 10) || 1000,
+      deepgram_min_word_count:   parseInt(process.env.DEEPGRAM_MIN_WORD_COUNT, 10)   || 2,
+      deepgram_enroll_seconds:   parseInt(process.env.DEEPGRAM_ENROLL_SECONDS, 10)   || 5,
+      deepgram_diarize:          process.env.DEEPGRAM_DIARIZE                        !== 'false',
+      deepgram_smart_format:     process.env.DEEPGRAM_SMART_FORMAT                   !== 'false',
+      telemetry: {
+        enabled:        process.env.TELEMETRY_ENABLED === 'true',
+        otlp_endpoint:  process.env.OTLP_ENDPOINT             || '',
+        instance_id:    process.env.GRAFANA_INSTANCE_ID        || '',
+        access_token:   process.env.GRAFANA_ACCESS_TOKEN       || '',
+        service_prefix: process.env.TELEMETRY_SERVICE_PREFIX   || 'solvewatch',
+        grafana_url:    process.env.GRAFANA_URL                || '',
+        grafana_sa_token: process.env.GRAFANA_SA_TOKEN         || '',
+      },
+      host_owner: process.env.HOST_OWNER || '',
+    };
   }
 
   // ── Legacy endpoints (kept for backwards compat) ──────────────────
@@ -121,35 +181,19 @@ class ConfigController {
         return res.status(400).json({ success: false, error: 'Invalid configuration format' });
       }
 
-      const configPath = this.getConfigFilePath();
-      let existingConfig = { keys: {}, order: [], enabled: [] };
-      if (fs.existsSync(configPath)) {
-        try { existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
-      }
-
-      const mergedKeys = { ...existingConfig.keys };
+      const updates = {};
       if (keys) {
-        Object.keys(keys).forEach((id) => {
-          const newKey = keys[id]?.trim();
-          if (newKey && newKey !== '***') mergedKeys[id] = newKey;
-        });
+        if (keys.openai && keys.openai !== '***') updates.OPENAI_API_KEY = keys.openai.trim();
+        if (keys.grok   && keys.grok   !== '***') updates.GROQ_API_KEY   = keys.grok.trim();
+        if (keys.gemini && keys.gemini !== '***') updates.GEMINI_API_KEY  = keys.gemini.trim();
+        if (keys.claude && keys.claude !== '***') updates.ANTHROPIC_API_KEY = keys.claude.trim();
       }
+      updates.PROVIDER_ORDER   = order.join(',');
+      updates.PROVIDER_ENABLED = (enabled && Array.isArray(enabled) ? enabled : order).join(',');
+      this._writeDotEnvKeys(updates);
 
-      const enabledProviders =
-        enabled && Array.isArray(enabled)
-          ? enabled
-          : order.filter((id) => mergedKeys[id]?.trim());
-
-      // Zero enabled remote providers is legal now: Ollama is the terminal fallback.
-      const configToSave = { ...existingConfig, keys: mergedKeys, order, enabled: enabledProviders };
-      fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
-
-      const maskedKeys = {};
-      Object.keys(configToSave.keys).forEach((id) => {
-        maskedKeys[id] = configToSave.keys[id] ? '***' : '';
-      });
-
-      res.json({ success: true, message: 'Configuration saved', config: { keys: maskedKeys, order, enabled: enabledProviders } });
+      const maskedKeys = { openai: '***', grok: '***', gemini: '***', claude: '***' };
+      res.json({ success: true, message: 'Configuration saved', config: { keys: maskedKeys, order, enabled: (enabled || order) } });
     } catch (err) {
       log.error('Error saving API keys config', err);
       res.status(500).json({ success: false, error: 'Failed to save configuration' });
@@ -160,48 +204,57 @@ class ConfigController {
 
   getFullConfig(req, res) {
     try {
-      const config = this._readConfig() || { keys: {}, order: [], enabled: [] };
+      const config = this._readConfig();
 
-      const allKnownIds = ['openai', 'grok', 'gemini', 'claude', 'ollama'];
-      const existingIds = new Set([
+      const orderedIds = [...new Set([
         ...(config.order || []),
-        ...Object.keys(config.keys || {}).filter(k => k !== 'ollama_model'),
-      ]);
-      // Merge known providers in; keep existing order, append unknown known ones at end
-      const allIds = [...new Set([...allKnownIds, ...existingIds])].filter(id => id !== 'ollama_model');
+        'openai', 'grok', 'gemini', 'claude',
+      ])];
 
-      // Build ordered list: configured order first, then unordered known providers
-      const orderedIds = [
-        ...(config.order || []).filter(id => id !== 'ollama_model'),
-        ...allIds.filter(id => !(config.order || []).includes(id)),
-      ];
-
-      // Ollama is always enabled by default (local fallback). Only disable it
-      // if the user explicitly set ollama_enabled=false.
-      const enabledSet = new Set(config.enabled || config.order || []);
+      const enabledSet = new Set(config.enabled || []);
       if (config.ollama_enabled !== false) enabledSet.add('ollama');
-      const providers = orderedIds.map(id => ({
-        id,
-        label: KNOWN_PROVIDER_LABELS[id] || id,
-        // ollama never needs an API key — treat as permanently "configured"
-        hasKey: id === 'ollama' ? true : !!(config.keys?.[id]),
-        local:  id === 'ollama',
-        enabled: enabledSet.has(id),
-        model: id === 'ollama'
-          ? (config.ollama_model || 'llama3.2:1b')
-          : (config.models?.[id] || DEFAULT_MODELS[id] || ''),
-      }));
+
+      const providers = [
+        ...orderedIds.map(id => ({
+          id,
+          label:   KNOWN_PROVIDER_LABELS[id] || id,
+          hasKey:  id === 'ollama' ? true : !!(config.keys?.[id]),
+          local:   id === 'ollama',
+          enabled: enabledSet.has(id),
+          model:   id === 'ollama'
+            ? (config.ollama_model || 'llama3.2:1b')
+            : (config.models?.[id] || DEFAULT_MODELS[id] || ''),
+        })),
+        // Ollama always last if not already in the order list
+        ...(!orderedIds.includes('ollama') ? [{
+          id: 'ollama',
+          label: KNOWN_PROVIDER_LABELS.ollama,
+          hasKey: true, local: true,
+          enabled: enabledSet.has('ollama'),
+          model: config.ollama_model || 'llama3.2:1b',
+        }] : []),
+      ];
 
       res.json({
         success: true,
         providers,
-        stt_model:            config.stt_model            || 'small',
-        answer_mode:          config.answer_mode           || 'auto',
-        hud_opacity:          config.hud_opacity           ?? 15,
-        screenshots_path:     config.screenshots_path      || '',
-        interview_role:       config.interview_role        || '',
-        speaker_id_threshold: config.speaker_id_threshold  ?? 0.70,
-        speaker_id_enabled:   config.speaker_id_enabled    ?? false,
+        stt_model:            config.stt_model             || 'small',
+        answer_mode:          config.answer_mode            || 'auto',
+        hud_opacity:          config.hud_opacity            ?? 27,
+        screenshots_path:     config.screenshots_path       || '',
+        interview_role:       config.interview_role         || '',
+        speaker_id_threshold: config.speaker_id_threshold   ?? 0.6,
+        speaker_id_enabled:   config.speaker_id_enabled     ?? false,
+        deepgram_enabled:     config.deepgram_enabled       ?? false,
+        deepgram_model:       config.deepgram_model         || 'nova-2',
+        deepgram_language:    config.deepgram_language      || 'en',
+        deepgram_endpointing_ms:   config.deepgram_endpointing_ms   ?? 300,
+        deepgram_utterance_end_ms: config.deepgram_utterance_end_ms ?? 1000,
+        deepgram_min_word_count:   config.deepgram_min_word_count   ?? 2,
+        deepgram_enroll_seconds:   config.deepgram_enroll_seconds   ?? 5,
+        deepgram_diarize:          config.deepgram_diarize          ?? true,
+        deepgram_smart_format:     config.deepgram_smart_format     ?? true,
+        deepgram_api_key_set:      !!(config.deepgram_api_key),
       });
     } catch (err) {
       log.error('Error reading full config', err);
@@ -213,71 +266,62 @@ class ConfigController {
 
   saveFullConfig(req, res) {
     try {
-      const { providers, stt_model, answer_mode, hud_opacity, screenshots_path, interview_role, speaker_id_threshold, speaker_id_enabled } = req.body;
+      const {
+        providers, stt_model, answer_mode, hud_opacity, screenshots_path,
+        interview_role, speaker_id_threshold, speaker_id_enabled,
+        deepgram_enabled, deepgram_api_key, deepgram_model, deepgram_language,
+        deepgram_endpointing_ms, deepgram_utterance_end_ms, deepgram_min_word_count,
+        deepgram_enroll_seconds, deepgram_diarize, deepgram_smart_format,
+      } = req.body;
 
-      const configPath = this.getConfigFilePath();
-      let existingConfig = { keys: {}, order: [], enabled: [] };
-      if (fs.existsSync(configPath)) {
-        try { existingConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
-      }
-
-      // Merge provider keys + models
-      const mergedKeys = { ...existingConfig.keys };
-      const mergedModels = { ...(existingConfig.models || {}) };
+      const updates = {};
       const order = [];
       const enabledProviders = [];
 
-      let ollamaEnabledOverride = null;  // null = don't change; bool = set explicitly
-      let ollamaModelOverride   = null;
       if (Array.isArray(providers)) {
         for (const p of providers) {
           if (!p.id) continue;
           if (p.id === 'ollama') {
-            // ollama lives in its own top-level fields, not in order/keys/models.
-            ollamaEnabledOverride = !!p.enabled;
-            if (p.model && p.model.trim()) ollamaModelOverride = p.model.trim();
+            updates.OLLAMA_ENABLED = p.enabled ? 'true' : 'false';
+            if (p.model && p.model.trim()) updates.OLLAMA_MODEL = p.model.trim();
             continue;
           }
           order.push(p.id);
           if (p.enabled) enabledProviders.push(p.id);
-          // Only update key if a non-blank, non-placeholder value is provided
           if (p.key && p.key.trim() && p.key !== '***') {
-            mergedKeys[p.id] = p.key.trim();
+            const envKey = { openai: 'OPENAI_API_KEY', grok: 'GROQ_API_KEY', gemini: 'GEMINI_API_KEY', claude: 'ANTHROPIC_API_KEY' }[p.id];
+            if (envKey) updates[envKey] = p.key.trim();
           }
-          // Save selected model
           if (p.model && p.model.trim()) {
-            mergedModels[p.id] = p.model.trim();
+            const modelKey = { openai: 'MODEL_OPENAI', grok: 'MODEL_GROK', gemini: 'MODEL_GEMINI', claude: 'MODEL_CLAUDE' }[p.id];
+            if (modelKey) updates[modelKey] = p.model.trim();
           }
         }
+        if (order.length)           updates.PROVIDER_ORDER   = order.join(',');
+        if (enabledProviders.length) updates.PROVIDER_ENABLED = enabledProviders.join(',');
       }
 
-      // "At least one provider" rule is lifted: Ollama is always a terminal
-      // fallback, so zero enabled remote providers is legal — the answer just
-      // goes local.
+      if (stt_model            !== undefined) updates.STT_MODEL             = stt_model;
+      if (answer_mode          !== undefined) updates.ANSWER_MODE           = answer_mode;
+      if (hud_opacity          !== undefined) updates.HUD_OPACITY           = String(hud_opacity);
+      if (screenshots_path     !== undefined) updates.SCREENSHOTS_PATH      = screenshots_path;
+      if (interview_role       !== undefined) updates.INTERVIEW_ROLE        = interview_role;
+      if (speaker_id_threshold !== undefined) updates.SPEAKER_ID_THRESHOLD  = String(speaker_id_threshold);
+      if (speaker_id_enabled   !== undefined) updates.SPEAKER_ID_ENABLED    = speaker_id_enabled ? 'true' : 'false';
 
-      const configToSave = {
-        ...existingConfig,           // preserve vad block and any other fields
-        keys:             mergedKeys,
-        models:           mergedModels,
-        order:            order.length ? order : existingConfig.order,
-        enabled:          enabledProviders.length ? enabledProviders : existingConfig.enabled,
-        ollama_enabled:   ollamaEnabledOverride !== null
-                            ? ollamaEnabledOverride
-                            : (existingConfig.ollama_enabled !== false),
-        ollama_model:     ollamaModelOverride  || existingConfig.ollama_model || 'llama3.2:1b',
-        stt_model:            stt_model            || existingConfig.stt_model            || 'small',
-        answer_mode:          answer_mode          || existingConfig.answer_mode           || 'auto',
-        hud_opacity:          hud_opacity          ?? existingConfig.hud_opacity           ?? 15,
-        screenshots_path:     screenshots_path     !== undefined ? screenshots_path     : (existingConfig.screenshots_path || ''),
-        interview_role:       interview_role       !== undefined ? interview_role       : (existingConfig.interview_role   || ''),
-        speaker_id_threshold: speaker_id_threshold !== undefined ? +speaker_id_threshold : (existingConfig.speaker_id_threshold ?? 0.70),
-        speaker_id_enabled:   speaker_id_enabled   !== undefined ? !!speaker_id_enabled  : (existingConfig.speaker_id_enabled   ?? false),
-      };
-      // Drop the legacy hf_token field on save — speaker ID no longer needs it.
-      if ('hf_token' in configToSave) delete configToSave.hf_token;
+      if (deepgram_enabled      !== undefined) updates.DEEPGRAM_ENABLED      = deepgram_enabled ? 'true' : 'false';
+      if (deepgram_api_key && deepgram_api_key !== '***') updates.DEEPGRAM_API_KEY = deepgram_api_key.trim();
+      if (deepgram_model        !== undefined) updates.DEEPGRAM_MODEL        = deepgram_model;
+      if (deepgram_language     !== undefined) updates.DEEPGRAM_LANGUAGE     = deepgram_language;
+      if (deepgram_endpointing_ms   !== undefined) updates.DEEPGRAM_ENDPOINTING_MS   = String(deepgram_endpointing_ms);
+      if (deepgram_utterance_end_ms !== undefined) updates.DEEPGRAM_UTTERANCE_END_MS = String(deepgram_utterance_end_ms);
+      if (deepgram_min_word_count   !== undefined) updates.DEEPGRAM_MIN_WORD_COUNT   = String(deepgram_min_word_count);
+      if (deepgram_enroll_seconds   !== undefined) updates.DEEPGRAM_ENROLL_SECONDS   = String(deepgram_enroll_seconds);
+      if (deepgram_diarize          !== undefined) updates.DEEPGRAM_DIARIZE          = deepgram_diarize ? 'true' : 'false';
+      if (deepgram_smart_format     !== undefined) updates.DEEPGRAM_SMART_FORMAT     = deepgram_smart_format ? 'true' : 'false';
 
-      fs.writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf8');
-      log.info('Full config saved', { providers: order, stt_model, answer_mode });
+      this._writeDotEnvKeys(updates);
+      log.info('Full config saved', { providers: order, stt_model, answer_mode, deepgram_enabled });
 
       res.json({ success: true, message: 'Settings saved successfully' });
     } catch (err) {
@@ -349,6 +393,34 @@ class ConfigController {
     } catch (err) {
       log.warn(`Could not fetch models for ${providerId}`, { error: err.message });
       return res.json({ success: true, models: fallback, source: 'fallback' });
+    }
+  }
+
+  // ── Test Deepgram connection ───────────────────────────────────────
+
+  async testDeepgramKey(req, res) {
+    let { api_key: apiKey } = req.body || {};
+    if (!apiKey || apiKey === '***') {
+      this._reloadEnv();
+      apiKey = process.env.DEEPGRAM_API_KEY || '';
+    }
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: 'No Deepgram API key provided' });
+    }
+    try {
+      const r = await fetch('https://api.deepgram.com/v1/models', {
+        headers: { Authorization: `Token ${apiKey}` },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (r.status === 401) {
+        return res.status(400).json({ success: false, error: 'Invalid Deepgram API key (HTTP 401 — check key at console.deepgram.com)' });
+      }
+      if (!r.ok) {
+        return res.status(400).json({ success: false, error: `Deepgram returned HTTP ${r.status}` });
+      }
+      return res.json({ success: true, message: 'Deepgram API key is valid' });
+    } catch (err) {
+      return res.status(400).json({ success: false, error: `Could not reach Deepgram: ${err.message}` });
     }
   }
 
@@ -518,22 +590,28 @@ class ConfigController {
 
   // ── Telemetry: read current config (no secrets exposed) ─────────────
   getTelemetryStatus(req, res) {
-    let cfg = {};
-    try {
-      cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8'));
-    } catch {}
-    const t = cfg.telemetry || {};
+    this._reloadEnv();
+    const t = {
+      enabled:       process.env.TELEMETRY_ENABLED === 'true',
+      otlp_endpoint: process.env.OTLP_ENDPOINT              || '',
+      instance_id:   process.env.GRAFANA_INSTANCE_ID         || '',
+      access_token:  process.env.GRAFANA_ACCESS_TOKEN        || '',
+      service_prefix:process.env.TELEMETRY_SERVICE_PREFIX    || 'solvewatch',
+      grafana_url:   process.env.GRAFANA_URL                 || '',
+      grafana_sa_token: process.env.GRAFANA_SA_TOKEN         || '',
+    };
     return res.json({
       success: true,
-      enabled:        !!t.enabled && isTelemetryEnabled(),     // both persisted AND actually running
-      configured:     !!t.enabled,                              // just the persisted bit
+      enabled:        t.enabled && isTelemetryEnabled(),
+      configured:     t.enabled,
       otlp_endpoint:  t.otlp_endpoint || 'https://otlp-gateway-prod-us-east-0.grafana.net/otlp',
-      service_prefix: t.service_prefix || 'solvewatch',
-      instance_id:    t.instance_id   || '',
-      auth_token_set: !!((t.access_token || t.auth_token) && (t.access_token || t.auth_token).trim()),
-      host_owner:     cfg.host_owner  || '',  // top-level field, friendly machine label
-      grafana_url:    t.grafana_url   || '',
+      service_prefix: t.service_prefix,
+      instance_id:    t.instance_id,
+      auth_token_set: !!(t.access_token && t.access_token.trim()),
+      host_owner:     process.env.HOST_OWNER || '',
+      grafana_url:    t.grafana_url,
       grafana_sa_token_set: !!(t.grafana_sa_token && t.grafana_sa_token.trim()),
+      grafana_dashboard_url: process.env.GRAFANA_DASHBOARD_URL || '',
     });
   }
 
@@ -545,20 +623,12 @@ class ConfigController {
     const servicePrefix = (body.service_prefix || 'solvewatch').trim() || 'solvewatch';
     const instanceId    = (body.instance_id    || '').trim();
     const hostOwner     = (body.host_owner     || '').trim();
-    let   accessToken   = (body.access_token   || body.auth_token || '').trim();  // accept legacy field too
+    let   accessToken   = (body.access_token   || body.auth_token || '').trim();
 
-    // Read existing config
-    let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8')); } catch {}
-    const existingToken = cfg.telemetry?.access_token || '';
-
-    // Token sentinel: '***' means "keep existing".
+    this._reloadEnv();
+    const existingToken = process.env.GRAFANA_ACCESS_TOKEN || '';
     if (accessToken === '***') accessToken = existingToken;
 
-    // Build the Authorization header value.
-    //   - Grafana Cloud OTLP gateway:  Basic base64(instanceID:accessPolicyToken)
-    //   - Anything else (e.g. self-hosted with bearer tokens): use raw token if
-    //     it already includes a scheme, else fall back to Bearer.
     const buildHeader = () => {
       if (instanceId && accessToken) {
         const b64 = Buffer.from(`${instanceId}:${accessToken}`, 'utf8').toString('base64');
@@ -569,52 +639,39 @@ class ConfigController {
       return `Bearer ${accessToken}`;
     };
 
-    // ── Disable path: skip validation, just shut things down ──────────
+    // ── Disable path ──────────────────────────────────────────────────
     if (!enable) {
-      cfg.telemetry = {
-        enabled: false,
-        otlp_endpoint:  otlpEndpoint  || cfg.telemetry?.otlp_endpoint  || '',
-        instance_id:    instanceId    || cfg.telemetry?.instance_id    || '',
-        access_token:   accessToken,
-        service_prefix: servicePrefix,
-      };
-      // Drop legacy auth_token field if present.
-      if ('auth_token' in cfg.telemetry) delete cfg.telemetry.auth_token;
-      // host_owner lives at the top level — friendly machine label.
-      if (hostOwner) cfg.host_owner = hostOwner;
-      this._writeConfig(cfg);
+      const updates = { TELEMETRY_ENABLED: 'false' };
+      if (otlpEndpoint) updates.OTLP_ENDPOINT = otlpEndpoint;
+      if (instanceId)   updates.GRAFANA_INSTANCE_ID = instanceId;
+      if (accessToken)  updates.GRAFANA_ACCESS_TOKEN = accessToken;
+      if (servicePrefix) updates.TELEMETRY_SERVICE_PREFIX = servicePrefix;
+      if (hostOwner)    updates.HOST_OWNER = hostOwner;
+      this._writeDotEnvKeys(updates);
       try { await shutdownTelemetry(); } catch {}
-      this._reloadPythonTelemetry().catch(() => {});  // best-effort
+      this._reloadPythonTelemetry().catch(() => {});
       log.info('Telemetry disabled via settings');
       return res.json({ success: true, enabled: false, message: 'Telemetry disabled.' });
     }
 
-    // ── Enable path: validate first, only persist enabled=true if it works ──
-    if (!otlpEndpoint) {
-      return res.status(400).json({ success: false, error: 'OTLP endpoint is required.' });
-    }
-    if (!accessToken) {
-      return res.status(400).json({ success: false, error: 'Access policy token is required.' });
-    }
-    if (!instanceId) {
-      return res.status(400).json({ success: false, error: 'Instance ID is required (Grafana Cloud uses Basic auth: instanceID:token).' });
-    }
+    // ── Enable path: validate first ───────────────────────────────────
+    if (!otlpEndpoint) return res.status(400).json({ success: false, error: 'OTLP endpoint is required.' });
+    if (!accessToken)  return res.status(400).json({ success: false, error: 'Access policy token is required.' });
+    if (!instanceId)   return res.status(400).json({ success: false, error: 'Instance ID is required (Grafana Cloud uses Basic auth: instanceID:token).' });
 
     const headerToken = buildHeader();
     log.info('Validating OTLP endpoint', { endpoint: otlpEndpoint, instanceId });
     const probe = await validateOtlpEndpoint(otlpEndpoint, headerToken);
 
     if (!probe.ok) {
-      // Persist with enabled=false so the next restart doesn't try a bad config.
-      cfg.telemetry = {
-        enabled: false,
-        otlp_endpoint:  otlpEndpoint,
-        instance_id:    instanceId,
-        access_token:   accessToken,    // keep what they typed so they can fix it
-        service_prefix: servicePrefix,
-      };
-      if (hostOwner) cfg.host_owner = hostOwner;
-      this._writeConfig(cfg);
+      this._writeDotEnvKeys({
+        TELEMETRY_ENABLED:       'false',
+        OTLP_ENDPOINT:            otlpEndpoint,
+        GRAFANA_INSTANCE_ID:      instanceId,
+        GRAFANA_ACCESS_TOKEN:     accessToken,
+        TELEMETRY_SERVICE_PREFIX: servicePrefix,
+        ...(hostOwner ? { HOST_OWNER: hostOwner } : {}),
+      });
       try { await shutdownTelemetry(); } catch {}
       const reasonMsg = {
         bad_token:   'Authentication failed (HTTP 401/403). Check Instance ID + token (token must have metrics:write + logs:write).',
@@ -622,42 +679,42 @@ class ConfigController {
         unreachable: `Could not reach the endpoint: ${probe.error || 'network error'}.`,
       }[probe.reason] || `Endpoint returned HTTP ${probe.status}.`;
       log.warn('Telemetry validation failed — staying disabled', { reason: probe.reason, status: probe.status });
-      return res.json({
-        success: false,
-        enabled: false,
-        validation: probe,
-        error: reasonMsg,
-      });
+      return res.json({ success: false, enabled: false, validation: probe, error: reasonMsg });
     }
 
-    // ── Validation passed → persist enabled=true and reload exporters ─
-    cfg.telemetry = {
-      enabled: true,
-      otlp_endpoint:  otlpEndpoint,
-      instance_id:    instanceId,
-      access_token:   accessToken,
-      service_prefix: servicePrefix,
+    // ── Validation passed → persist enabled=true and reload ───────────
+    this._writeDotEnvKeys({
+      TELEMETRY_ENABLED:       'true',
+      OTLP_ENDPOINT:            otlpEndpoint,
+      GRAFANA_INSTANCE_ID:      instanceId,
+      GRAFANA_ACCESS_TOKEN:     accessToken,
+      TELEMETRY_SERVICE_PREFIX: servicePrefix,
+      ...(hostOwner ? { HOST_OWNER: hostOwner } : {}),
+    });
+
+    const cfg = {
+      telemetry: {
+        enabled: true,
+        otlp_endpoint:  otlpEndpoint,
+        instance_id:    instanceId,
+        access_token:   accessToken,
+        service_prefix: servicePrefix,
+      },
+      host_owner: hostOwner || process.env.HOST_OWNER || '',
     };
-    if ('auth_token' in cfg.telemetry) delete cfg.telemetry.auth_token;
-    if (hostOwner) cfg.host_owner = hostOwner;
-    this._writeConfig(cfg);
 
     try {
-      await initTelemetry(cfg);                         // re-entrant: tears down old + starts new
+      await initTelemetry(cfg);
       if (isTelemetryEnabled()) startSystemMetricsSampler(10).catch(() => {});
     } catch (e) {
       log.error('Telemetry reinit failed', { error: e.message });
       return res.status(500).json({ success: false, error: `Reload failed: ${e.message}` });
     }
-    // Best-effort: ask Python transcriber to reload too
     const pyResult = await this._reloadPythonTelemetry();
 
     log.info('Telemetry enabled via settings', { endpoint: otlpEndpoint, prefix: servicePrefix, python: pyResult });
     return res.json({
-      success: true,
-      enabled: true,
-      validation: probe,
-      python: pyResult,
+      success: true, enabled: true, validation: probe, python: pyResult,
       message: 'Telemetry validated and enabled.',
     });
   }
@@ -676,24 +733,14 @@ class ConfigController {
     }
   }
 
-  _writeConfig(cfg) {
-    fs.writeFileSync(CONFIG_FILE_PATH, JSON.stringify(cfg, null, 2), 'utf8');
-  }
-
   // ── Dashboard auto-import to Grafana ──────────────────────────────────────
-  // Body: { grafana_url: 'https://my-stack.grafana.net', sa_token: 'glsa_...' }
-  // Steps: validate token → discover Prometheus + Loki UIDs → substitute into
-  // dashboard JSON → POST /api/dashboards/db. Response includes URL to view.
   async importDashboardToGrafana(req, res) {
     const body = req.body || {};
     const grafanaUrl = (body.grafana_url || '').trim().replace(/\/+$/, '');
     let saToken      = (body.sa_token    || '').trim();
 
-    // Persist+restore the SA token so users don't paste it every time. '***' = keep existing.
-    let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE_PATH, 'utf8')); } catch {}
-    cfg.telemetry = cfg.telemetry || {};
-    if (saToken === '***') saToken = cfg.telemetry.grafana_sa_token || '';
+    this._reloadEnv();
+    if (saToken === '***') saToken = process.env.GRAFANA_SA_TOKEN || '';
 
     if (!grafanaUrl) return res.status(400).json({ success: false, error: 'Grafana URL is required (e.g., https://my-stack.grafana.net)' });
     if (!saToken)   return res.status(400).json({ success: false, error: 'Service Account token is required (starts with glsa_…)' });
@@ -760,12 +807,16 @@ class ConfigController {
     }
 
     // 4. Persist Grafana URL + SA token for next time
-    cfg.telemetry.grafana_url      = grafanaUrl;
-    cfg.telemetry.grafana_sa_token = saToken;
-    try { this._writeConfig(cfg); } catch (e) { log.warn('Could not persist grafana fields', { error: e.message }); }
+    try {
+      this._writeDotEnvKeys({ GRAFANA_URL: grafanaUrl, GRAFANA_SA_TOKEN: saToken });
+    } catch (e) {
+      log.warn('Could not persist grafana fields', { error: e.message });
+    }
 
     const dashboardUrl = `${grafanaUrl}${result.url || `/d/${result.uid}`}`;
     log.info('Dashboard imported to Grafana', { uid: result.uid, url: dashboardUrl });
+    // Persist so the settings page can show "Open Dashboard" on future loads
+    try { this._writeDotEnvKeys({ GRAFANA_DASHBOARD_URL: dashboardUrl }); } catch (_) {}
     return res.json({
       success:        true,
       url:            dashboardUrl,
