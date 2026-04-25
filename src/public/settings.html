@@ -361,7 +361,7 @@
       <a href="#sec-role">🎯 Role</a>
       <a href="#sec-screenshots">📸 Screenshots</a>
       <a href="#sec-stt">🎙️ STT</a>
-      <a href="#sec-speaker">👤 Speaker ID</a>
+      <a href="#sec-speaker" id="navSpeakerId">👤 Speaker ID</a>
       <a href="#sec-hud">🖥️ HUD</a>
     </nav>
 
@@ -554,13 +554,19 @@
           <div class="field">
             <label>Voice Enrollment</label>
             <div class="hint" style="margin-top:2px;margin-bottom:10px">Enroll your voice once so only the interviewer's speech triggers AI answers. Takes 12 seconds.</div>
+            <div style="margin-bottom:10px;padding:14px;background:rgba(255,255,255,0.03);border:1px solid var(--border2);border-radius:var(--r-sm);font-size:13px;line-height:1.8;color:var(--text2)">
+              <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);margin-bottom:8px">📖 Read aloud when recording starts</div>
+              I'm a software engineer with experience building scalable backend systems. I've worked extensively with REST APIs, microservices, and distributed databases. In my current role, I focus on system design and performance optimization. I enjoy breaking down complex technical problems into simple, elegant solutions.
+              <br><br>
+              Recently I've been exploring cloud infrastructure using AWS and containerized deployments with Docker and Kubernetes. I'm comfortable with multiple programming languages and believe that choosing the right tool for the job is just as important as writing clean code.
+            </div>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <span id="deepgramEnrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
               <button class="btn btn-secondary btn-sm" id="btnEnrollDeepgramVoice" onclick="startDeepgramEnrollment()">🎤 Enroll My Voice</button>
               <button class="btn btn-ghost btn-sm" id="btnClearDeepgramEnroll" onclick="clearDeepgramEnrollment()" style="display:none">Clear</button>
             </div>
             <div id="deepgramEnrollProgress" style="display:none;margin-top:10px">
-              <div style="font-size:12px;color:var(--yellow);margin-bottom:6px">🔴 Recording — speak naturally for <span id="deepgramEnrollCountdown">12</span>s</div>
+              <div style="font-size:12px;color:var(--yellow);margin-bottom:6px">🔴 Recording — <span id="deepgramEnrollCountdown">12</span>s remaining</div>
               <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">
                 <div id="deepgramEnrollBar" style="height:100%;width:0%;background:var(--yellow);border-radius:3px"></div>
               </div>
@@ -1137,6 +1143,13 @@ function setTabActive(id) {
   document.getElementById('sttApiPanel').style.display     = id==='tabSttApi'     ? '' : 'none';
   document.getElementById('sttDeepgramPanel').style.display= id==='tabSttDeepgram'? '' : 'none';
   if(id==='tabSttApi') updateSttApiKeyWarn();
+  updateSpeakerIdSectionVisibility(id === 'tabSttDeepgram');
+}
+function updateSpeakerIdSectionVisibility(deepgramActive) {
+  const sec = document.getElementById('sec-speaker');
+  const nav = document.getElementById('navSpeakerId');
+  if (sec) sec.style.display = deepgramActive ? 'none' : '';
+  if (nav) nav.style.display = deepgramActive ? 'none' : '';
 }
 STT_TABS.forEach(id=>{
   document.getElementById(id).addEventListener('click',()=>setTabActive(id));
