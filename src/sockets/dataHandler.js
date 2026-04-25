@@ -7,18 +7,16 @@
  *    - Screenshot captured → OCR extraction → AI processing with 'system' prompt
  *    - Generates messageId and stores question/answer
  *
- * 2. Manual Listen Flow (Cmd+Shift+X toggle):
- *    - toggle_listen_mode → POST /start-recording to transcriber
- *    - transcription chunks stream in, forwarded to HUD as transcription_chunk
- *    - toggle_listen_mode off → POST /stop-recording → process_transcription fires
- *    - answerInterviewQuestion() called directly (no classify step)
- *    - Streams tokens to HUD via question_answer_token events
+ * 2. Always-On Listen Flow (Cmd+Shift+X toggle):
+ *    - toggle_listen_mode → POST /always-on-mode to transcriber
+ *    - StreamingSTT in Python emits stt_partial while speaking, stt_final on silence
+ *    - handleSttFinal() → answerInterviewQuestion() → streams tokens to HUD
  */
 import { EventEmitter } from 'events';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import logger from '../utils/logger.js';
-import { logEvent } from '../utils/file-logger.js';
+import { logEvent } from '../utils/telemetry.js';
 import { recordHistogram, addCounter } from '../utils/telemetry.js';
 import aiService, { aiCostUSD } from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
@@ -41,7 +39,6 @@ class DataHandler extends EventEmitter {
     super();
     this.io = io;
     this.namespace = null;
-    this.transcriptionChunks = new Map();
     this.selectedPrompts = new Map();
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
@@ -98,8 +95,6 @@ class DataHandler extends EventEmitter {
     socket.on('disconnect', (reason) => this.handleDisconnect(socket, reason));
     socket.on('error', (error) => this.handleError(socket, error));
     socket.on('use_prompt', (data) => this.handleUsePrompt(socket, data));
-    socket.on('transcription', (data) => this.handleTranscription(socket, data));
-    socket.on('process_transcription', () => this.handleProcessTranscription(socket));
     socket.on('toggle_listen_mode', (data) => this.handleToggleListenMode(socket, data));
     socket.on('listen_state_update', (data) => this.namespace.emit('listen_state_changed', { listening: !!data.listening }));
     socket.on('stt_partial', (data) => this.handleSttPartial(data));
@@ -128,7 +123,6 @@ class DataHandler extends EventEmitter {
 
   cleanupSocketData(socketId) {
     const cleanupActions = [
-      { map: this.transcriptionChunks, name: 'transcription chunks' },
       { map: this.selectedPrompts, name: 'selected prompt' },
       { map: this.pendingPrompts, name: 'pending prompt' },
     ];
@@ -246,84 +240,6 @@ class DataHandler extends EventEmitter {
       message: `Waiting for screenshot to process with ${promptType} prompt`,
       timestamp: Date.now(),
     });
-  }
-
-  // ==================== Transcription ====================
-
-  handleTranscription(socket, data) {
-    const { textChunk } = data || {};
-    if (!textChunk || typeof textChunk !== 'string') {
-      log.warn('Invalid transcription chunk received', { socketId: socket.id, data });
-      return;
-    }
-    if (!this.transcriptionChunks.has(socket.id)) {
-      this.transcriptionChunks.set(socket.id, []);
-    }
-    const chunks = this.transcriptionChunks.get(socket.id);
-    chunks.push(textChunk);
-    log.debug('Transcription chunk received', {
-      socketId: socket.id,
-      chunkLength: textChunk.length,
-      totalChunks: chunks.length,
-    });
-    // Forward live chunk to HUD for the transcription strip
-    this.namespace.emit('transcription_chunk', { text: textChunk });
-    logEvent('transcription_chunk_received', 'DEBUG', { module: 'DataHandler', chunkLength: textChunk.length });
-  }
-
-  /**
-   * Processes accumulated transcription chunks as an interview question.
-   * Called when the user stops recording (toggle_listen_mode off → Python fires process_transcription).
-   * Answers directly — no AI classification step.
-   */
-  async handleProcessTranscription(socket) {
-    const chunks = this.transcriptionChunks.get(socket.id);
-
-    if (!chunks || chunks.length === 0) {
-      log.warn('No transcription chunks found for processing', { socketId: socket.id });
-      return;
-    }
-
-    const fullTranscription = chunks.join(' ').trim();
-    this.transcriptionChunks.delete(socket.id);
-
-    if (!fullTranscription) return;
-
-    const questionId = `q-${Date.now()}`;
-    const transcriptContext = this.transcriptBuffer.getTranscriptContext();
-    const memoryContext = this.transcriptBuffer.getMemoryContext();
-
-    this.transcriptBuffer.addUtterance(fullTranscription);
-
-    log.info('Processing manual transcription as interview question', {
-      socketId: socket.id,
-      questionId,
-      transcriptionLength: fullTranscription.length,
-    });
-
-    this.namespace.emit('interviewer_question', { questionId, questionText: fullTranscription });
-    this.namespace.emit('question_answer_started', { questionId });
-
-    try {
-      const { answerText, stageLatencies, providerInfo, tokens } =
-        await this._streamInterviewAnswer(fullTranscription, questionId, transcriptContext, memoryContext);
-      this.namespace.emit('question_answer_complete', { questionId, response: answerText });
-      log.info('Manual question answered', { questionId, responseLength: answerText.length });
-      logEvent('manual_question_answered', 'INFO', {
-        module: 'DataHandler', questionId, responseLength: answerText.length,
-        provider: providerInfo.provider, model: providerInfo.model,
-        input_tokens:  tokens.input,
-        output_tokens: tokens.output,
-        cost_usd:      tokens.cost_usd,
-        ai_ttft_ms: stageLatencies.ai_ttft_ms, ai_total_ms: stageLatencies.ai_total_ms,
-      });
-      if (fullTranscription && answerText) {
-        this.transcriptBuffer.addQAPair(fullTranscription, answerText);
-      }
-    } catch (err) {
-      log.error('Error answering manual question', { questionId, error: err.message });
-      this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
-    }
   }
 
   /**
@@ -547,6 +463,7 @@ class DataHandler extends EventEmitter {
         firstTokenAt = performance.now();
         recordHistogram('ai_ttft_ms', firstTokenAt - startedAt, {
           provider: providerInfo?.provider || 'unknown',
+          model:    providerInfo?.model    || 'unknown',
           flow:     'transcription',
         });
         if (silenceStartedAtSec) {
@@ -562,6 +479,12 @@ class DataHandler extends EventEmitter {
         const match = buffer.match(/^Q:\s*(.+?)\n+A:\s*/s);
         if (match) {
           questionExtracted = true;
+          // How long did the user see raw transcript before the AI-cleaned
+          // question appeared in the Q&A card? = total time the "Q: …" prefix
+          // needed to finish streaming.
+          recordHistogram('question_extraction_ms', performance.now() - startedAt, {
+            provider: providerInfo?.provider || 'unknown',
+          });
           this.namespace.emit('question_text_updated', { questionId, questionText: match[1].trim() });
           const answerStart = buffer.slice(match[0].length);
           if (answerStart) {
@@ -583,6 +506,7 @@ class DataHandler extends EventEmitter {
     const totalMs = performance.now() - startedAt;
     recordHistogram('ai_total_ms', totalMs, {
       provider: providerInfo?.provider || 'unknown',
+      model:    providerInfo?.model    || 'unknown',
       flow:     'transcription',
     });
 
@@ -622,10 +546,19 @@ class DataHandler extends EventEmitter {
   }
 
   // stt_final fires from Python when StreamingSTT detects ≥700ms of VAD silence.
-  // Replaces the old interviewer_speech + process_transcription chain for always-on mode.
+  // Single entry point for turning speech into an AI answer.
   async handleSttFinal(socket, data) {
-    const { text, uid, silence_started_at } = data || {};
+    const { text, uid, silence_started_at, timestamp } = data || {};
     if (!text || !text.trim()) return;
+
+    // Python→Node socket RTT. `timestamp` is Python's time.time() at emit; Node
+    // reads Date.now()/1000 on receive. Non-negative clamp in case the two
+    // clocks drift slightly (both services live on the same box so drift is
+    // normally < 1 ms, but the clamp is cheap insurance).
+    if (typeof timestamp === 'number') {
+      const rttMs = Math.max(0, (Date.now() / 1000 - timestamp) * 1000.0);
+      recordHistogram('stt_socket_rtt_ms', rttMs);
+    }
 
     const questionId        = `q-${Date.now()}`;
     const transcriptContext = this.transcriptBuffer.getTranscriptContext();
@@ -633,7 +566,6 @@ class DataHandler extends EventEmitter {
     this.transcriptBuffer.addUtterance(text);
 
     log.info('Processing stt_final as interview question', { questionId, uid, textLength: text.length });
-    logEvent('stt_final_received', 'INFO', { module: 'DataHandler', questionId, uid });
 
     this.namespace.emit('interviewer_question', { questionId, questionText: text });
     this.namespace.emit('question_answer_started', { questionId });
@@ -646,37 +578,28 @@ class DataHandler extends EventEmitter {
       const { answerText, stageLatencies, providerInfo, tokens } = result;
       this.namespace.emit('question_answer_complete', { questionId, response: answerText });
       log.info('stt_final question answered', { questionId, responseLength: answerText.length });
-      logEvent('stt_final_answered', 'INFO', { module: 'DataHandler', questionId, responseLength: answerText.length });
 
-      // Fix #8 — per-question structured record (full transcript + answer).
-      // User explicitly requested no length-only redaction.
-      const endToEndMs = (typeof silence_started_at === 'number')
+      // One log event per answered question. Fields kept intentionally lean so
+      // the "Q/A log" dashboard panels stay readable. End-to-end latency is
+      // the user-visible one — ai_ttft / token counts are already in metrics.
+      const latencyMs = (typeof silence_started_at === 'number')
         ? Math.max(0, Date.now() / 1000 - silence_started_at) * 1000.0
-        : null;
+        : stageLatencies.ai_total_ms;
       logEvent('question_answered', 'INFO', {
-        module: 'DataHandler',
         flow: 'transcription',
-        uid,
-        questionId,
-        transcript: text,
-        transcript_word_count: text.trim().split(/\s+/).length,
-        answer: answerText,
-        answer_word_count: answerText.trim().split(/\s+/).length,
+        question: text,
+        answer:   answerText,
         provider: providerInfo.provider,
         model:    providerInfo.model,
-        input_tokens:  tokens.input,
-        output_tokens: tokens.output,
-        cost_usd:      tokens.cost_usd,
-        ai_ttft_ms:  stageLatencies.ai_ttft_ms,
-        ai_total_ms: stageLatencies.ai_total_ms,
-        end_to_end_ms: endToEndMs,
+        latency_ms: Math.round(latencyMs || 0),
+        cost_usd:   tokens.cost_usd,
       });
 
       if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
     } catch (err) {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
-      logEvent('stt_final_failed', 'ERROR', { module: 'DataHandler', questionId, uid, error: err.message });
+      logEvent('question_answer_failed', 'ERROR', { flow: 'transcription', error: err.message });
     }
   }
 
@@ -725,14 +648,17 @@ class DataHandler extends EventEmitter {
   async handleLoadSpeakerId(socket, data = {}) {
     const threshold = data.threshold ?? 0.70;
 
-    const configPath = join(process.cwd(), 'config', 'api-keys.json');
+    // Persist speaker ID settings to .env
+    const envPath = join(process.cwd(), '.env');
     try {
-      const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
-      cfg.speaker_id_enabled   = true;
-      cfg.speaker_id_threshold = threshold;
-      // Drop any legacy hf_token field from the persisted config.
-      if ('hf_token' in cfg) delete cfg.hf_token;
-      writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+      let content = readFileSync(envPath, 'utf8');
+      const setKey = (c, key, val) => {
+        const re = new RegExp(`^${key}=.*$`, 'm');
+        return re.test(c) ? c.replace(re, `${key}=${val}`) : c + `\n${key}=${val}`;
+      };
+      content = setKey(content, 'SPEAKER_ID_ENABLED', 'true');
+      content = setKey(content, 'SPEAKER_ID_THRESHOLD', String(threshold));
+      writeFileSync(envPath, content, 'utf8');
     } catch (e) {
       log.warn('Could not persist speaker_id config', { error: e.message });
     }
@@ -761,7 +687,7 @@ class DataHandler extends EventEmitter {
     }
   }
 
-  // ==================== Manual Listen Mode ====================
+  // ==================== Listen Mode Toggle ====================
 
   async handleToggleListenMode(socket, data) {
     const { enabled } = data || {};

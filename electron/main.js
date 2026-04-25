@@ -1,9 +1,18 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load .env from project root so SOCKET_URL and HUD_OPACITY are available
+try {
+  const { createRequire } = await import('module');
+  const require = createRequire(import.meta.url);
+  const dotenv = require('dotenv');
+  dotenv.config({ path: path.join(__dirname, '..', '.env') });
+} catch { /* dotenv not available or already loaded */ }
 
 const SOCKET_URL = process.env.SOCKET_URL || 'http://localhost:4000';
 
@@ -17,30 +26,89 @@ const LISTEN_HOTKEY    = 'CommandOrControl+Shift+X';
 const OVERLAY_WIDTH  = 380;
 const OVERLAY_HEIGHT = 600;
 
-function positionOverlayOnDisplayUnderCursor(win) {
+// ── Persisted window bounds (position + size) ────────────────────────────────
+// Stored in Electron's per-user app-data dir (e.g. on macOS:
+// ~/Library/Application Support/<appName>/hud-window-state.json). Survives
+// reinstalls of the project folder and isn't checked into git.
+let _stateFilePath = null;   // resolved lazily inside whenReady — app.getPath() needs the app ready
+let _saveTimer     = null;
+
+function stateFilePath() {
+  if (_stateFilePath) return _stateFilePath;
+  _stateFilePath = path.join(app.getPath('userData'), 'hud-window-state.json');
+  return _stateFilePath;
+}
+
+function loadWindowState() {
+  try {
+    const raw = fs.readFileSync(stateFilePath(), 'utf8');
+    const s = JSON.parse(raw);
+    if (
+      Number.isFinite(s.x) && Number.isFinite(s.y) &&
+      Number.isFinite(s.width) && Number.isFinite(s.height) &&
+      s.width >= 200 && s.height >= 200
+    ) {
+      return s;
+    }
+  } catch {}
+  return null;
+}
+
+function boundsIntersectAnyDisplay(b) {
+  return screen.getAllDisplays().some((d) => {
+    const wa = d.workArea;
+    return (
+      b.x < wa.x + wa.width  && b.x + b.width  > wa.x &&
+      b.y < wa.y + wa.height && b.y + b.height > wa.y
+    );
+  });
+}
+
+function saveWindowState() {
+  if (!overlayWindow) return;
+  if (overlayWindow.isDestroyed()) return;
+  const bounds = overlayWindow.getBounds();
+  try {
+    fs.mkdirSync(path.dirname(stateFilePath()), { recursive: true });
+    fs.writeFileSync(stateFilePath(), JSON.stringify(bounds));
+  } catch {}
+}
+
+function scheduleSave() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveWindowState, 400);
+}
+
+function defaultBoundsNearCursor() {
   const cursorPoint = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursorPoint);
   const { workArea } = display;
-
-  const insetX = 24;
-  const insetY = 24;
-
-  const x = workArea.x + insetX;
-  const y = workArea.y + insetY;
-
-  win.setBounds({ x, y, width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT });
+  return {
+    x: workArea.x + 24,
+    y: workArea.y + 24,
+    width:  OVERLAY_WIDTH,
+    height: OVERLAY_HEIGHT,
+  };
 }
 
 function createOverlayWindow() {
   if (overlayWindow) {
     overlayWindow.show();
-    positionOverlayOnDisplayUnderCursor(overlayWindow);
     return;
   }
 
+  // Decide initial bounds: saved state wins if it's still on a connected
+  // display; otherwise fall back to a corner of the display under the cursor.
+  const saved = loadWindowState();
+  const initial = (saved && boundsIntersectAnyDisplay(saved))
+    ? saved
+    : defaultBoundsNearCursor();
+
   overlayWindow = new BrowserWindow({
-    width: OVERLAY_WIDTH,
-    height: OVERLAY_HEIGHT,
+    x:      initial.x,
+    y:      initial.y,
+    width:  initial.width,
+    height: initial.height,
     transparent: false,
     backgroundColor: '#12121a',
     frame: false,
@@ -61,9 +129,17 @@ function createOverlayWindow() {
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   overlayWindow.on('ready-to-show', () => {
-    positionOverlayOnDisplayUnderCursor(overlayWindow);
+    // No re-positioning here — we honor the saved/default bounds set above.
     overlayWindow.show();
   });
+
+  // Persist position + size on user changes. Both events fire rapidly during
+  // drag/resize, so debounce writes (400 ms) to keep disk churn minimal.
+  overlayWindow.on('move',   scheduleSave);
+  overlayWindow.on('resize', scheduleSave);
+  // Final write when the window disappears — catches the very last position
+  // even if the debounce timer hadn't fired yet.
+  overlayWindow.on('close',  saveWindowState);
 
   overlayWindow.on('closed', () => {
     overlayWindow = null;
@@ -77,21 +153,23 @@ function createOverlayWindow() {
 
 function toggleOverlay() {
   if (!overlayWindow) {
+    // First Cmd+Shift+H of this app run — lazily create the window at its
+    // saved bounds (or default position under the cursor).
     createOverlayWindow();
     return;
   }
   if (overlayWindow.isVisible()) {
     overlayWindow.hide();
   } else {
+    // Honor saved position — do NOT reposition near the cursor on show.
     overlayWindow.show();
-    positionOverlayOnDisplayUnderCursor(overlayWindow);
   }
 }
 
 // ── IPC ──────────────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
-  // HUD drag
+  // HUD drag (mouse-down in the HUD → set startX/Y; mouse-move → delta-move)
   ipcMain.on('hud-drag-start', (_e, screenX, screenY) => {
     if (overlayWindow) {
       const [x, y] = overlayWindow.getPosition();
@@ -127,7 +205,8 @@ app.whenReady().then(() => {
   });
   if (!listenRegistered) console.warn(`Failed to register listen hotkey ${LISTEN_HOTKEY}`);
 
-  createOverlayWindow();
+  // HUD is NOT opened on startup — user presses Cmd+Shift+H to open it the
+  // first time. Previous behavior (auto-open) was surprising after a restart.
 });
 
 app.on('will-quit', () => {

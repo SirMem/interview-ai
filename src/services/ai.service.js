@@ -8,6 +8,8 @@ import path from 'path';
 import logger from '../utils/logger.js';
 import { addCounter } from '../utils/telemetry.js';
 
+// .env is loaded by server.js before this module is imported;
+// dotenv.config() here is a no-op guard in case of standalone imports.
 dotenv.config();
 const log = logger('AIService');
 
@@ -21,8 +23,20 @@ const AI_PRICING = {
   'gpt-4o-mini':                  { in: 0.15,  out: 0.60 },
   'gpt-4-turbo':                  { in: 10.00, out: 30.00 },
   'gpt-3.5-turbo':                { in: 0.50,  out: 1.50 },
+  'gpt-4.1':                      { in: 2.00,  out: 8.00 },
+  'gpt-4.1-mini':                 { in: 0.40,  out: 1.60 },
+  'gpt-4.1-nano':                 { in: 0.10,  out: 0.40 },
+  'gpt-4.5':                      { in: 75.00, out: 150.00 },
+  'gpt-5':                        { in: 2.50,  out: 15.00 },
+  'gpt-5.4':                      { in: 2.50,  out: 15.00 },
+  'gpt-5.4-mini':                 { in: 0.75,  out: 4.50 },
+  'gpt-5.4-nano':                 { in: 0.20,  out: 1.25 },
+  'gpt-5.4-pro':                  { in: 30.00, out: 180.00 },
   'o1':                           { in: 15.00, out: 60.00 },
   'o1-mini':                      { in: 1.10,  out: 4.40 },
+  'o3':                           { in: 10.00, out: 40.00 },
+  'o3-mini':                      { in: 1.10,  out: 4.40 },
+  'o4-mini':                      { in: 1.10,  out: 4.40 },
   // Groq
   'llama-3.3-70b-versatile':      { in: 0.59,  out: 0.79 },
   'llama-3.1-8b-instant':         { in: 0.05,  out: 0.08 },
@@ -36,7 +50,9 @@ const AI_PRICING = {
   // Anthropic
   'claude-sonnet-4-5':            { in: 3.00,  out: 15.00 },
   'claude-haiku-4-5':             { in: 1.00,  out: 5.00 },
+  'claude-opus-4-5':              { in: 15.00, out: 75.00 },
   'claude-opus-4-7':              { in: 15.00, out: 75.00 },
+  'claude-haiku-4-5-20251001':    { in: 1.00,  out: 5.00 },
   'claude-3-5-sonnet-20241022':   { in: 3.00,  out: 15.00 },
   'claude-3-5-haiku-20241022':    { in: 0.80,  out: 4.00 },
   // Local — Ollama models cost $0 (electricity not modeled)
@@ -46,10 +62,16 @@ const _unknownModelWarned = new Set();
 function _priceFor(model) {
   if (!model) return null;
   if (AI_PRICING[model]) return AI_PRICING[model];
-  // Fallback by family prefix (e.g. "ollama:llama3.2:1b" → "ollama:*")
+  // Family prefix with explicit "*" (e.g. "ollama:llama3.2:1b" → "ollama:*")
   for (const key of Object.keys(AI_PRICING)) {
     if (key.endsWith(':*') && model.startsWith(key.slice(0, -1))) return AI_PRICING[key];
   }
+  // Date-versioned model IDs (e.g. "claude-haiku-4-5-20251001",
+  // "gpt-4o-2024-08-06") — strip the trailing "-YYYYMMDD" (or similar date
+  // segments) and retry. Without this, a new snapshot release silently costs
+  // $0 until someone updates the pricing table.
+  const stripped = model.replace(/-\d{4,8}(-\d{2})?(-\d{2})?$/, '');
+  if (stripped !== model && AI_PRICING[stripped]) return AI_PRICING[stripped];
   return null;
 }
 function _costFor(model, inTokens, outTokens) {
@@ -64,7 +86,7 @@ function _costFor(model, inTokens, outTokens) {
   return ((inTokens || 0) * p.in + (outTokens || 0) * p.out) / 1_000_000;
 }
 
-const CONFIG_FILE_PATH = path.join(process.cwd(), 'config', 'api-keys.json');
+const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 
 const PROMPT_FILE_MAP = {
   system: 'system-prompt.txt',
@@ -83,6 +105,12 @@ const DEFAULT_MODELS = {
   gemini: 'gemini-2.5-flash',
   claude: 'claude-sonnet-4-5',
 };
+
+// 4xx (except 429 rate-limit) = our bug → ERROR; everything else is transient → WARN
+function _providerLogLevel(err) {
+  const s = err?.status ?? err?.statusCode;
+  return (s >= 400 && s < 500 && s !== 429) ? 'error' : 'warn';
+}
 
 class AIService {
   constructor() {
@@ -105,28 +133,28 @@ class AIService {
 
   loadConfig() {
     try {
-      if (fs.existsSync(CONFIG_FILE_PATH)) {
-        const configData = fs.readFileSync(CONFIG_FILE_PATH, 'utf8');
-        this.config = JSON.parse(configData);
-      } else {
-        this.config = { keys: {}, order: [], models: {} };
-        if (process.env.OPENAI_API_KEY) {
-          this.config.keys.openai = process.env.OPENAI_API_KEY;
-          this.config.order.push('openai');
-        }
-        if (process.env.GROQ_API_KEY) {
-          this.config.keys.grok = process.env.GROQ_API_KEY;
-          this.config.order.push('grok');
-        }
-        if (process.env.GEMINI_API_KEY) {
-          this.config.keys.gemini = process.env.GEMINI_API_KEY;
-          this.config.order.push('gemini');
-        }
-        if (process.env.ANTHROPIC_API_KEY) {
-          this.config.keys.claude = process.env.ANTHROPIC_API_KEY;
-          this.config.order.push('claude');
-        }
-      }
+      // Reload .env into process.env so any settings-page write is picked up immediately
+      dotenv.config({ path: ENV_FILE_PATH, override: true });
+      this.config = {
+        keys: {
+          openai: process.env.OPENAI_API_KEY    || '',
+          grok:   process.env.GROQ_API_KEY      || '',
+          gemini: process.env.GEMINI_API_KEY    || '',
+          claude: process.env.ANTHROPIC_API_KEY || '',
+        },
+        order:   (process.env.PROVIDER_ORDER   || 'openai,grok,gemini,claude').split(',').map(s => s.trim()),
+        enabled: (process.env.PROVIDER_ENABLED || '').split(',').map(s => s.trim()).filter(Boolean),
+        models: {
+          openai: process.env.MODEL_OPENAI || 'gpt-4o-mini',
+          grok:   process.env.MODEL_GROK   || 'llama-3.3-70b-versatile',
+          gemini: process.env.MODEL_GEMINI || 'gemini-2.5-flash',
+          claude: process.env.MODEL_CLAUDE || 'claude-sonnet-4-5',
+        },
+        ollama_model:    process.env.OLLAMA_MODEL    || 'llama3.2:1b',
+        ollama_enabled:  process.env.OLLAMA_ENABLED  !== 'false',
+        answer_mode:     process.env.ANSWER_MODE     || 'auto',
+        interview_role:  process.env.INTERVIEW_ROLE  || '',
+      };
     } catch (err) {
       log.error('Error loading AI config', err);
       this.config = { keys: {}, order: [], models: {} };
@@ -136,21 +164,17 @@ class AIService {
   _watchConfig() {
     let debounceTimer = null;
     try {
-      const dir = path.dirname(CONFIG_FILE_PATH);
-      const filename = path.basename(CONFIG_FILE_PATH);
-      if (fs.existsSync(dir)) {
-        fs.watch(dir, (event, changedFile) => {
-          if (changedFile === filename) {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-              this.loadConfig();
-              log.info('Config reloaded due to file change');
-            }, 150);
-          }
+      if (fs.existsSync(ENV_FILE_PATH)) {
+        fs.watch(ENV_FILE_PATH, () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            this.loadConfig();
+            log.info('Config reloaded due to .env file change');
+          }, 150);
         });
       }
     } catch (err) {
-      log.warn('Could not watch config file for changes', { error: err.message });
+      log.warn('Could not watch .env file for changes', { error: err.message });
     }
   }
 
@@ -160,9 +184,10 @@ class AIService {
     return this.config?.models?.[providerId] || DEFAULT_MODELS[providerId] || undefined;
   }
 
-  // o1/o3/o4-series models use max_completion_tokens and don't support temperature
-  _isOModel(model) {
-    return /^o\d/.test(model || '');
+  // o-series and newer GPT models (gpt-4.1+, gpt-5+) use max_completion_tokens and don't support temperature
+  _requiresCompletionTokens(model) {
+    const m = model || '';
+    return /^o\d/.test(m) || /^gpt-[5-9]/.test(m) || /^gpt-4\.[1-9]/.test(m);
   }
 
   _openAIParams(model, messages, options, stream = false) {
@@ -172,7 +197,7 @@ class AIService {
       // Required for token usage to appear in the final stream chunk.
       base.stream_options = { include_usage: true };
     }
-    if (this._isOModel(model)) {
+    if (this._requiresCompletionTokens(model)) {
       base.max_completion_tokens = options.max_tokens || 2048;
     } else {
       base.temperature = options.temperature || 0.7;
@@ -270,24 +295,28 @@ class AIService {
   }
 
   getAvailableProviders() {
-    if (!this.config) return [];
+    if (!this.config) return ['ollama'];
 
     const enabledProviders = this.config.enabled || [];
+    // Paid providers need a non-empty API key; ollama runs locally so it's
+    // exempt from the key check.
     const providersToUse =
       enabledProviders.length > 0
         ? enabledProviders
         : (this.config.order || []).filter((id) => {
+            if (id === 'ollama') return true;
             const key = this.config.keys[id];
             return key && key.trim().length > 0;
           });
 
     const availableProviders = providersToUse.filter((id) => {
+      if (id === 'ollama') return true;
       const key = this.config.keys[id];
       return key && key.trim().length > 0;
     });
 
     const now = Date.now();
-    return availableProviders.filter((providerId) => {
+    const alive = availableProviders.filter((providerId) => {
       const entry = this.failedProviders.get(providerId);
       if (!entry) return true;
 
@@ -303,6 +332,14 @@ class AIService {
       }
       return false;
     });
+
+    // Ollama is always available as a terminal local fallback unless the user
+    // explicitly opted out (config.ollama_enabled === false). This guarantees
+    // a question will always answer — even with zero paid keys configured.
+    if (this.config?.ollama_enabled !== false && !alive.includes('ollama')) {
+      alive.push('ollama');
+    }
+    return alive;
   }
 
   // ==================== Non-streaming AI calls ====================
@@ -370,6 +407,27 @@ class AIService {
     };
   }
 
+  async callOllama(messages, options = {}) {
+    const model = options.model || this.config?.ollama_model || 'llama3.2:1b';
+    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
+    const completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: options.temperature || 0.7,
+      max_tokens: options.max_tokens || 2048,
+    });
+    return {
+      text:  completion.choices[0]?.message?.content || 'No response generated',
+      // Prefix with "ollama:" so the pricing table's "ollama:*" rule matches
+      // (local models are $0 — see AI_PRICING).
+      model: `ollama:${model}`,
+      usage: {
+        input_tokens:  completion.usage?.prompt_tokens     || 0,
+        output_tokens: completion.usage?.completion_tokens || 0,
+      },
+    };
+  }
+
   async callClaude(messages, options = {}) {
     const apiKey = this.config?.keys?.claude;
     if (!apiKey) throw new Error('Claude API key not configured');
@@ -406,23 +464,10 @@ class AIService {
   async callAIWithFallback(messages, options = {}) {
     const providers = this.getAvailableProviders();
 
+    // providers is never empty because getAvailableProviders always appends
+    // 'ollama' as a terminal fallback (unless explicitly opted out).
     if (providers.length === 0) {
-      const allProviders = (
-        this.config?.enabled || this.config?.order || []
-      ).filter((id) => this.config?.keys?.[id]?.trim());
-
-      if (allProviders.length > 0 && this.failedProviders.size > 0) {
-        const now = Date.now();
-        const failedList = Array.from(this.failedProviders.entries())
-          .map(([id, { failedAt, failures }]) => {
-            const backoff = this._getBackoffMs(failures);
-            const timeLeft = Math.ceil((backoff - (now - failedAt)) / 1000);
-            return `${id} (retry in ${timeLeft}s)`;
-          })
-          .join(', ');
-        throw new Error(`All AI providers temporarily unavailable: ${failedList}`);
-      }
-      throw new Error('No AI providers configured. Please configure at least one API key.');
+      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
 
     let lastError = null;
@@ -435,6 +480,7 @@ class AIService {
           case 'grok':    result = await this.callGrok(messages, options); break;
           case 'gemini':  result = await this.callGemini(messages, options); break;
           case 'claude':  result = await this.callClaude(messages, options); break;
+          case 'ollama':  result = await this.callOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
         this.markProviderAsSuccess(providerId);
@@ -447,7 +493,9 @@ class AIService {
           usage:    result.usage,
         };
       } catch (err) {
-        log.warn(`${providerId} failed`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${providerId} failed`, err)
+          : log.warn(`${providerId} failed`, { error: err.message, status: err?.status });
         this.markProviderAsFailed(providerId);
         lastError = err;
       }
@@ -589,13 +637,18 @@ class AIService {
     const providers = this.getAvailableProviders();
 
     if (providers.length === 0) {
-      throw new Error('No AI providers available for streaming.');
+      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
 
     let lastError = null;
 
     for (const providerId of providers) {
-      const model = this.config?.models?.[providerId] || '';
+      const model =
+        providerId === 'ollama'
+          // Pricing table keys ollama as "ollama:*" — prefix the runtime model
+          // name so _priceFor() resolves to $0 for local inference.
+          ? `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`
+          : (this.config?.models?.[providerId] || '');
       try {
         let gen;
         switch (providerId) {
@@ -603,6 +656,7 @@ class AIService {
           case 'grok':   gen = this.streamGrok(messages, options); break;
           case 'gemini': gen = this.streamGemini(messages, options); break;
           case 'claude': gen = this.streamClaude(messages, options); break;
+          case 'ollama': gen = this._streamOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
 
@@ -627,7 +681,9 @@ class AIService {
 
         return;
       } catch (err) {
-        log.warn(`${providerId} streaming failed`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${providerId} streaming failed`, err)
+          : log.warn(`${providerId} streaming failed`, { error: err.message, status: err?.status });
         this.markProviderAsFailed(providerId);
         addCounter('ai_provider_failure_total', 1, {
           provider:    providerId,
@@ -874,7 +930,9 @@ Question: ${question}`;
           provider: answerMode, flow: 'transcription',
           error_class: (err && err.constructor && err.constructor.name) || 'Error',
         });
-        log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message });
+        _providerLogLevel(err) === 'error'
+          ? log.error(`${answerMode} answer streaming failed, falling back`, err)
+          : log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message, status: err?.status });
       }
     }
 

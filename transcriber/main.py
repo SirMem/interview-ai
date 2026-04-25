@@ -4,24 +4,28 @@ FastAPI server for real-time speech-to-text transcription
 import asyncio
 import logging
 import os
-import threading
+import warnings
+warnings.filterwarnings("ignore", message=".*unauthenticated.*HF Hub.*", category=UserWarning)
+import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import numpy as np
 
-from audio_recorder import AudioRecorder
 from transcriber import Transcriber
 from socket_client import SocketClient
 from keyboard_handler import KeyboardHandler
 from always_on_listener import AlwaysOnListener
 from speaker_id import SpeakerIdentifier
-import log_writer
+
 import telemetry
-from config import SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL, KEYBOARD_ENABLED, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED, _app_cfg
+from config import (
+    SAMPLE_RATE, API_HOST, API_PORT, LOG_LEVEL,
+    KEYBOARD_ENABLED, SPEAKER_ID_THRESHOLD, SPEAKER_ID_ENABLED,
+    DEEPGRAM_ENABLED, DEEPGRAM_API_KEY,
+    get_telemetry_cfg, _app_cfg,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +34,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Deepgram toggle — read from .env at startup via config module
+_DEEPGRAM_ENABLED = DEEPGRAM_ENABLED
+_DEEPGRAM_API_KEY = DEEPGRAM_API_KEY
+if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+    try:
+        from deepgram_listener import DeepgramListener
+    except ImportError as _e:
+        logger.warning("deepgram_listener import failed (%s) — falling back to AlwaysOnListener", _e)
+        _DEEPGRAM_ENABLED = False
+
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -37,12 +51,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global transcriber, socket_client, keyboard_handler, always_on_listener, speaker_identifier
-    global _transcription_executor
 
     logger.info("Initializing STT system components...")
 
+    _start_time = time.monotonic()
+
     # Initialize OpenTelemetry → Grafana Cloud (no-op when telemetry.enabled=false).
-    telemetry.init_telemetry(_app_cfg)
+    telemetry.init_telemetry(get_telemetry_cfg())
     # Background sampler that emits host CPU / memory / GPU gauges every 10 s.
     # Cheap (~1 ms per tick) and stays active even when telemetry is disabled
     # (gauges are no-ops in that case).
@@ -52,7 +67,7 @@ async def lifespan(app: FastAPI):
     try:
         transcriber = Transcriber()
         logger.info("Transcriber initialized")
-        log_writer.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
+        telemetry.log('transcriber_initialized', model=transcriber.model_size, use_api=transcriber.use_api)
         try:
             telemetry.GAUGE_WHISPER_MODEL_LOADED.set(
                 1, {"model_name": transcriber.model_size or 'unknown',
@@ -65,11 +80,14 @@ async def lifespan(app: FastAPI):
         # Without this, the first real question pays a 2-5s cold-start penalty.
         if not transcriber.use_api:
             try:
-                logger.info("Pre-warming MLX Whisper (compiling Metal kernels)...")
+                logger.info("Pre-warming Whisper (compiling kernels)...")
                 _dummy_audio = np.zeros(16000, dtype=np.float32)  # 1s silence
-                transcriber._transcribe_local(_dummy_audio)
-                logger.info("MLX Whisper pre-warmed — Metal kernels compiled")
-                log_writer.log('transcriber_prewarmed', model=transcriber.model_size)
+                if transcriber.backend == "mlx":
+                    transcriber._transcribe_mlx(_dummy_audio)
+                else:
+                    transcriber._transcribe_local_cpu(_dummy_audio)
+                logger.info("Whisper pre-warmed successfully")
+                telemetry.log('transcriber_prewarmed', model=transcriber.model_size)
             except Exception as _e:
                 logger.warning(f"Pre-warm failed (non-fatal, first question will be slower): {_e}")
 
@@ -94,7 +112,7 @@ async def lifespan(app: FastAPI):
                     _speaker_id_status = 'load_failed'
                     logger.error("SpeakerIdentifier: model failed to load")
                     speaker_identifier = None
-                log_writer.log('speaker_id_initialized', status=_speaker_id_status)
+                telemetry.log('speaker_id_initialized', status=_speaker_id_status)
             except Exception as _e:
                 logger.error(f"SpeakerIdentifier init failed: {_e}")
                 speaker_identifier = None
@@ -107,14 +125,6 @@ async def lifespan(app: FastAPI):
             telemetry.GAUGE_SPEAKER_ID_MODEL_STATUS.set(1, {"status": _speaker_id_status})
         except Exception:
             pass
-
-        # MLX is protected by an internal lock in transcriber.py — one worker
-        # handles preprocessing concurrently while the other waits for the GPU.
-        _transcription_executor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="transcribe",
-        )
-        logger.info("Transcription thread pool initialized (max_workers=2)")
 
         socket_client = SocketClient()
         try:
@@ -133,12 +143,16 @@ async def lifespan(app: FastAPI):
                            _speaker_id_status)
 
         try:
-            always_on_listener = AlwaysOnListener(
-                transcriber, socket_client,
-                speaker_id=speaker_identifier,
-                auto_answer_disabled=_auto_answer_disabled,
-            )
-            logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
+            if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                always_on_listener = DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+                logger.info("DeepgramListener ready — nova-2 cloud STT (press ⌘⇧X or click Listen to start)")
+            else:
+                always_on_listener = AlwaysOnListener(
+                    transcriber, socket_client,
+                    speaker_id=speaker_identifier,
+                    auto_answer_disabled=_auto_answer_disabled,
+                )
+                logger.info("Always-on listener ready (press ⌘⇧X or click Listen to start)")
         except Exception as e:
             logger.warning(f"Could not initialize always-on listener: {e}")
             always_on_listener = None
@@ -158,12 +172,12 @@ async def lifespan(app: FastAPI):
                         return
                     if always_on_listener._running:
                         always_on_listener.stop()
-                        log_writer.log('listen_stopped', source='keyboard')
+                        telemetry.log('listen_stopped', source='keyboard')
                         if socket_client and socket_client.is_connected():
                             socket_client.send_listen_state(False)
                     else:
                         always_on_listener.start()
-                        log_writer.log('listen_started', source='keyboard')
+                        telemetry.log('listen_started', source='keyboard')
                         if socket_client and socket_client.is_connected():
                             socket_client.send_listen_state(True)
 
@@ -180,6 +194,16 @@ async def lifespan(app: FastAPI):
             logger.info("Keyboard handler disabled in configuration")
 
         logger.info("STT system ready")
+        # Ensure listener_active is always exported (0 = not listening yet)
+        telemetry.GAUGE_LISTENER_ACTIVE.set(0, telemetry.get_host_labels() or None)
+        telemetry.log('transcriber_start', 'INFO',
+                      pid=os.getpid(),
+                      platform=sys.platform,
+                      python_version=sys.version.split()[0],
+                      whisper_model=getattr(transcriber, 'model_size', 'unknown'),
+                      whisper_backend=os.environ.get('WHISPER_BACKEND', 'unknown'),
+                      speaker_id_enabled=SPEAKER_ID_ENABLED,
+                      start_time=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
 
     except Exception as e:
         logger.error(f"Failed to initialize STT system: {e}")
@@ -188,8 +212,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    global recorder, is_recording, _audio_buffer
-
     logger.info("Shutting down STT system...")
 
     if always_on_listener:
@@ -198,18 +220,13 @@ async def lifespan(app: FastAPI):
     if keyboard_handler:
         keyboard_handler.stop()
 
-    if is_recording:
-        stop_recording_internal_sync()
-
-    if _transcription_executor:
-        logger.info("Shutting down transcription thread pool...")
-        _transcription_executor.shutdown(wait=True)
-        _transcription_executor = None
-
     if socket_client:
         socket_client.disconnect()
 
-    log_writer.log('transcriber_shutdown')
+    telemetry.log('transcriber_stop', 'INFO',
+                  pid=os.getpid(),
+                  uptime_seconds=round(time.monotonic() - _start_time),
+                  stop_time=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     telemetry.stop_system_metrics_sampler()
     telemetry.shutdown_telemetry()
     logger.info("STT system shut down")
@@ -220,263 +237,20 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 app = FastAPI(title="Real-time Speech-to-Text Transcription", lifespan=lifespan)
 
-recorder: Optional[AudioRecorder] = None
 transcriber: Optional[Transcriber] = None
 socket_client: Optional[SocketClient] = None
-recording_thread: Optional[threading.Thread] = None
 keyboard_handler: Optional[KeyboardHandler] = None
 always_on_listener: Optional[AlwaysOnListener] = None
 speaker_identifier: Optional[SpeakerIdentifier] = None
-_transcription_executor: Optional[ThreadPoolExecutor] = None
-
-is_recording: bool = False
-_send_realtime_chunks: bool = True
-
-# Minimum accumulated audio before attempting transcription.
-# 0.5 s is the minimum Whisper supports and halves first-chunk latency.
-_min_audio_duration: float = 0.5
-
-# Thread-safe audio accumulation buffer
-_audio_buffer: list = []
-_audio_buffer_lock = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-class StartRecordingResponse(BaseModel):
-    status: str
-    message: str
-
-
-class StopRecordingResponse(BaseModel):
-    status: str
-    message: str
-
-
-# ---------------------------------------------------------------------------
-# Audio processing
-# ---------------------------------------------------------------------------
-def process_audio_chunk(audio_chunk: np.ndarray):
-    """Accumulate an audio chunk and transcribe when enough audio is buffered.
-
-    All reads/writes to ``_audio_buffer`` are protected by ``_audio_buffer_lock``
-    so that concurrent worker threads cannot corrupt the buffer or produce
-    duplicate transcriptions for the same audio window.
-    """
-    global transcriber, socket_client, _audio_buffer, _send_realtime_chunks
-
-    try:
-        if audio_chunk is None or audio_chunk.size == 0:
-            return
-
-        if audio_chunk.ndim > 1:
-            audio_chunk = np.mean(audio_chunk, axis=1)
-
-        accumulated_audio: Optional[np.ndarray] = None
-
-        with _audio_buffer_lock:
-            _audio_buffer.append(audio_chunk)
-
-            if _send_realtime_chunks:
-                total_samples = sum(len(c) for c in _audio_buffer)
-                total_duration = total_samples / SAMPLE_RATE
-
-                if total_duration >= _min_audio_duration:
-                    # Snapshot and reset buffer atomically
-                    accumulated_audio = np.concatenate(_audio_buffer)
-
-                    # Keep 0.5 s of overlap for context continuity
-                    overlap_samples = int(SAMPLE_RATE * 0.5)
-                    last_chunk = _audio_buffer[-1]
-                    if len(last_chunk) > overlap_samples:
-                        _audio_buffer = [last_chunk[-overlap_samples:]]
-                    else:
-                        _audio_buffer = [last_chunk]
-
-        # Transcribe outside the lock (MLX is slow — ~200–500 ms)
-        if accumulated_audio is not None and transcriber:
-            text = transcriber.transcribe_chunk(accumulated_audio, SAMPLE_RATE)
-
-            if text and text.strip():
-                logger.info(f"🎤 Transcription: {text}")
-                print(f"🎤 Transcription: {text}")
-
-                if socket_client and socket_client.is_connected():
-                    socket_client.send_transcription_chunk(text)
-
-                if text and text.strip():
-                    telemetry.log('transcription', text=text.strip())
-
-    except Exception as e:
-        logger.error(f"Error processing audio chunk: {e}")
-        with _audio_buffer_lock:
-            _audio_buffer = []
-
-
-def recording_worker():
-    """Continuously pull audio chunks and dispatch them to the thread pool."""
-    global recorder, is_recording, _transcription_executor
-
-    logger.info("Recording worker started")
-
-    while is_recording and recorder:
-        try:
-            audio_chunk = recorder.get_audio_chunk(timeout=0.5)
-            if audio_chunk is not None:
-                if _transcription_executor:
-                    _transcription_executor.submit(process_audio_chunk, audio_chunk)
-                else:
-                    threading.Thread(
-                        target=process_audio_chunk,
-                        args=(audio_chunk,),
-                        daemon=True,
-                    ).start()
-        except Exception as e:
-            logger.error(f"Error in recording worker: {e}")
-            if not is_recording:
-                break
-
-    logger.info("Recording worker stopped")
-
-
-def start_recording_internal(enable_realtime_chunks: bool = False):
-    """Start recording. Called from both keyboard handler and API endpoint."""
-    global recorder, recording_thread, is_recording, _audio_buffer, _send_realtime_chunks
-
-    if is_recording:
-        logger.warning("Recording is already in progress")
-        return
-
-    try:
-        with _audio_buffer_lock:
-            _audio_buffer = []
-        _send_realtime_chunks = enable_realtime_chunks
-
-        recorder = AudioRecorder(callback=None)
-        recorder.start_recording()
-
-        is_recording = True
-        recording_thread = threading.Thread(target=recording_worker, daemon=True)
-        recording_thread.start()
-
-        mode = "real-time" if enable_realtime_chunks else "push-to-talk"
-        logger.info(f"Recording started ({mode} mode)")
-    except Exception as e:
-        logger.error(f"Failed to start recording: {e}")
-        is_recording = False
-        raise
-
-
-def stop_recording_internal_sync():
-    """Stop recording, transcribe remaining audio, and signal the server.
-
-    Execution order that guarantees no chunks are lost:
-    1. Set is_recording=False and stop audio input.
-    2. Join the recording worker (loop exits, no more jobs submitted).
-    3. Drain the transcription executor (wait for in-flight Whisper jobs to
-       finish and send their chunks) — this is the key step that prevents the
-       race where the final chunk arrives after process_transcription.
-    4. Transcribe any audio still in the buffer after the executor drains.
-    5. Only then emit process_transcription.
-    """
-    global recorder, recording_thread, is_recording, _audio_buffer, _transcription_executor
-
-    if not is_recording:
-        return
-
-    is_recording = False
-
-    if recorder:
-        recorder.stop_recording()
-
-    if recording_thread and recording_thread.is_alive():
-        recording_thread.join(timeout=2.0)
-
-    # Drain executor: wait for every in-flight transcription job to complete
-    # (and send its chunk) before we proceed.  Then recreate for next session.
-    if _transcription_executor:
-        _transcription_executor.shutdown(wait=True)
-        _transcription_executor = ThreadPoolExecutor(
-            max_workers=2,
-            thread_name_prefix="transcribe",
-        )
-
-    # Safely grab remaining buffer
-    buffer_copy = []
-    with _audio_buffer_lock:
-        if _audio_buffer:
-            buffer_copy = list(_audio_buffer)
-        _audio_buffer = []
-
-    # Transcribe any audio that hadn't reached the min-duration threshold
-    if buffer_copy and transcriber:
-        try:
-            accumulated_audio = np.concatenate(buffer_copy)
-            min_samples = int(SAMPLE_RATE * 0.5)
-            if len(accumulated_audio) >= min_samples:
-                text = transcriber.transcribe_chunk(accumulated_audio, SAMPLE_RATE)
-                if text and text.strip():
-                    logger.info(f"🎤 Final Transcription: {text}")
-                    print(f"🎤 Final Transcription: {text}")
-
-                    if socket_client and socket_client.is_connected():
-                        # send_transcription_chunk is synchronous — no sleep needed
-                        socket_client.send_transcription_chunk(text)
-
-                    if text and text.strip():
-                        telemetry.log('transcription', text=text.strip())
-        except Exception as e:
-            logger.error(f"Error processing final accumulated audio: {e}")
-
-    # Trigger server-side AI processing
-    if socket_client and socket_client.is_connected():
-        socket_client.process_transcription()
-        logger.info("Sent process_transcription event")
-
-    logger.info("Recording stopped")
-
 
 
 # ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
-@app.post("/start-recording", response_model=StartRecordingResponse)
-async def start_recording():
-    if is_recording:
-        raise HTTPException(status_code=400, detail="Recording is already in progress")
-    try:
-        start_recording_internal(enable_realtime_chunks=True)
-        return StartRecordingResponse(status="success", message="Recording started successfully")
-    except Exception as e:
-        logger.error(f"Failed to start recording: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start recording: {str(e)}")
-
-
-@app.post("/stop-recording", response_model=StopRecordingResponse)
-async def stop_recording():
-    """Return immediately so the Node server can unblock the HUD state instantly.
-    The heavy work (executor drain, final Whisper call, process_transcription)
-    runs in a thread so it never blocks the event loop."""
-    if not is_recording:
-        return StopRecordingResponse(status="success", message="Not recording")
-    try:
-        # Run the blocking sync work in a thread — don't block the event loop.
-        # The total time to AI answer is unchanged; only listen_state_changed
-        # fires immediately instead of after all Whisper processing finishes.
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, stop_recording_internal_sync)
-        return StopRecordingResponse(status="success", message="Recording stopped successfully")
-    except Exception as e:
-        logger.error(f"Failed to stop recording: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to stop recording: {str(e)}")
-
-
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
-        "recording": is_recording,
         "socket_connected": socket_client.is_connected() if socket_client else False,
         "always_on_active": (always_on_listener is not None
                              and always_on_listener._running
@@ -486,18 +260,20 @@ async def health_check():
 
 @app.post("/reload-telemetry")
 async def reload_telemetry():
-    """Re-read api-keys.json and reinitialize the OTel exporters.
+    """Re-read .env and reinitialize the OTel exporters.
 
     Called by the Node settings page after the user enables/changes telemetry
     so they don't have to restart the transcriber. Idempotent — safe to call
     when telemetry is already configured (tear-down + re-init).
     """
-    import json as _json
+    import importlib
     import pathlib as _pathlib
     try:
-        cfg_path = _pathlib.Path(__file__).parent.parent / 'config' / 'api-keys.json'
-        with cfg_path.open('r') as f:
-            new_cfg = _json.load(f)
+        from dotenv import load_dotenv as _load_dotenv
+        _load_dotenv(_pathlib.Path(__file__).parent.parent / '.env', override=True)
+        import config as _config_module
+        importlib.reload(_config_module)
+        new_cfg = _config_module.get_telemetry_cfg()
     except Exception as e:
         logger.error(f"reload-telemetry: could not read config: {e}")
         raise HTTPException(status_code=500, detail=f"Could not read config: {e}")
@@ -514,14 +290,66 @@ async def reload_telemetry():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/reload-stt-config")
+async def reload_stt_config():
+    """Re-read .env and hot-swap the STT listener if Deepgram settings changed.
+
+    Called by the Node settings page after the user changes STT provider or
+    Deepgram parameters. Recreates the listener with the new config if it was
+    already running.
+    """
+    global always_on_listener, _DEEPGRAM_ENABLED, _DEEPGRAM_API_KEY
+    import importlib
+    import pathlib as _pathlib
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        _load_dotenv(_pathlib.Path(__file__).parent.parent / '.env', override=True)
+        import config as _config_module
+        importlib.reload(_config_module)
+        new_dg_enabled = _config_module.DEEPGRAM_ENABLED
+        new_dg_key = _config_module.DEEPGRAM_API_KEY
+    except Exception as e:
+        logger.error("reload-stt-config: could not reload config: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    was_running = always_on_listener is not None and always_on_listener._running
+    changed = (new_dg_enabled != _DEEPGRAM_ENABLED or new_dg_key != _DEEPGRAM_API_KEY)
+
+    _DEEPGRAM_ENABLED = new_dg_enabled
+    _DEEPGRAM_API_KEY = new_dg_key
+
+    if changed and was_running:
+        always_on_listener.stop()
+        try:
+            if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                import importlib as _il
+                import deepgram_listener as _dg_mod
+                _il.reload(_dg_mod)
+                always_on_listener = _dg_mod.DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+            else:
+                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+            always_on_listener.start()
+            logger.info("reload-stt-config: listener recreated (deepgram=%s)", _DEEPGRAM_ENABLED)
+        except Exception as e:
+            logger.error("reload-stt-config: failed to recreate listener: %s", e)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "ok", "deepgram_enabled": new_dg_enabled, "changed": changed}
+
+
 @app.post("/always-on-mode")
 async def set_always_on_mode(body: dict):
     global always_on_listener
     enabled = body.get("enabled", True)
     if enabled:
-        if always_on_listener is None:
+        # Python threads cannot be restarted once stopped — recreate if needed.
+        if always_on_listener is None or not always_on_listener._running:
             try:
-                always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                if _DEEPGRAM_ENABLED and _DEEPGRAM_API_KEY:
+                    always_on_listener = DeepgramListener(socket_client, _DEEPGRAM_API_KEY)
+                else:
+                    always_on_listener = AlwaysOnListener(transcriber, socket_client)
+                telemetry.GAUGE_LISTENER_ACTIVE.set(0, telemetry.get_host_labels() or None)
             except Exception as e:
                 logger.error(f"Failed to initialize always-on listener: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to initialize listener: {str(e)}")
@@ -559,7 +387,7 @@ async def set_stt_model(body: dict):
     try:
         transcriber = Transcriber(model_size=model)
         logger.info(f"STT model switched to: {model}")
-        log_writer.log('stt_model_switched', model=model)
+        telemetry.log('stt_model_switched', model=model)
     except Exception as e:
         logger.error(f"Failed to switch STT model: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
@@ -594,7 +422,7 @@ async def set_vad_config(body: dict):
         if always_on_listener:
             always_on_listener.resume()
         logger.info(f"VAD engine switched: {old_engine} -> {new_engine}")
-        log_writer.log('vad_engine_switched', from_engine=old_engine, to_engine=new_engine, config=body)
+        telemetry.log('vad_engine_switched', from_engine=old_engine, to_engine=new_engine, config=body)
 
     # Update the always-on listener (which also updates the transcriber's VAD params)
     if always_on_listener:
@@ -604,7 +432,7 @@ async def set_vad_config(body: dict):
         transcriber.vad.update_config(body)
 
     logger.info(f"VAD config updated: {body}")
-    log_writer.log('vad_config_updated', config=body)
+    telemetry.log('vad_config_updated', config=body)
     return {"status": "ok", "engine": transcriber.vad.engine_name if transcriber else None, "config": body}
 
 
@@ -636,7 +464,7 @@ async def load_speaker_id_endpoint(body: dict):
     threshold = float(body.get("threshold") or SPEAKER_ID_THRESHOLD)
 
     logger.info("Loading speaker ID model on-demand (ECAPA-TDNN)...")
-    log_writer.log('speaker_id_load_requested')
+    telemetry.log('speaker_id_load_requested')
 
     try:
         new_identifier = SpeakerIdentifier(threshold=threshold)
@@ -654,11 +482,18 @@ async def load_speaker_id_endpoint(body: dict):
         # Swap in the new identifier globally
         speaker_identifier = new_identifier
         if always_on_listener is not None:
-            always_on_listener._speaker_id = speaker_identifier
+            # attach_speaker_id also creates the SpeakerIDWorker if the
+            # listener was constructed without one — without this the worker
+            # stays None forever and speaker_id_latency_ms never records.
+            always_on_listener.attach_speaker_id(speaker_identifier)
+            # If enrollment is now present, clear the auto-answer gate so
+            # utterances actually reach Node.
+            if speaker_identifier.has_enrollment:
+                always_on_listener.set_auto_answer_disabled(False)
 
         logger.info("Speaker ID model loaded dynamically (enrolled=%s, device=%s)",
                     speaker_identifier.has_enrollment, speaker_identifier.device)
-        log_writer.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
+        telemetry.log('speaker_id_loaded_dynamic', enrolled=speaker_identifier.has_enrollment)
 
         return {
             "success":      True,
@@ -700,7 +535,7 @@ async def enroll_voice():
         always_on_listener.pause()
 
     logger.info(f"Starting voice enrollment — recording {ENROLL_SECONDS}s from mic...")
-    log_writer.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
+    telemetry.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
 
     try:
         # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
@@ -720,7 +555,13 @@ async def enroll_voice():
         success = speaker_identifier.enroll_from_audio(audio_flat, SAMPLE_RATE)
         if success:
             logger.info("Voice enrollment completed successfully")
-            log_writer.log('voice_enrolled', success=True)
+            telemetry.log('voice_enrolled', success=True)
+            # Enrollment changes the listener's gates: clear auto_answer_disabled
+            # (stt_final will now flow) and make sure the SpeakerIDWorker exists
+            # so identify() runs and speaker_id_latency_ms starts recording.
+            if always_on_listener is not None:
+                always_on_listener.attach_speaker_id(speaker_identifier)
+                always_on_listener.set_auto_answer_disabled(False)
             return {"status": "ok", "enrolled": True}
         else:
             raise HTTPException(status_code=500, detail="Enrollment computation failed — see logs")
@@ -736,22 +577,141 @@ async def enroll_voice():
             always_on_listener.resume()
 
 
+@app.post("/enroll-deepgram-speaker")
+async def enroll_deepgram_speaker(body: dict):
+    """Start or finish Deepgram diarization enrollment.
+
+    POST {"action": "start"}  — begin enrollment, user speaks for a few seconds
+    POST {"action": "finish"} — lock in the user's speaker ID
+    """
+    if not _DEEPGRAM_ENABLED:
+        raise HTTPException(status_code=400, detail="Deepgram not enabled in config")
+    if always_on_listener is None or not hasattr(always_on_listener, 'start_enrollment'):
+        raise HTTPException(status_code=503, detail="DeepgramListener not initialized — start the listener first")
+
+    action = (body or {}).get("action", "")
+    if action == "start":
+        always_on_listener.start_enrollment()
+        return {"status": "ok", "action": "start", "message": "Speak now — your voice is being registered"}
+    elif action == "finish":
+        always_on_listener.finish_enrollment()
+        speaker_id = always_on_listener._user_speaker_id
+        if speaker_id is None:
+            return {"status": "warning", "user_speaker_id": None, "message": "No speech detected during enrollment — filter disabled"}
+        return {"status": "ok", "user_speaker_id": speaker_id, "message": f"Enrolled — you are speaker {speaker_id}, interviewer goes to AI"}
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'start' or 'finish'")
+
+
+@app.delete("/enroll-deepgram-speaker")
+async def clear_deepgram_enrollment():
+    """Delete saved Deepgram enrollment audio.
+
+    Next listener start will run fresh auto-enrollment (DEEPGRAM_ENROLL_SECONDS).
+    Safe to call whether or not the listener is currently running.
+    """
+    from deepgram_listener import _ENROLLMENT_PATH
+
+    if always_on_listener is not None and hasattr(always_on_listener, 'clear_enrollment'):
+        always_on_listener.clear_enrollment()
+        cleared = True
+    else:
+        if _ENROLLMENT_PATH.exists():
+            _ENROLLMENT_PATH.unlink()
+            cleared = True
+            logger.info("Deepgram enrollment audio cleared (listener not active)")
+        else:
+            cleared = False
+
+    return {"status": "ok", "cleared": cleared}
+
+
 @app.get("/enrollment-status")
 async def get_enrollment_status():
     """Return current speaker ID model and enrollment status."""
+    dg_saved = False
+    if _DEEPGRAM_ENABLED:
+        try:
+            from deepgram_listener import _ENROLLMENT_PATH
+            dg_saved = _ENROLLMENT_PATH.exists()
+        except Exception:
+            pass
+
     if speaker_identifier is None:
         return {
             "model_loaded": False,
             "enrolled": False,
             "threshold": None,
             "reason": "Speaker ID disabled or model failed to load",
+            "deepgram_enrollment_saved": dg_saved,
         }
     return {
         "model_loaded": speaker_identifier.is_model_loaded,
         "enrolled":     speaker_identifier.has_enrollment,
         "threshold":    speaker_identifier.threshold,
         "device":       speaker_identifier.device,
+        "deepgram_enrollment_saved": dg_saved,
     }
+
+
+@app.post("/enroll-deepgram-voice")
+async def enroll_deepgram_voice(body: dict = None):
+    """Record user's voice and save to config/deepgram_enrollment.pcm.
+
+    Just captures mic audio — no Deepgram connection needed.
+    On the next listener start the audio is replayed to Deepgram so it can
+    identify and filter the user's speaker ID from AI answers.
+    """
+    duration = max(5, min(int((body or {}).get('duration', 12)), 30))
+
+    listener_was_running = (
+        always_on_listener is not None
+        and getattr(always_on_listener, '_running', False)
+    )
+    if listener_was_running:
+        always_on_listener.pause()
+        await asyncio.sleep(0.3)
+
+    try:
+        import sounddevice as sd
+        from pathlib import Path as _Path
+
+        _SAMPLE_RATE_INT = 16000
+        _ENROLL_PATH = _Path(__file__).parent.parent / 'config' / 'deepgram_enrollment.pcm'
+
+        logger.info("Deepgram voice enrollment: recording %ds from mic…", duration)
+        telemetry.log('deepgram_enrollment_started', duration_s=duration)
+
+        loop = asyncio.get_event_loop()
+        audio = await loop.run_in_executor(
+            None,
+            lambda: sd.rec(
+                int(duration * _SAMPLE_RATE_INT),
+                samplerate=_SAMPLE_RATE_INT,
+                channels=1,
+                dtype='float32',
+                blocking=True,
+            )
+        )
+        audio_flat = audio.flatten()
+
+        _ENROLL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ENROLL_PATH.write_bytes(audio_flat.astype(np.float32).tobytes())
+
+        # Reset cached speaker ID so next listener start re-identifies from replay
+        if always_on_listener is not None and hasattr(always_on_listener, '_user_speaker_id'):
+            always_on_listener._user_speaker_id = None
+
+        logger.info("Deepgram enrollment audio saved: %d samples → %s", len(audio_flat), _ENROLL_PATH)
+        telemetry.log('deepgram_enrollment_saved', samples=int(len(audio_flat)), duration_s=duration)
+        return {"status": "ok", "samples": int(len(audio_flat)), "duration": duration}
+
+    except Exception as e:
+        logger.error("Deepgram enrollment failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if listener_was_running and always_on_listener is not None:
+            always_on_listener.resume()
 
 
 # ── Whisper model management (local CPU backend) ──────────────────────────────

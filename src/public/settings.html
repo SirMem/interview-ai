@@ -493,7 +493,7 @@
       <div class="sec-actions">
         <span class="save-status" id="saveStatus-stt"></span>
         <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
-        <button class="btn btn-primary btn-sm" id="saveBtn-stt" onclick="saveSectionSettings('stt')">Save</button>
+        <button class="btn btn-primary btn-sm" id="saveBtn-stt" onclick="saveSectionAndReloadStt('stt')">Save</button>
       </div>
     </div>
     <div class="sec-body">
@@ -503,6 +503,7 @@
         <div class="stt-tabs">
           <button class="stt-tab active" id="tabSttLocal">🖥 Local Whisper</button>
           <button class="stt-tab" id="tabSttApi">☁️ OpenAI Whisper API</button>
+          <button class="stt-tab" id="tabSttDeepgram">🎙 Deepgram Cloud</button>
         </div>
         <div id="sttLocalPanel" style="margin-top:10px">
           <select id="sttLocalModel">
@@ -513,7 +514,6 @@
             <option value="large">large — slowest, best accuracy</option>
           </select>
           <span id="sttLocalHint" class="hint" style="margin-top:6px;display:block">On-device Whisper — detecting your platform…</span>
-          <!-- Windows/Linux: model download panel -->
           <div id="whisperDownloadPanel" style="display:none;margin-top:12px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
             <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:8px">Model Download Status</div>
             <div id="whisperModelList" style="display:flex;flex-direction:column;gap:6px"></div>
@@ -526,6 +526,46 @@
             <span class="banner-icon">⚠️</span><span>OpenAI API key not configured. Add it in Providers above.</span>
           </div>
           <span class="hint" style="margin-top:6px;display:block">Sends audio to OpenAI's Whisper API. Requires an OpenAI key and internet.</span>
+        </div>
+        <div id="sttDeepgramPanel" style="display:none;margin-top:10px">
+          <div style="padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm);margin-bottom:10px;font-size:12px;color:var(--text2);line-height:1.7">
+            Deepgram nova-2 cloud STT — ~300ms latency vs 1–3s for local Whisper. Streams live words to the HUD.<br>
+            <strong>$0.0059/minute</strong> · free $200 credit on sign-up at <a href="https://console.deepgram.com" target="_blank" style="color:var(--accent)">console.deepgram.com</a>
+          </div>
+          <div class="field">
+            <label>API Key</label>
+            <div class="key-row">
+              <div class="key-wrap">
+                <input type="password" id="deepgramApiKey" autocomplete="off" placeholder="8889…  (leave blank to keep existing key)" style="flex:1">
+                <button class="key-toggle" onclick="const i=document.getElementById('deepgramApiKey');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide'">Show</button>
+              </div>
+            </div>
+            <span id="deepgramTestResult" style="font-size:12px;margin-top:4px;display:block"></span>
+          </div>
+          <div class="field" style="max-width:220px">
+            <label>Model</label>
+            <select id="deepgramModel">
+              <option value="nova-2">nova-2 (best accuracy)</option>
+              <option value="nova">nova</option>
+              <option value="enhanced">enhanced</option>
+              <option value="base">base (fastest)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Voice Enrollment</label>
+            <div class="hint" style="margin-top:2px;margin-bottom:10px">Enroll your voice once so only the interviewer's speech triggers AI answers. Takes 12 seconds.</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span id="deepgramEnrollStatus" style="font-size:12px;color:var(--muted)">Checking…</span>
+              <button class="btn btn-secondary btn-sm" id="btnEnrollDeepgramVoice" onclick="startDeepgramEnrollment()">🎤 Enroll My Voice</button>
+              <button class="btn btn-ghost btn-sm" id="btnClearDeepgramEnroll" onclick="clearDeepgramEnrollment()" style="display:none">Clear</button>
+            </div>
+            <div id="deepgramEnrollProgress" style="display:none;margin-top:10px">
+              <div style="font-size:12px;color:var(--yellow);margin-bottom:6px">🔴 Recording — speak naturally for <span id="deepgramEnrollCountdown">12</span>s</div>
+              <div style="height:4px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">
+                <div id="deepgramEnrollBar" style="height:100%;width:0%;background:var(--yellow);border-radius:3px"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -619,6 +659,20 @@
         <span id="telemetryStatusPill" style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;background:rgba(120,120,120,0.18);color:var(--muted)">disabled</span>
       </div>
     </div>
+    <!-- Dashboard URL banner — shown whenever a dashboard URL is stored -->
+    <div id="dashboardUrlBanner" style="display:none;margin:0 0 0 0;padding:10px 16px;background:linear-gradient(90deg,rgba(139,92,246,0.13) 0%,rgba(59,130,246,0.09) 100%);border-bottom:1px solid rgba(139,92,246,0.22);display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:18px">📊</span>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--text1)">Your Grafana dashboard is ready</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:1px">Metrics &amp; logs from this session are visible there in real time</div>
+        </div>
+      </div>
+      <a id="dashboardUrlLink" href="#" target="_blank"
+         style="flex-shrink:0;padding:6px 14px;border-radius:6px;background:rgba(139,92,246,0.85);color:#fff;font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap">
+        Open Dashboard ↗
+      </a>
+    </div>
     <div class="sec-body">
       <div class="field" style="flex-direction:row;align-items:center;gap:14px">
         <label class="toggle">
@@ -629,6 +683,13 @@
           <div style="font-size:13px;font-weight:600">Enable structured logs &amp; metrics</div>
           <div class="hint" style="margin-top:2px">When on, every question / OCR run / latency measurement is sent to Grafana Cloud. CPU / GPU / memory gauges are sampled every 10 s.</div>
         </div>
+      </div>
+      <!-- Local fallback log notice — shown when telemetry is disabled -->
+      <div id="localLogNotice" style="display:none;margin-top:8px;padding:8px 12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm);font-size:12px;color:var(--text2)">
+        <span style="font-weight:600;color:var(--text1)">Local fallback active</span> — all events that would go to Grafana are being written to
+        <code style="font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px">logs/telemetry_node.jsonl</code> and
+        <code style="font-size:11px;background:var(--surface2);padding:1px 5px;border-radius:3px">logs/telemetry_python.jsonl</code>
+        instead. Both files are overwritten on every server restart.
       </div>
       <div id="telemetryPanel" style="display:none">
         <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;padding:12px;background:var(--surface3);border:1px solid var(--border);border-radius:var(--r-sm)">
@@ -799,10 +860,11 @@ let providers=[], modelCache={}, currentPromptType='interview-answer';
 let _sidLoading=false;
 
 const PROV_META = {
-  openai: { label:'OpenAI',    ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)', char:'O' },
-  grok:   { label:'Groq',      ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',  char:'G' },
-  gemini: { label:'Gemini',    ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)', char:'G' },
-  claude: { label:'Anthropic', ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)', char:'A' },
+  openai: { label:'OpenAI',        ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)',  char:'O' },
+  grok:   { label:'Groq',          ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',   char:'G' },
+  gemini: { label:'Gemini',        ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)',  char:'G' },
+  claude: { label:'Anthropic',     ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)',  char:'A' },
+  ollama: { label:'Ollama (local)', ph:'',        color:'#22c55e', bg:'rgba(34,197,94,0.15)',   char:'L' },
 };
 function getMeta(id) { return PROV_META[id]||{label:id,ph:'API key…',color:'#6366f1',bg:'rgba(99,102,241,0.15)',char:'?'}; }
 
@@ -816,8 +878,20 @@ async function loadConfig() {
     providers = (data.providers||[]).map(p=>({...p,newKey:''}));
 
     const sttVal = data.stt_model || 'small';
-    if (sttVal === 'whisper-1') { setTabActive('tabSttApi'); document.getElementById('sttApiPanel').style.display=''; document.getElementById('sttLocalPanel').style.display='none'; }
-    else { setTabActive('tabSttLocal'); const s=document.getElementById('sttLocalModel'); if([...s.options].some(o=>o.value===sttVal)) s.value=sttVal; }
+    if (data.deepgram_enabled) {
+      setTabActive('tabSttDeepgram');
+    } else if (sttVal === 'whisper-1') {
+      setTabActive('tabSttApi');
+    } else {
+      setTabActive('tabSttLocal');
+      const s=document.getElementById('sttLocalModel');
+      if([...s.options].some(o=>o.value===sttVal)) s.value=sttVal;
+    }
+
+    // Deepgram fields
+    const dgModel=document.getElementById('deepgramModel');
+    if([...dgModel.options].some(o=>o.value===data.deepgram_model)) dgModel.value=data.deepgram_model||'nova-2';
+    loadDeepgramEnrollStatus();
 
     const op = data.hud_opacity ?? 0;
     setSlider('opacitySlider', op, 90);
@@ -853,16 +927,37 @@ function renderProviders() {
     const opts     = models.length > 0
       ? models.map(md=>`<option value="${esc(md.id)}"${md.id===p.model?' selected':''}>${esc(md.name)}</option>`).join('')
       : `<option value="${esc(p.model||'')}">${esc(p.model||'Loading…')}</option>`;
-    const pill = p.hasKey
-      ? `<span class="key-pill has">🔑 key saved</span>`
-      : `<span class="key-pill none">no key</span>`;
+    const isLocal = p.local || p.id === 'ollama';
+    const pill = isLocal
+      ? `<span class="key-pill has" style="background:rgba(34,197,94,0.15);color:#22c55e">🖥 local · $0</span>`
+      : (p.hasKey
+          ? `<span class="key-pill has">🔑 key saved</span>`
+          : `<span class="key-pill none">no key</span>`);
+
+    // Local providers don't need an API key — replace the key row with a
+    // short "runs locally" note and a connectivity-test button.
+    const keyRow = isLocal
+      ? `<div class="key-row">
+           <div class="key-wrap" style="align-items:center;padding:8px 10px;font-size:12px;color:var(--text2)">
+             Runs locally at <code>localhost:11434</code> — no API key needed.
+           </div>
+           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
+         </div>`
+      : `<div class="key-row">
+           <div class="key-wrap">
+             <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
+               placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
+             <button class="key-toggle" data-idx="${idx}">Show</button>
+           </div>
+           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
+         </div>`;
 
     const card = document.createElement('div');
     card.className = `provider-card${p.enabled?' enabled':''}`;
-    card.dataset.idx = idx; card.draggable = true;
+    card.dataset.idx = idx; card.draggable = !isLocal;
     card.innerHTML = `
       <div class="card-header">
-        <span class="drag-handle" title="Drag to reorder">⠿</span>
+        <span class="drag-handle" title="${isLocal?'Local fallback — fixed position':'Drag to reorder'}">${isLocal?'🔒':'⠿'}</span>
         <span class="order-badge">${orderNum}</span>
         <div class="prov-avatar" style="background:${m.bg};color:${m.color}">${m.char}</div>
         <div class="prov-info">
@@ -877,14 +972,7 @@ function renderProviders() {
         </div>
       </div>
       <div class="card-body">
-        <div class="key-row">
-          <div class="key-wrap">
-            <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
-              placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
-            <button class="key-toggle" data-idx="${idx}">Show</button>
-          </div>
-          <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
-        </div>
+        ${keyRow}
         <div class="model-row">
           <select class="prov-model-select" data-idx="${idx}">${opts}</select>
           <button class="btn btn-ghost btn-sm reload-models-btn" data-idx="${idx}" title="Refresh models">↻</button>
@@ -917,11 +1005,14 @@ function bindProviderEvents() {
   document.querySelectorAll('.test-btn').forEach(btn => {
     btn.addEventListener('click', async e => {
       const idx=+e.target.dataset.idx; const p=providers[idx];
+      const isLocal = p.local || p.id === 'ollama';
       const key=p.newKey||null;
-      if (!key&&!p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
+      if (!isLocal && !key && !p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
       const orig=e.target.textContent; e.target.textContent='…'; e.target.disabled=true;
       try {
-        const body=key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'};
+        const body = isLocal
+          ? {providerId:p.id}
+          : (key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'});
         const res=await fetch('/api/config/test-provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
         const d=await res.json();
         if (d.success) { e.target.textContent='✓'; e.target.className='btn btn-success btn-sm test-btn'; showToast(d.message,'ok'); }
@@ -1039,17 +1130,120 @@ async function downloadModel(name) {
 }
 
 // ── STT tabs ───────────────────────────────────────────────────────────────
-function setTabActive(id) { ['tabSttLocal','tabSttApi'].forEach(t=>document.getElementById(t).classList.toggle('active',t===id)); }
-['tabSttLocal','tabSttApi'].forEach(id=>{
-  document.getElementById(id).addEventListener('click',()=>{
-    setTabActive(id); const local=id==='tabSttLocal';
-    document.getElementById('sttLocalPanel').style.display=local?'':'none';
-    document.getElementById('sttApiPanel').style.display=local?'none':'';
-    if(!local) updateSttApiKeyWarn();
-  });
+const STT_TABS = ['tabSttLocal','tabSttApi','tabSttDeepgram'];
+function setTabActive(id) {
+  STT_TABS.forEach(t=>document.getElementById(t).classList.toggle('active',t===id));
+  document.getElementById('sttLocalPanel').style.display   = id==='tabSttLocal'   ? '' : 'none';
+  document.getElementById('sttApiPanel').style.display     = id==='tabSttApi'     ? '' : 'none';
+  document.getElementById('sttDeepgramPanel').style.display= id==='tabSttDeepgram'? '' : 'none';
+  if(id==='tabSttApi') updateSttApiKeyWarn();
+}
+STT_TABS.forEach(id=>{
+  document.getElementById(id).addEventListener('click',()=>setTabActive(id));
 });
 function updateSttApiKeyWarn() {
   document.getElementById('sttApiKeyWarn').style.display=providers.some(p=>p.id==='openai'&&(p.hasKey||p.newKey))?'none':'flex';
+}
+
+// ── Deepgram connection test ───────────────────────────────────────────────
+async function testDeepgramKey() {
+  const btn=document.getElementById('btnTestDeepgram');
+  const out=document.getElementById('deepgramTestResult');
+  const key=document.getElementById('deepgramApiKey').value.trim();
+  btn.disabled=true; btn.textContent='Testing…'; out.textContent=''; out.style.color='var(--muted)';
+  try {
+    const r=await fetch('/api/config/test-deepgram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:key||'***'})});
+    const d=await r.json();
+    if(d.success){out.textContent='✓ '+d.message;out.style.color='var(--green)';}
+    else{out.textContent='✗ '+(d.error||'Connection failed');out.style.color='var(--red)';}
+  } catch(e){out.textContent='✗ '+e.message;out.style.color='var(--red)';}
+  btn.disabled=false; btn.textContent='Test';
+}
+
+// ── Deepgram enrollment helpers ───────────────────────────────────────────
+const _DG_ENROLL_SECONDS = 12;
+
+async function loadDeepgramEnrollStatus() {
+  const statusEl = document.getElementById('deepgramEnrollStatus');
+  const clrBtn   = document.getElementById('btnClearDeepgramEnroll');
+  const enrollBtn = document.getElementById('btnEnrollDeepgramVoice');
+  try {
+    const r = await fetch('/api/config/deepgram-enrollment-status');
+    if (!r.ok) throw new Error('offline');
+    const d = await r.json();
+    if (d.deepgram_enrollment_saved) {
+      statusEl.textContent = '● Enrolled'; statusEl.style.color = 'var(--green)';
+      clrBtn.style.display = '';
+      if (enrollBtn) { enrollBtn.textContent = '🔄 Re-enroll'; }
+    } else {
+      statusEl.textContent = '○ Not enrolled'; statusEl.style.color = 'var(--muted)';
+      clrBtn.style.display = 'none';
+      if (enrollBtn) { enrollBtn.textContent = '🎤 Enroll My Voice'; }
+    }
+  } catch {
+    statusEl.textContent = '○ Not enrolled'; statusEl.style.color = 'var(--muted)';
+  }
+}
+
+async function startDeepgramEnrollment() {
+  const btn       = document.getElementById('btnEnrollDeepgramVoice');
+  const statusEl  = document.getElementById('deepgramEnrollStatus');
+  const progress  = document.getElementById('deepgramEnrollProgress');
+  const countdown = document.getElementById('deepgramEnrollCountdown');
+  const bar       = document.getElementById('deepgramEnrollBar');
+
+  btn.disabled = true;
+  statusEl.textContent = 'Starting mic…'; statusEl.style.color = 'var(--muted)';
+  progress.style.display = 'block';
+  countdown.textContent = _DG_ENROLL_SECONDS;
+  bar.style.transition = 'none'; bar.style.width = '0%';
+
+  let remaining = _DG_ENROLL_SECONDS;
+  const interval = setInterval(() => {
+    remaining--;
+    countdown.textContent = remaining;
+    const pct = ((_DG_ENROLL_SECONDS - remaining) / _DG_ENROLL_SECONDS * 100).toFixed(1);
+    bar.style.transition = 'width 1s linear';
+    bar.style.width = pct + '%';
+    if (remaining <= 0) clearInterval(interval);
+  }, 1000);
+
+  try {
+    const r = await fetch('/api/config/enroll-deepgram-voice', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({duration: _DG_ENROLL_SECONDS}),
+    });
+    clearInterval(interval);
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.status === 'ok') {
+      statusEl.textContent = '● Enrolled ✓'; statusEl.style.color = 'var(--green)';
+      document.getElementById('btnClearDeepgramEnroll').style.display = '';
+      btn.textContent = '🔄 Re-enroll';
+    } else {
+      statusEl.textContent = '✗ ' + (d.detail || 'Enrollment failed'); statusEl.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    clearInterval(interval);
+    statusEl.textContent = '✗ ' + e.message; statusEl.style.color = 'var(--red)';
+  }
+  progress.style.display = 'none';
+  bar.style.width = '100%';
+  btn.disabled = false;
+}
+
+async function clearDeepgramEnrollment() {
+  if (!confirm('Clear saved voice enrollment? The interviewer filter will be disabled until you re-enroll.')) return;
+  const statusEl = document.getElementById('deepgramEnrollStatus');
+  statusEl.textContent = 'Clearing…';
+  try {
+    await fetch('/api/config/deepgram-enrollment', {method: 'DELETE'});
+    statusEl.textContent = '○ Not enrolled'; statusEl.style.color = 'var(--muted)';
+    document.getElementById('btnClearDeepgramEnroll').style.display = 'none';
+    document.getElementById('btnEnrollDeepgramVoice').textContent = '🎤 Enroll My Voice';
+  } catch (e) {
+    statusEl.textContent = '✗ ' + e.message; statusEl.style.color = 'var(--red)';
+  }
 }
 
 loadPlatformInfo();
@@ -1162,6 +1356,22 @@ function setTelemetryPill(text, kind /* 'ok'|'warn'|'err'|'off' */) {
   el.style.color      = colors.fg;
   el.textContent      = text;
 }
+function _setDashboardBanner(url) {
+  const banner = document.getElementById('dashboardUrlBanner');
+  const link   = document.getElementById('dashboardUrlLink');
+  if (url) {
+    link.href = url;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+function _setLocalLogNotice(show) {
+  const el = document.getElementById('localLogNotice');
+  if (el) el.style.display = show ? '' : 'none';
+}
+
 async function loadTelemetryStatus() {
   try {
     const r = await fetch('/api/telemetry/status');
@@ -1175,6 +1385,8 @@ async function loadTelemetryStatus() {
     document.getElementById('telemetryHostOwner').value = d.host_owner || '';
     document.getElementById('grafanaUrl').value     = d.grafana_url || '';
     document.getElementById('grafanaSaToken').value = d.grafana_sa_token_set ? '***' : '';
+    _setDashboardBanner(d.grafana_dashboard_url || '');
+    _setLocalLogNotice(!d.configured);
     setTelemetryPanelVisible();
     if (d.enabled)         setTelemetryPill('connected', 'ok');
     else if (d.configured) setTelemetryPill('configured (off)', 'warn');
@@ -1212,6 +1424,7 @@ document.getElementById('btnSaveTelemetry').addEventListener('click', async () =
       out.style.color = 'var(--green)';
       out.textContent = `✓ Connected. Probe HTTP ${d.validation?.status}. Both services are now exporting.`;
       setTelemetryPill('connected', 'ok');
+      _setLocalLogNotice(false);
       showToast('Telemetry enabled', 'ok');
     } else {
       out.style.color = 'var(--red)';
@@ -1246,8 +1459,9 @@ document.getElementById('btnDisableTelemetry').addEventListener('click', async (
     document.getElementById('telemetryEnabled').checked = false;
     setTelemetryPanelVisible();
     setTelemetryPill('disabled', 'off');
+    _setLocalLogNotice(true);
     out.style.color = 'var(--muted)';
-    out.textContent = d.message || 'Telemetry disabled.';
+    out.textContent = d.message || 'Telemetry disabled. Events are now written to logs/telemetry_node.jsonl and logs/telemetry_python.jsonl.';
   } catch (e) {
     out.style.color = 'var(--red)';
     out.textContent = `✗ ${e.message}`;
@@ -1278,6 +1492,7 @@ document.getElementById('btnImportDashboard').addEventListener('click', async ()
     if (d.success) {
       out.style.color = 'var(--green)';
       out.innerHTML = `✓ Imported. <a href="${d.url}" target="_blank" style="color:var(--purple-l);text-decoration:underline">Open dashboard ↗</a> &nbsp; (data sources: ${d.datasources.prometheus} + ${d.datasources.loki})`;
+      _setDashboardBanner(d.url);
       showToast('Dashboard imported', 'ok');
     } else {
       out.style.color = 'var(--red)';
@@ -1295,16 +1510,36 @@ loadTelemetryStatus();
 
 // ── Save ───────────────────────────────────────────────────────────────────
 function buildPayload() {
-  const local=document.getElementById('tabSttLocal').classList.contains('active');
+  const activeTab = STT_TABS.find(t=>document.getElementById(t).classList.contains('active')) || 'tabSttLocal';
+  const dgEnabled = activeTab === 'tabSttDeepgram';
+  const sttModel = activeTab === 'tabSttApi'
+    ? document.getElementById('sttApiModel').value
+    : document.getElementById('sttLocalModel').value;
+
   return {
     providers: providers.map(p=>({id:p.id,key:p.newKey||'',enabled:p.enabled,model:p.model||''})),
-    stt_model: local?document.getElementById('sttLocalModel').value:document.getElementById('sttApiModel').value,
+    stt_model: sttModel,
     hud_opacity: +document.getElementById('opacitySlider').value,
     screenshots_path: document.getElementById('screenshotsPath').value.trim(),
     interview_role: document.getElementById('interviewRole').value.trim(),
     speaker_id_threshold: parseFloat(document.getElementById('speakerThreshold').value)||0.70,
     speaker_id_enabled: document.getElementById('speakerIdEnabled').checked,
+    deepgram_enabled:       dgEnabled,
+    deepgram_api_key:       document.getElementById('deepgramApiKey').value.trim() || '***',
+    deepgram_model:         document.getElementById('deepgramModel').value,
   };
+}
+async function saveSectionAndReloadStt(id) {
+  await saveSectionSettings(id);
+  fetch('/api/config/reload-stt',{method:'POST'}).catch(()=>{});
+  // Auto-test Deepgram key after save when that tab is active
+  const activeTab = STT_TABS.find(t=>document.getElementById(t).classList.contains('active'));
+  if (activeTab === 'tabSttDeepgram') {
+    const key = document.getElementById('deepgramApiKey').value.trim();
+    if (key) {
+      setTimeout(testDeepgramKey, 400);
+    }
+  }
 }
 async function saveSectionSettings(id) {
   const btn=document.getElementById(`saveBtn-${id}`);

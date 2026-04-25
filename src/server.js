@@ -1,24 +1,36 @@
 import http from 'http';
 import { Server } from 'socket.io';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import app from './app.js';
 import screenshotMonitorService from './services/screenshot-monitor.service.js';
 import DataHandler from './sockets/dataHandler.js';
 import imageProcessingService from './services/image-processing.service.js';
 import { CONFIG, getLocalIP } from './config/constants.js';
 import logger from './utils/logger.js';
-import { initTelemetry, shutdownTelemetry, startSystemMetricsSampler, isEnabled as isTelemetryEnabled } from './utils/telemetry.js';
+import { initTelemetry, shutdownTelemetry, startSystemMetricsSampler, isEnabled as isTelemetryEnabled, logEvent } from './utils/telemetry.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env before anything else — all three services read the same file
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const log = logger('Server');
 
-// ── Telemetry — read config and initialize OTel exporters at startup ─────────
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// ── Telemetry — read from process.env and initialize OTel exporters ──────────
 (async () => {
   try {
-    const cfgPath = path.join(__dirname, '..', 'config', 'api-keys.json');
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    const cfg = {
+      telemetry: {
+        enabled:        process.env.TELEMETRY_ENABLED === 'true',
+        otlp_endpoint:  process.env.OTLP_ENDPOINT   || '',
+        instance_id:    process.env.GRAFANA_INSTANCE_ID  || '',
+        access_token:   process.env.GRAFANA_ACCESS_TOKEN || '',
+        service_prefix: process.env.TELEMETRY_SERVICE_PREFIX || 'solvewatch',
+      },
+      host_owner: process.env.HOST_OWNER || '',
+    };
     await initTelemetry(cfg);
     if (isTelemetryEnabled()) {
       // Background sampler emits host_cpu_percent / host_memory_* / gpu_* gauges
@@ -59,6 +71,8 @@ const io = new Server(httpServer, {
 const dataHandler = new DataHandler(io);
 imageProcessingService.setDataHandlers([dataHandler]);
 
+const _serverStartTime = Date.now();
+
 httpServer.listen(CONFIG.PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
   log.info('Server started');
@@ -68,12 +82,25 @@ httpServer.listen(CONFIG.PORT, '0.0.0.0', () => {
   log.info(
     `Data Updates: ws://localhost:${CONFIG.PORT}/data-updates | ws://${localIP}:${CONFIG.PORT}/data-updates`,
   );
+  logEvent('server_start', 'INFO', {
+    port:         CONFIG.PORT,
+    pid:          process.pid,
+    node_version: process.version,
+    platform:     process.platform,
+    start_time:   new Date().toISOString(),
+  });
 });
 
 // Graceful shutdown handlers
 const gracefulShutdown = () => {
   log.info('Shutting down...');
   screenshotMonitorService.stop && screenshotMonitorService.stop();
+
+  logEvent('server_stop', 'INFO', {
+    pid:            process.pid,
+    uptime_seconds: Math.round((Date.now() - _serverStartTime) / 1000),
+    stop_time:      new Date().toISOString(),
+  });
 
   // Flush any pending OTel batches before exit. shutdownTelemetry resolves once
   // metric/log providers are flushed; failures are swallowed so we still exit.

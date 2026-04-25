@@ -5,6 +5,7 @@ import { CONFIG } from '../config/constants.js';
 import logger from '../utils/logger.js';
 import createMouse from 'osx-mouse';
 import sharp from 'sharp';
+import { recordHistogram } from '../utils/telemetry.js';
 
 const log = logger('ScreenshotMonitor');
 
@@ -326,6 +327,11 @@ class ScreenshotMonitorService {
     this.processingFiles.add(filename);
 
     const filePath = `${CONFIG.SCREENSHOTS_PATH}/${filename}`;
+    // Marker for the screenshot_capture_ms histogram — measured from "file
+    // detected on disk" to "handed off to image-processing.service". Captures
+    // the crop-coordinate wait (up to 2 s) that screenshot_pipeline_total_ms
+    // doesn't see.
+    const detectedAt = Date.now();
 
     log.info('New screenshot detected, waiting 2 seconds for coordinates', {
       filename: filename,
@@ -378,6 +384,14 @@ class ScreenshotMonitorService {
       } else {
         log.info('No coordinates received, processing original image');
       }
+
+      // Handoff to image-processing — record the detect→handoff window so the
+      // Screenshot stacked breakdown panel can show capture+crop time alongside
+      // OCR and AI. `cropped=true|false` lets the dashboard segment by the
+      // cropping path (expensive) vs no-crop path (cheap).
+      recordHistogram('screenshot_capture_ms', Date.now() - detectedAt, {
+        cropped: coordinates ? 'true' : 'false',
+      });
 
       const useContextEnabled = imageProcessingService.getUseContextEnabled();
       const result = await imageProcessingService.processImage(

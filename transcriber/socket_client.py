@@ -165,30 +165,6 @@ class SocketClient:
     # Emitters
     # ------------------------------------------------------------------
 
-    def send_transcription_chunk(self, text: str):
-        """Send a transcription text chunk to the server (synchronous/blocking)."""
-        if not self.connected:
-            logger.warning("Not connected — skipping transcription chunk")
-            return
-        if not text or not text.strip():
-            return
-        try:
-            self.sio.emit('transcription', {'textChunk': text.strip()}, namespace=self.endpoint)
-            logger.debug(f"Sent transcription chunk: {text[:50]}…")
-        except Exception as e:
-            logger.error(f"Error sending transcription chunk: {e}")
-
-    def process_transcription(self):
-        """Signal the server to process all accumulated transcription chunks."""
-        if not self.connected:
-            logger.warning("Not connected — cannot send process_transcription")
-            return
-        try:
-            self.sio.emit('process_transcription', namespace=self.endpoint)
-            logger.info("Sent process_transcription event")
-        except Exception as e:
-            logger.error(f"Error sending process_transcription: {e}")
-
     def send_stt_partial(self, committed: str, tentative: str):
         """Emit streaming partial transcript — committed (stable) + tentative (may change).
         Called ~every 300ms while the speaker is talking.

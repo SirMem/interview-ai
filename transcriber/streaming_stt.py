@@ -120,34 +120,12 @@ class StreamingSTT:
         logger.info("StreamingSTT started (decode every %.0fms)", DECODE_INTERVAL_S * 1000)
 
     def stop(self):
+        """Stop the decoder thread. Any unfinalized audio in the rolling buffer
+        is discarded — AI answers only ever fire on a genuine VAD-detected
+        end-of-utterance, never on listener shutdown.
+        """
         self._running = False
         logger.info("StreamingSTT stopped")
-
-    def force_final(self):
-        """Emit stt_final immediately with whatever is in the buffer.
-        Called when the user explicitly stops the listener (Cmd+Shift+X off).
-        Does nothing if the buffer is empty.
-        """
-        with self._lock:
-            if not self._committed and not self._prev_decode:
-                return
-
-            committed_str = ' '.join(w for w, _, _ in self._committed)
-            committed_set = {(w, round(s, 2)) for w, s, _ in self._committed}
-            tentative_str = ' '.join(
-                w for w, s, _ in self._prev_decode
-                if (w, round(s, 2)) not in committed_set
-            )
-            full = committed_str
-            if tentative_str:
-                full = (full + ' ' + tentative_str).strip()
-
-        if full:
-            logger.info("StreamingSTT force_final: %s", full[:80])
-            self._reset()
-            # No real silence_started_at on force_final (manual stop) — pass time.time()
-            # so end-to-end measurement degrades to 0 ms rather than NaN.
-            self.on_final(full, np.array([], dtype=np.float32), None, time.time())
 
     # ── Pre-STT diarization API ───────────────────────────────────────────────
 

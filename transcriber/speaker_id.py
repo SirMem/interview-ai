@@ -42,14 +42,13 @@ ECAPA_EMBEDDING_DIM = 192
 def _get_device() -> str:
     """Select the best available device for ECAPA inference.
 
-    Returns one of 'mps' (Apple Silicon), 'cuda' (NVIDIA GPU), or 'cpu'.
-    Logs the chosen device; caller doesn't need to.
+    Returns 'cuda' (NVIDIA GPU) or 'cpu'. MPS is intentionally excluded —
+    SpeechBrain 1.x only sets device_type for 'cpu' and 'cuda'; passing 'mps'
+    leaves device_type unset and raises AttributeError during model load.
+    ECAPA-TDNN on CPU is fast enough for speaker ID (< 50 ms per utterance).
     """
     try:
         import torch
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            logger.info("SpeakerIdentifier: using MPS (Apple GPU)")
-            return 'mps'
         if torch.cuda.is_available():
             logger.info("SpeakerIdentifier: using CUDA (NVIDIA GPU)")
             return 'cuda'
@@ -197,7 +196,7 @@ class SpeakerIdentifier:
     def load_model(self):
         """Load the ECAPA embedding model. Called once at app startup."""
         try:
-            from speechbrain.pretrained import EncoderClassifier
+            from speechbrain.inference.classifiers import EncoderClassifier
             self._device = _get_device()
             self._model = EncoderClassifier.from_hparams(
                 source=SPEECHBRAIN_MODEL,

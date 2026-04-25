@@ -37,7 +37,7 @@ from config import (
 from vad.metrics import VADMetrics
 from streaming_stt import StreamingSTT
 from speaker_id import SpeakerIDWorker, _PendingSpeechSegment
-import log_writer
+import telemetry as log_writer
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,35 @@ class AlwaysOnListener:
         """Fix #7: flip the auto-answer gate at runtime (e.g., when enrollment changes)."""
         self._auto_answer_disabled = disabled
 
+    def attach_speaker_id(self, identifier):
+        """Wire a SpeakerIdentifier into a listener that was built without one.
+
+        Constructor only creates the SpeakerIDWorker when `speaker_id` is passed
+        at init time. If the user later turns speaker-ID on via the settings
+        page (hitting /load-speaker-id or /enroll-voice), the listener's
+        `_speaker_id` reference was updated but the worker stayed None — so
+        _submit_to_speaker_id_worker silently returned and no identify() call
+        was ever made. This method plugs that gap: it sets the reference and
+        also spins up + starts the worker if needed.
+        """
+        self._speaker_id = identifier
+        if identifier is None:
+            return
+        if self._speaker_id_worker is None:
+            self._speaker_id_worker = SpeakerIDWorker(
+                speaker_identifier=identifier,
+                on_pass=self._on_speaker_pass,
+                on_discard=self._on_speaker_discard,
+            )
+            if self._running:
+                self._speaker_id_worker.start()
+            logger.info("SpeakerIDWorker attached dynamically (enrolled=%s)",
+                        getattr(identifier, 'has_enrollment', False))
+        else:
+            # Worker already exists — just update the identifier reference inside
+            # it so fresh enrollment embeddings are picked up on next identify().
+            self._speaker_id_worker._speaker_id = identifier
+
     # ── SpeakerIDWorker callbacks (called from worker thread) ─────────────────
 
     def _on_speaker_pass(self, utterance_id: str):
@@ -177,7 +206,8 @@ class AlwaysOnListener:
             telemetry.GAUGE_LISTENER_ACTIVE.set(0)
         except Exception:
             pass
-        self._streaming_stt.force_final()
+        # Stop means stop — any audio still in the rolling buffer is discarded.
+        # We only ever fire stt_final on a genuine VAD silence, never on shutdown.
         self._streaming_stt.stop()
         if self._speaker_id_worker is not None:
             self._speaker_id_worker.stop()
@@ -238,18 +268,19 @@ class AlwaysOnListener:
             is_speech=is_speech,
             latency_ms=latency_ms,
         )
+        # The vad_chunk LOG is sampled — ~10 records/s would flood Loki.
         if random.random() < _CHUNK_LOG_SAMPLE_RATE:
             log_writer.log('vad_chunk', **record)
 
-        # Fix #8 — VAD per-chunk latency histogram (sampled at the same rate as logs).
-        # Recording every chunk would be ~10 records/s per device — sampling keeps
-        # cardinality + cost down while still giving an honest distribution.
-        if random.random() < _CHUNK_LOG_SAMPLE_RATE:
-            try:
-                import telemetry
-                telemetry.HIST_VAD_LATENCY_MS.record(latency_ms, {"engine": vad.engine_name})
-            except Exception:
-                pass
+        # VAD per-chunk latency histogram — record EVERY chunk. Histograms are
+        # SDK-aggregated (buckets + counts), so per-chunk record() is ~1 µs and
+        # carries no cardinality cost. Sampling this was only hiding the real
+        # distribution from panel 410.
+        try:
+            import telemetry
+            telemetry.HIST_VAD_LATENCY_MS.record(latency_ms, {"engine": vad.engine_name})
+        except Exception:
+            pass
 
         if is_speech:
             # Fix #3: if speech resumed while speaker ID was in-flight, cancel it
@@ -421,7 +452,7 @@ class AlwaysOnListener:
     def _on_stt_final(self, text: str, audio: np.ndarray,
                       utterance_id: Optional[str] = None,
                       silence_started_at: Optional[float] = None):
-        """Called by StreamingSTT when silence threshold hits (or force_final on stop).
+        """Called by StreamingSTT when the VAD silence threshold is reached.
 
         Speaker ID filtering has already happened pre-STT — this callback only
         fires for non-candidate speech. Applies answerable + hallucination + length

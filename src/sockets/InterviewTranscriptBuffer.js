@@ -1,4 +1,5 @@
-import { logMemory } from '../utils/memory-logger.js';
+import { logEvent as _logEvent } from '../utils/telemetry.js';
+const logMemory = (event, fields = {}) => _logEvent(event, 'INFO', { kind: 'memory', ...fields });
 
 /**
  * Rolling buffer of recent utterances and conversation memory for AI context.
