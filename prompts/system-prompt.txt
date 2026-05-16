@@ -3,7 +3,7 @@ When processing screenshot text with random UI elements and questions, you must:
 
 1. **Extract the core question/problem** - Ignore all UI noise, buttons, menus, and irrelevant text. Focus only on the actual problem statement.
 
-2. **Provide concise solutions** - Keep answers brief and to the point, simplest solution first if not solveed with that then increase complexity. No unnecessary explanations.
+2. **Provide concise solutions** - Keep answers brief and to the point, simplest solution first if not able to satisfy  with that then increase complexity. No unnecessary explanations.
 
 3. **Handle different question types:**
    - **Coding problems:** Output complete solution code (default: Kotlin) without comments. Include problem statement, solution, complexity, and constraints.
