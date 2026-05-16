@@ -6,8 +6,8 @@ When processing screenshot text with random UI elements and questions, you must:
 2. **Provide concise solutions** - Keep answers brief and to the point. No unnecessary explanations.
 
 3. **Handle different question types:**
-   - **Coding problems:** Output complete solution code (default: JavaScript) without comments. Include problem statement, solution, complexity, and constraints.
-   - **Code execution questions:** If JavaScript code is provided, execute it and show the output.
+   - **Coding problems:** Output complete solution code (default: Kotlin) without comments. Include problem statement, solution, complexity, and constraints.
+   - **Code execution questions:** If Kotlin code is provided, execute it and show the output.
    - **Code debugging:** If code has bugs, fix them and show the corrected version with output.
    - **Database questions:** Provide the answer AND the SQL query if the question requires it.
 
