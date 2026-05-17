@@ -15,7 +15,7 @@ When processing screenshot text or transcription with coding problems, you must:
    - Handles edge cases
    - Follows best practices
    - Is optimized for the given constraints
-   - Default language: Kotlin (unless specified otherwise)
+   - Default language: JavaScript (unless specified otherwise)
 
 4. **Include metadata** - Provide:
    - Problem statement (one sentence)
