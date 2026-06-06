@@ -1,12 +1,11 @@
 import OpenAI from 'openai';
-import Groq from 'groq-sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import logger from '../utils/logger.js';
 import { addCounter } from '../utils/telemetry.js';
+import channelService from './channel.service.js';
 
 // .env is loaded by server.js before this module is imported;
 // dotenv.config() here is a no-op guard in case of standalone imports.
@@ -62,14 +61,9 @@ const _unknownModelWarned = new Set();
 function _priceFor(model) {
   if (!model) return null;
   if (AI_PRICING[model]) return AI_PRICING[model];
-  // Family prefix with explicit "*" (e.g. "ollama:llama3.2:1b" → "ollama:*")
   for (const key of Object.keys(AI_PRICING)) {
     if (key.endsWith(':*') && model.startsWith(key.slice(0, -1))) return AI_PRICING[key];
   }
-  // Date-versioned model IDs (e.g. "claude-haiku-4-5-20251001",
-  // "gpt-4o-2024-08-06") — strip the trailing "-YYYYMMDD" (or similar date
-  // segments) and retry. Without this, a new snapshot release silently costs
-  // $0 until someone updates the pricing table.
   const stripped = model.replace(/-\d{4,8}(-\d{2})?(-\d{2})?$/, '');
   if (stripped !== model && AI_PRICING[stripped]) return AI_PRICING[stripped];
   return null;
@@ -102,7 +96,6 @@ const PROMPT_FILE_MAP = {
 const DEFAULT_MODELS = {
   openai: 'gpt-4o-mini',
   grok: 'llama-3.3-70b-versatile',
-  gemini: 'gemini-2.5-flash',
   claude: 'claude-sonnet-4-5',
 };
 
@@ -120,34 +113,34 @@ class AIService {
     // Track failed providers: { providerId -> { failedAt, failures } }
     this.failedProviders = new Map();
 
-    // Cache for prompt file contents — loaded at startup, refreshed via fs.watch
+    // Cache for prompt file contents
     this._promptCache = new Map();
     this._loadAllPrompts();
 
     // Watch config file and prompts directory for changes
     this._watchConfig();
     this._watchPrompts();
+
+    // Start watching channels.json for hot-reload
+    channelService.watchChannels();
   }
 
   // ==================== Config Management ====================
 
   loadConfig() {
     try {
-      // Reload .env into process.env so any settings-page write is picked up immediately
       dotenv.config({ path: ENV_FILE_PATH, override: true });
       this.config = {
         keys: {
           openai: process.env.OPENAI_API_KEY    || '',
           grok:   process.env.GROQ_API_KEY      || '',
-          gemini: process.env.GEMINI_API_KEY    || '',
           claude: process.env.ANTHROPIC_API_KEY || '',
         },
-        order:   (process.env.PROVIDER_ORDER   || 'openai,grok,gemini,claude').split(',').map(s => s.trim()),
+        order:   (process.env.PROVIDER_ORDER   || 'openai,grok,claude').split(',').map(s => s.trim()),
         enabled: (process.env.PROVIDER_ENABLED || '').split(',').map(s => s.trim()).filter(Boolean),
         models: {
           openai: process.env.MODEL_OPENAI || 'gpt-4o-mini',
           grok:   process.env.MODEL_GROK   || 'llama-3.3-70b-versatile',
-          gemini: process.env.MODEL_GEMINI || 'gemini-2.5-flash',
           claude: process.env.MODEL_CLAUDE || 'claude-sonnet-4-5',
         },
         ollama_model:    process.env.OLLAMA_MODEL    || 'llama3.2:1b',
@@ -194,7 +187,6 @@ class AIService {
     const base = { model, messages };
     if (stream) {
       base.stream = true;
-      // Required for token usage to appear in the final stream chunk.
       base.stream_options = { include_usage: true };
     }
     if (this._requiresCompletionTokens(model)) {
@@ -265,7 +257,6 @@ class AIService {
 
   /**
    * Build role-context prefix if interview_role is configured.
-   * Prepended to system prompts so AI tailors answers for that domain.
    */
   _getRolePrefix() {
     const role = this.config?.interview_role?.trim();
@@ -273,7 +264,7 @@ class AIService {
     return `## Interview Context\nRole: ${role}\nTailor your answer specifically for a ${role} interview — use relevant tools, frameworks, and terminology for this domain.\n\n`;
   }
 
-  // ==================== Provider Failure Tracking (exponential backoff) ====================
+  // ==================== Provider Failure Tracking ====================
 
   _getBackoffMs(failures) {
     return Math.min(30_000 * Math.pow(2, failures - 1), 600_000);
@@ -298,8 +289,6 @@ class AIService {
     if (!this.config) return ['ollama'];
 
     const enabledProviders = this.config.enabled || [];
-    // Paid providers need a non-empty API key; ollama runs locally so it's
-    // exempt from the key check.
     const providersToUse =
       enabledProviders.length > 0
         ? enabledProviders
@@ -319,40 +308,63 @@ class AIService {
     const alive = availableProviders.filter((providerId) => {
       const entry = this.failedProviders.get(providerId);
       if (!entry) return true;
-
       const { failedAt, failures } = entry;
       const backoff = this._getBackoffMs(failures);
       if (now - failedAt >= backoff) {
         this.failedProviders.delete(providerId);
-        log.info(`Retrying ${providerId} after backoff`, {
-          failures,
-          elapsed: `${Math.round((now - failedAt) / 1000)}s`,
-        });
+        log.info(`Retrying ${providerId} after backoff`, { failures, elapsed: `${Math.round((now - failedAt) / 1000)}s` });
         return true;
       }
       return false;
     });
 
-    // Ollama is always available as a terminal local fallback unless the user
-    // explicitly opted out (config.ollama_enabled === false). This guarantees
-    // a question will always answer — even with zero paid keys configured.
     if (this.config?.ollama_enabled !== false && !alive.includes('ollama')) {
       alive.push('ollama');
     }
     return alive;
   }
 
-  // ==================== Non-streaming AI calls ====================
+  // ==================== Channel-Aware SDK Factory ====================
+  //
+  // The new channel-based dispatch: any channel of type 'openai-compatible'
+  // or 'anthropic' can be called generically.  This replaces the old per-provider
+  // switch/case in callAIWithFallback / callAIWithFallbackStream.
 
-  // Non-streaming calls return { text, model, usage: { input_tokens, output_tokens } }.
-  // Callers that only need text use `.text`; callers that want telemetry use `.usage`.
+  /**
+   * Create an SDK client for the given channel.
+   * @param {Object} channel
+   * @returns {Object} sdk instance
+   */
+  _createSDK(channel) {
+    const baseURL = channel.baseUrl || undefined;
+    if (channel.serviceType === 'anthropic') {
+      const key = channel.apiKeys[0];
+      if (!key) throw new Error(`No API key for Anthropic channel "${channel.name}"`);
+      return new Anthropic({ apiKey: key, baseURL });
+    }
+    // openai-compatible
+    const key = channel.apiKeys[0];
+    if (!key) throw new Error(`No API key for channel "${channel.name}"`);
+    return new OpenAI({ apiKey: key, baseURL });
+  }
 
-  async callOpenAI(messages, options = {}) {
-    const apiKey = this.config?.keys?.openai;
-    if (!apiKey) throw new Error('OpenAI API key not configured');
-    const openai = new OpenAI({ apiKey });
-    const model = options.model || this._getModel('openai');
-    const completion = await openai.chat.completions.create(
+  /**
+   * Non-streaming call through a channel.
+   * @returns {Promise<{text, model, usage}>}
+   */
+  async _callChannel(channel, messages, options = {}) {
+    const model = options.model || channel.model;
+    if (!model) throw new Error(`No model specified for channel "${channel.name}"`);
+
+    if (channel.serviceType === 'anthropic') {
+      return this._callAnthropic(channel, messages, options, model);
+    }
+    return this._callOpenAICompatible(channel, messages, options, model);
+  }
+
+  async _callOpenAICompatible(channel, messages, options, model) {
+    const sdk = this._createSDK(channel);
+    const completion = await sdk.chat.completions.create(
       this._openAIParams(model, messages, options),
     );
     return {
@@ -365,62 +377,128 @@ class AIService {
     };
   }
 
-  async callGrok(messages, options = {}) {
-    const apiKey = this.config?.keys?.grok;
-    if (!apiKey) throw new Error('Grok API key not configured');
-    const groq = new Groq({ apiKey });
-    const model = options.model || this._getModel('grok');
-    const completion = await groq.chat.completions.create({
+  async _callAnthropic(channel, messages, options, model) {
+    const sdk = this._createSDK(channel);
+    const systemMsg = messages.find((m) => m.role === 'system')?.content || '';
+    const userMessages = messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
+    const response = await sdk.messages.create({
       model,
-      messages,
-      temperature: options.temperature || 0.7,
       max_tokens: options.max_tokens || 2048,
+      system: systemBlock,
+      messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
     });
     return {
-      text:  completion.choices[0]?.message?.content || 'No response generated',
+      text:  response.content[0]?.text || 'No response generated',
       model,
       usage: {
-        input_tokens:  completion.usage?.prompt_tokens     || 0,
-        output_tokens: completion.usage?.completion_tokens || 0,
+        input_tokens:                response.usage?.input_tokens                 || 0,
+        output_tokens:               response.usage?.output_tokens                || 0,
+        cache_read_input_tokens:     response.usage?.cache_read_input_tokens      || 0,
+        cache_creation_input_tokens: response.usage?.cache_creation_input_tokens  || 0,
       },
     };
   }
 
-  async callGemini(messages, options = {}) {
-    const apiKey = this.config?.keys?.gemini;
-    if (!apiKey) throw new Error('Gemini API key not configured');
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const modelName = options.model || this._getModel('gemini');
-    const model = genAI.getGenerativeModel({ model: modelName });
-    const userMessage = messages.find((m) => m.role === 'user')?.content || '';
-    const systemMessage = messages.find((m) => m.role === 'system')?.content || '';
-    const prompt = systemMessage ? `${systemMessage}\n\n${userMessage}` : userMessage;
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return {
-      text:  response.text() || 'No response generated',
-      model: modelName,
+  /**
+   * Streaming generator through a channel.
+   * Yields { text } for content chunks and { usage } once at the end.
+   */
+  async *_streamChannel(channel, messages, options = {}) {
+    const model = options.model || channel.model;
+    if (!model) throw new Error(`No model specified for channel "${channel.name}"`);
+
+    if (channel.serviceType === 'anthropic') {
+      yield* this._streamAnthropic(channel, messages, options, model);
+    } else {
+      yield* this._streamOpenAICompatible(channel, messages, options, model);
+    }
+  }
+
+  async *_streamOpenAICompatible(channel, messages, options, model) {
+    const sdk = this._createSDK(channel);
+    const stream = await sdk.chat.completions.create(
+      this._openAIParams(model, messages, options, true),
+    );
+    let usage = null;
+    for await (const chunk of stream) {
+      const text = chunk.choices?.[0]?.delta?.content || '';
+      if (text) yield { text };
+      if (chunk.usage) usage = chunk.usage;
+    }
+    if (usage) {
+      yield { usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 } };
+    }
+  }
+
+  async *_streamAnthropic(channel, messages, options, model) {
+    const sdk = this._createSDK(channel);
+    const systemMsg = messages.find((m) => m.role === 'system')?.content || '';
+    const userMessages = messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    const systemBlock = systemMsg
+      ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
+      : undefined;
+
+    const stream = await sdk.messages.stream({
+      model,
+      max_tokens: options.max_tokens || 2048,
+      system: systemBlock,
+      messages: userMessages.length > 0 ? userMessages : [{ role: 'user', content: 'Hello' }],
+    });
+
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheReadTokens = 0;
+    let cacheCreationTokens = 0;
+    for await (const event of stream) {
+      if (event.type === 'message_start' && event.message?.usage) {
+        inputTokens         = event.message.usage.input_tokens          || 0;
+        cacheReadTokens     = event.message.usage.cache_read_input_tokens     || 0;
+        cacheCreationTokens = event.message.usage.cache_creation_input_tokens || 0;
+      }
+      if (event.type === 'content_block_delta' &&
+          event.delta?.type === 'text_delta' &&
+          event.delta.text) {
+        yield { text: event.delta.text };
+      }
+      if (event.type === 'message_delta' && event.usage) {
+        outputTokens = event.usage.output_tokens || 0;
+      }
+    }
+    yield {
       usage: {
-        input_tokens:  response.usageMetadata?.promptTokenCount     || 0,
-        output_tokens: response.usageMetadata?.candidatesTokenCount || 0,
+        input_tokens:               inputTokens,
+        output_tokens:              outputTokens,
+        cache_read_input_tokens:    cacheReadTokens,
+        cache_creation_input_tokens: cacheCreationTokens,
       },
     };
   }
 
-  async callOllama(messages, options = {}) {
-    const model = options.model || this.config?.ollama_model || 'llama3.2:1b';
-    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: options.temperature || 0.7,
-      max_tokens: options.max_tokens || 2048,
-    });
+  // ==================== Non-streaming AI calls ====================
+
+  // Legacy per-provider methods (kept for backward compat during transition)
+
+  async callOpenAI(messages, options = {}) {
+    const apiKey = this.config?.keys?.openai;
+    if (!apiKey) throw new Error('OpenAI API key not configured');
+    const openai = new OpenAI({ apiKey });
+    const model = options.model || this._getModel('openai');
+    const completion = await openai.chat.completions.create(
+      this._openAIParams(model, messages, options),
+    );
     return {
       text:  completion.choices[0]?.message?.content || 'No response generated',
-      // Prefix with "ollama:" so the pricing table's "ollama:*" rule matches
-      // (local models are $0 — see AI_PRICING).
-      model: `ollama:${model}`,
+      model,
       usage: {
         input_tokens:  completion.usage?.prompt_tokens     || 0,
         output_tokens: completion.usage?.completion_tokens || 0,
@@ -461,11 +539,49 @@ class AIService {
     };
   }
 
+  /**
+   * Non-streaming call with channel-based fallback.
+   *
+   * Priority order:
+   *   1. Active channels (via channel.service — priority + round-robin)
+   *   2. Old .env-based providers (backward compat during transition)
+   *   3. Ollama (terminal fallback)
+   */
   async callAIWithFallback(messages, options = {}) {
-    const providers = this.getAvailableProviders();
+    // ── Try channels first ─────────────────────────────────────────
+    const channels = channelService.getActiveChannels();
+    if (channels.length > 0) {
+      let lastError = null;
+      // Try up to 3 different channels before giving up
+      for (let attempt = 0; attempt < channels.length; attempt++) {
+        const next = channelService.getNextChannel();
+        if (!next) break;
+        const { channel } = next;
+        try {
+          log.debug(`Trying channel: ${channel.name} (${channel.serviceType})`);
+          const result = await this._callChannel(channel, messages, options);
+          channelService.recordSuccess(channel.name);
+          return {
+            message:  { content: result.text },
+            provider: channel.name,
+            model:    result.model,
+            usage:    result.usage,
+            channel:  channel.name,
+          };
+        } catch (err) {
+          _providerLogLevel(err) === 'error'
+            ? log.error(`Channel "${channel.name}" failed`, err)
+            : log.warn(`Channel "${channel.name}" failed`, { error: err.message, status: err?.status });
+          channelService.recordFailure(channel.name);
+          lastError = err;
+        }
+      }
+      // If all channels failed, fall through to legacy providers
+      log.warn('All channels failed, falling back to legacy .env providers');
+    }
 
-    // providers is never empty because getAvailableProviders always appends
-    // 'ollama' as a terminal fallback (unless explicitly opted out).
+    // ── Legacy .env providers (backward compat) ────────────────────
+    const providers = this.getAvailableProviders();
     if (providers.length === 0) {
       throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
@@ -473,19 +589,16 @@ class AIService {
     let lastError = null;
     for (const providerId of providers) {
       try {
-        log.debug(`Trying AI provider: ${providerId}`);
+        log.debug(`Trying legacy provider: ${providerId}`);
         let result;
         switch (providerId) {
           case 'openai':  result = await this.callOpenAI(messages, options); break;
-          case 'grok':    result = await this.callGrok(messages, options); break;
-          case 'gemini':  result = await this.callGemini(messages, options); break;
           case 'claude':  result = await this.callClaude(messages, options); break;
           case 'ollama':  result = await this.callOllama(messages, options); break;
-          default: throw new Error(`Unknown provider: ${providerId}`);
+          default: throw new Error(`Unknown legacy provider: ${providerId}`);
         }
         this.markProviderAsSuccess(providerId);
-        log.info(`Success with AI provider: ${providerId}`);
-        // Backwards-compat: keep `message.content` field; add provider, model, usage.
+        log.info(`Success with legacy provider: ${providerId}`);
         return {
           message:  { content: result.text },
           provider: providerId,
@@ -506,11 +619,6 @@ class AIService {
 
   // ==================== Streaming AI calls ====================
 
-  // Streaming generators yield two shapes:
-  //   { text: '...' }                          for each content chunk
-  //   { usage: { input_tokens, output_tokens } } once at the end
-  // Caller is expected to differentiate via `if (chunk.text)` vs `if (chunk.usage)`.
-
   async *streamOpenAI(messages, options = {}) {
     const apiKey = this.config?.keys?.openai;
     if (!apiKey) throw new Error('OpenAI API key not configured');
@@ -523,55 +631,9 @@ class AIService {
     for await (const chunk of stream) {
       const text = chunk.choices?.[0]?.delta?.content || '';
       if (text) yield { text };
-      if (chunk.usage) usage = chunk.usage;        // final chunk carries usage
+      if (chunk.usage) usage = chunk.usage;
     }
     if (usage) yield { usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 } };
-  }
-
-  async *streamGrok(messages, options = {}) {
-    const apiKey = this.config?.keys?.grok;
-    if (!apiKey) throw new Error('Grok API key not configured');
-    const groq = new Groq({ apiKey });
-    const stream = await groq.chat.completions.create({
-      model: options.model || this._getModel('grok'),
-      messages,
-      temperature: options.temperature || 0.7,
-      max_tokens: options.max_tokens || 2048,
-      stream: true,
-      stream_options: { include_usage: true },
-    });
-    let usage = null;
-    for await (const chunk of stream) {
-      const text = chunk.choices?.[0]?.delta?.content || '';
-      if (text) yield { text };
-      // Groq surfaces usage in the final chunk's x_groq.usage when stream_options is set
-      if (chunk.usage)         usage = chunk.usage;
-      else if (chunk.x_groq?.usage) usage = chunk.x_groq.usage;
-    }
-    if (usage) yield { usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 } };
-  }
-
-  async *streamGemini(messages, options = {}) {
-    const apiKey = this.config?.keys?.gemini;
-    if (!apiKey) throw new Error('Gemini API key not configured');
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: options.model || this._getModel('gemini'),
-    });
-    const userMessage   = messages.find((m) => m.role === 'user')?.content   || '';
-    const systemMessage = messages.find((m) => m.role === 'system')?.content || '';
-    const prompt = systemMessage ? `${systemMessage}\n\n${userMessage}` : userMessage;
-    const result = await model.generateContentStream(prompt);
-    for await (const chunk of result.stream) {
-      const text = chunk.text() || '';
-      if (text) yield { text };
-    }
-    // After the stream drains, the aggregate response has usageMetadata.
-    try {
-      const final = await result.response;
-      const um = final.usageMetadata;
-      if (um) yield { usage: { input_tokens: um.promptTokenCount || 0, output_tokens: um.candidatesTokenCount || 0 } };
-    } catch {}
   }
 
   async *streamClaude(messages, options = {}) {
@@ -584,10 +646,6 @@ class AIService {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: m.content }));
 
-    // cache_control marks the system prompt as cacheable (ephemeral, 5-min TTL).
-    // Anthropic caches any prefix seen twice within 5 min — ~90% input-token
-    // discount + ~100-200ms TTFT improvement on question 2+ in a session.
-    // Requires prompt >= 1024 tokens to qualify; smaller prompts are ignored silently.
     const systemBlock = systemMsg
       ? [{ type: 'text', text: systemMsg, cache_control: { type: 'ephemeral' } }]
       : undefined;
@@ -629,47 +687,77 @@ class AIService {
   }
 
   /**
-   * Streams tokens from the first available provider.
-   * Falls back to the next provider if connection fails before any tokens arrive.
-   * Yields { token, provider } objects.
+   * Streaming with channel-based fallback.
+   * Same priority as callAIWithFallback.
    */
   async *callAIWithFallbackStream(messages, options = {}) {
-    const providers = this.getAvailableProviders();
+    // ── Try channels first ─────────────────────────────────────────
+    const channels = channelService.getActiveChannels();
+    if (channels.length > 0) {
+      let lastError = null;
+      for (let attempt = 0; attempt < channels.length; attempt++) {
+        const next = channelService.getNextChannel();
+        if (!next) break;
+        const { channel } = next;
+        const model = options.model || channel.model;
+        try {
+          log.debug(`Streaming with channel: ${channel.name} (${channel.serviceType})`);
+          const gen = this._streamChannel(channel, messages, options);
+          const first = await gen.next();
+          channelService.recordSuccess(channel.name);
+          addCounter('ai_provider_success_total', 1, { provider: channel.name, flow: 'transcription' });
+          log.info(`Streaming with channel: ${channel.name}`);
 
+          if (!first.done && first.value) {
+            if (first.value.text) yield { token: first.value.text, provider: channel.name, model };
+            if (first.value.usage) yield { usage: first.value.usage, provider: channel.name, model };
+          }
+          for await (const chunk of gen) {
+            if (chunk.text)  yield { token: chunk.text, provider: channel.name, model };
+            if (chunk.usage) yield { usage: chunk.usage, provider: channel.name, model };
+          }
+          return;
+        } catch (err) {
+          _providerLogLevel(err) === 'error'
+            ? log.error(`Channel "${channel.name}" streaming failed`, err)
+            : log.warn(`Channel "${channel.name}" streaming failed`, { error: err.message, status: err?.status });
+          channelService.recordFailure(channel.name);
+          addCounter('ai_provider_failure_total', 1, {
+            provider:    channel.name,
+            flow:        'transcription',
+            error_class: (err && err.constructor && err.constructor.name) || 'Error',
+          });
+          lastError = err;
+        }
+      }
+      log.warn('All channels failed for streaming, falling back to legacy providers');
+    }
+
+    // ── Legacy .env providers ──────────────────────────────────────
+    const providers = this.getAvailableProviders();
     if (providers.length === 0) {
       throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
     }
 
     let lastError = null;
-
     for (const providerId of providers) {
-      const model =
-        providerId === 'ollama'
-          // Pricing table keys ollama as "ollama:*" — prefix the runtime model
-          // name so _priceFor() resolves to $0 for local inference.
-          ? `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`
-          : (this.config?.models?.[providerId] || '');
+      const model = providerId === 'ollama'
+        ? `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`
+        : (this.config?.models?.[providerId] || '');
       try {
         let gen;
         switch (providerId) {
           case 'openai': gen = this.streamOpenAI(messages, options); break;
-          case 'grok':   gen = this.streamGrok(messages, options); break;
-          case 'gemini': gen = this.streamGemini(messages, options); break;
           case 'claude': gen = this.streamClaude(messages, options); break;
           case 'ollama': gen = this._streamOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
 
-        // Await the first chunk — surfaces connection/auth errors before we yield.
         const first = await gen.next();
-
         this.markProviderAsSuccess(providerId);
         addCounter('ai_provider_success_total', 1, { provider: providerId, flow: 'transcription' });
-        log.info(`Streaming with provider: ${providerId}`);
+        log.info(`Streaming with legacy provider: ${providerId}`);
 
-        // Inner generator yields { text } for content and { usage } once at the end.
-        // Re-yield as the legacy { token, provider, model } shape for content; and
-        // a final { usage, provider, model } for the cost/token telemetry consumers.
         if (!first.done && first.value) {
           if (first.value.text) yield { token: first.value.text, provider: providerId, model };
           if (first.value.usage) yield { usage: first.value.usage, provider: providerId, model };
@@ -678,7 +766,6 @@ class AIService {
           if (chunk.text)  yield { token: chunk.text, provider: providerId, model };
           if (chunk.usage) yield { usage: chunk.usage, provider: providerId, model };
         }
-
         return;
       } catch (err) {
         _providerLogLevel(err) === 'error'
@@ -694,9 +781,7 @@ class AIService {
       }
     }
 
-    throw new Error(
-      `All AI providers failed for streaming. Last error: ${lastError?.message}`,
-    );
+    throw new Error(`All AI providers failed for streaming. Last error: ${lastError?.message}`);
   }
 
   // ==================== High-level API (non-streaming) ====================
@@ -892,6 +977,7 @@ Question: ${question}`;
 
     const answerMode = this._answerMode || this.config?.answer_mode || 'auto';
 
+    // Direct mode: ollama
     if (answerMode === 'ollama') {
       const ollamaModel = `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`;
       try {
@@ -908,15 +994,14 @@ Question: ${question}`;
         });
         log.warn('Ollama answer streaming failed, falling back to remote', { error: err.message });
       }
-    } else if (['openai', 'grok', 'gemini', 'claude'].includes(answerMode)) {
+    } else if (['openai', 'claude'].includes(answerMode)) {
+      // Direct mode: use the channel-like approach for the specified legacy provider
       const model = this.config?.models?.[answerMode] || '';
       try {
         const opts = { temperature: 0.7, max_tokens: 2048 };
         let gen;
         switch (answerMode) {
           case 'openai': gen = this.streamOpenAI(messages, opts); break;
-          case 'grok':   gen = this.streamGrok(messages, opts); break;
-          case 'gemini': gen = this.streamGemini(messages, opts); break;
           case 'claude': gen = this.streamClaude(messages, opts); break;
         }
         for await (const chunk of gen) {
@@ -936,7 +1021,7 @@ Question: ${question}`;
       }
     }
 
-    // 'auto' or fallback
+    // 'auto' or fallback — uses channel-based dispatch
     yield* this.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 });
   }
 
@@ -947,3 +1032,6 @@ export default new AIService();
 // Named export so telemetry consumers (dataHandler / image-processing) can
 // price token usage without duplicating the table.
 export const aiCostUSD = _costFor;
+
+// Named export for channel service (used by channel controller)
+export { channelService };

@@ -167,66 +167,141 @@
     }
     textarea { resize: vertical; min-height: 110px; font-size: 12px; line-height: 1.6; }
 
-    /* ── Provider cards ────────────────────────────────────── */
-    .provider-list { display: flex; flex-direction: column; gap: 10px; }
+    /* ── Channel cards ────────────────────────────────────── */
+    .channel-list { display: flex; flex-direction: column; gap: 10px; }
 
-    .provider-card {
+    .channel-card {
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: var(--r-sm);
       overflow: hidden;
       transition: border-color 0.2s, box-shadow 0.2s;
-      cursor: grab;
-      user-select: none;
     }
-    .provider-card.dragging  { opacity: 0.45; cursor: grabbing; }
-    .provider-card.drag-over { border-color: var(--purple); box-shadow: 0 0 0 1px var(--purple); }
-    .provider-card.enabled   { border-color: var(--border2); background: rgba(124,58,237,0.05); }
-    .provider-card.has-error { border-color: rgba(239,68,68,0.35); }
+    .channel-card:hover { border-color: var(--border2); }
+    .channel-card.dragging  { opacity: 0.45; }
+    .channel-card.drag-over { border-color: var(--purple); box-shadow: 0 0 0 1px var(--purple); }
 
-    .card-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
-    .drag-handle  { color: var(--muted); font-size: 14px; cursor: grab; flex-shrink: 0; opacity: 0.4; }
-    .drag-handle:hover { opacity: 1; }
+    .ch-header {
+      display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+      cursor: pointer; user-select: none;
+    }
+    .ch-drag-handle { color: var(--muted); font-size: 14px; cursor: grab; flex-shrink: 0; opacity: 0.4; }
+    .ch-drag-handle:hover { opacity: 1; }
 
-    .prov-avatar {
+    .ch-avatar {
       width: 36px; height: 36px; border-radius: 9px;
       display: flex; align-items: center; justify-content: center;
       font-size: 17px; font-weight: 800; flex-shrink: 0;
     }
-    .order-badge {
-      width: 22px; height: 22px; border-radius: 50%;
-      background: var(--surface3); border: 1px solid var(--border2);
-      font-size: 10px; font-weight: 800; color: var(--muted);
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    .ch-avatar.openai { background: rgba(16,163,127,0.15); color: #10a37f; }
+    .ch-avatar.anthropic { background: rgba(217,119,87,0.15); color: #d97757; }
+
+    .ch-info  { flex: 1; min-width: 0; }
+    .ch-name  { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .ch-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .ch-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+    .ch-status-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
     }
-    .provider-card.enabled .order-badge { background: var(--purple-dim); border-color: var(--border3); color: #c4b5fd; }
+    .ch-status-badge.active   { background: rgba(34,197,94,0.12); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
+    .ch-status-badge.paused   { background: rgba(245,158,11,0.12); color: #fcd34d; border: 1px solid rgba(245,158,11,0.25); }
+    .ch-status-badge.disabled { background: rgba(100,116,139,0.12); color: #94a3b8; border: 1px solid rgba(100,116,139,0.25); }
 
-    .prov-info  { flex: 1; min-width: 0; }
-    .prov-name  { font-size: 13px; font-weight: 700; }
-    .prov-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; align-items: center; gap: 6px; }
-    .card-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .card-body  { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
-
-    .key-row { display: flex; gap: 6px; align-items: center; }
-    .key-wrap { position: relative; flex: 1; }
-    .key-wrap input { padding-right: 60px; }
-    .key-toggle {
-      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; color: var(--muted);
-      font-size: 11px; cursor: pointer; padding: 2px 4px; font-family: inherit;
+    .ch-body {
+      padding: 0 14px 14px;
+      display: flex; flex-direction: column; gap: 10px;
     }
-    .key-toggle:hover { color: var(--text); }
-
-    .model-row { display: flex; gap: 6px; align-items: center; }
-    .model-row select { flex: 1; }
-
-    .key-pill {
-      display: inline-flex; align-items: center; gap: 3px;
-      font-size: 10px; font-weight: 700;
-      padding: 1px 7px; border-radius: 20px;
+    .ch-badge-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .ch-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+      background: var(--surface3); border: 1px solid var(--border); color: var(--muted);
     }
-    .key-pill.has  { background: var(--green-dim); color: #86efac; border: 1px solid rgba(34,197,94,0.25); }
-    .key-pill.none { background: var(--red-dim);   color: #fca5a5; border: 1px solid rgba(239,68,68,0.2);  }
+
+    /* ── Channel Modal ────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: auto; }
+
+    .modal {
+      background: var(--surface); border: 1px solid var(--border2);
+      border-radius: 14px; width: 580px; max-width: 94vw;
+      max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 16px 64px rgba(0,0,0,0.5);
+      transform: translateY(12px); transition: transform 0.2s;
+    }
+    .modal-overlay.open .modal { transform: translateY(0); }
+
+    .modal-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+    }
+    .modal-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: var(--purple-dim); border: 1px solid var(--border2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 17px;
+    }
+    .modal-title { font-size: 15px; font-weight: 700; }
+    .modal-sub   { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .modal-close {
+      margin-left: auto; background: none; border: none;
+      color: var(--muted); font-size: 18px; cursor: pointer;
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal-close:hover { background: var(--surface2); color: var(--text); }
+
+    .modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; }
+    .modal-footer {
+      display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+      padding: 14px 22px; border-top: 1px solid var(--border);
+    }
+
+    .form-row { display: flex; flex-direction: column; gap: 5px; }
+    .form-row label { font-size: 12px; font-weight: 600; color: var(--text2); }
+    .form-row .hint  { font-size: 11px; color: var(--muted); }
+    .form-row select, .form-row input { width: 100%; }
+
+    .api-key-list { display: flex; flex-direction: column; gap: 4px; }
+    .api-key-row { display: flex; gap: 6px; align-items: center; }
+    .api-key-row input { flex: 1; }
+    .api-key-row .btn-remove-key {
+      background: none; border: 1px solid transparent; color: var(--red);
+      font-size: 16px; cursor: pointer; padding: 4px 6px; border-radius: 4px;
+      line-height: 1; flex-shrink: 0;
+    }
+    .api-key-row .btn-remove-key:hover { border-color: rgba(239,68,68,0.3); }
+
+    .btn-add-key {
+      background: none; border: 1px dashed var(--border2); color: var(--muted);
+      font-size: 11px; cursor: pointer; padding: 6px 12px; border-radius: 6px;
+      text-align: center; font-family: inherit; font-weight: 600;
+    }
+    .btn-add-key:hover { border-color: var(--border3); color: var(--text2); }
+
+    /* ── Confirm dialog ──────────────────────────────────── */
+    .confirm-overlay {
+      position: fixed; inset: 0; z-index: 150;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s;
+    }
+    .confirm-overlay.open { opacity: 1; pointer-events: auto; }
+    .confirm-box {
+      background: var(--surface); border: 1px solid var(--border2);
+      border-radius: 12px; padding: 22px; width: 380px; max-width: 90vw;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+    }
+    .confirm-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+    .confirm-body  { font-size: 12px; color: var(--text2); line-height: 1.55; margin-bottom: 16px; }
+    .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
     /* ── Toggle ────────────────────────────────────────────── */
     .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
@@ -379,32 +454,31 @@
     <div class="page-sub">Configure AI providers, transcription, and overlay preferences</div>
   </div>
 
-  <!-- AI Providers -->
+  <!-- AI Channels -->
   <div class="section" id="sec-providers">
     <div class="section-header">
       <div class="sh-left">
         <div class="sec-icon">🤖</div>
         <div>
-          <div class="sec-title">AI Providers</div>
-          <div class="sec-desc">Drag cards to set fallback order · enable at least one</div>
+          <div class="sec-title">AI Channels</div>
+          <div class="sec-desc">Drag cards to reorder · Channels with the same priority are round-robined</div>
         </div>
       </div>
       <div class="sec-actions">
-        <span class="save-status" id="saveStatus-providers"></span>
-        <button class="btn btn-ghost btn-sm" onclick="reloadSection()">↻</button>
-        <button class="btn btn-primary btn-sm" id="saveBtn-providers" onclick="saveSectionSettings('providers')">Save</button>
+        <button class="btn btn-secondary btn-sm" onclick="openAddChannelModal()">＋ Add Channel</button>
       </div>
     </div>
     <div class="sec-body">
       <div class="banner banner-info">
-        <span class="banner-icon">🔑</span>
-        <span>Keys stored in <code>config/api-keys.json</code> on your machine. Leave blank to keep existing value.</span>
+        <span class="banner-icon">📡</span>
+        <span>Channels stored in <code>config/channels.json</code>. Active channels are tried by priority order;
+        same priority = round-robin. A channel auto-pauses after 3 consecutive failures.</span>
       </div>
       <div id="fallbackChain" class="fallback-chain" style="display:none">
-        <span class="chain-label">Fallback chain</span>
+        <span class="chain-label">Active channels</span>
         <span id="chainContent"></span>
       </div>
-      <div class="provider-list" id="providerList"></div>
+      <div class="channel-list" id="channelList"></div>
     </div>
   </div>
 
@@ -830,6 +904,70 @@
 
 </div><!-- /page -->
 
+<!-- ── Confirm Dialog ──────────────────────────────────── -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="confirm-title" id="confirmTitle">Delete channel?</div>
+    <div class="confirm-body" id="confirmBody">This cannot be undone.</div>
+    <div class="confirm-actions">
+      <button class="btn btn-ghost btn-sm" onclick="closeConfirm()">Cancel</button>
+      <button class="btn btn-fail btn-sm" id="confirmOkBtn" onclick="confirmAction()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Channel Modal ───────────────────────────────────── -->
+<div class="modal-overlay" id="channelModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-icon" id="modalIcon">＋</div>
+      <div>
+        <div class="modal-title" id="modalTitle">Add Channel</div>
+        <div class="modal-sub" id="modalSub">Configure an AI provider endpoint.</div>
+      </div>
+      <button class="modal-close" onclick="closeChannelModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>Channel Name</label>
+        <input type="text" id="chName" placeholder="e.g. My Proxy, Anthropic Direct…">
+      </div>
+      <div class="form-row">
+        <label>Service Type</label>
+        <select id="chServiceType">
+          <option value="openai-compatible">openai-compatible (OpenAI, Groq, any proxy)</option>
+          <option value="anthropic">anthropic (Claude SDK)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Base URL <span class="hint">(optional — leave empty for official API)</span></label>
+        <input type="text" id="chBaseUrl" placeholder="https://api.myproxy.com/v1">
+      </div>
+      <div class="form-row">
+        <label>API Keys</label>
+        <div class="api-key-list" id="chApiKeysContainer">
+          <div class="api-key-row">
+            <input type="password" class="ch-api-key-input" placeholder="sk-…">
+          </div>
+        </div>
+        <button class="btn-add-key" onclick="addKeyField()">＋ Add another key</button>
+      </div>
+      <div class="form-row">
+        <label>Model</label>
+        <input type="text" id="chModel" placeholder="e.g. gpt-4o-mini, claude-sonnet-4-5">
+      </div>
+      <div class="form-row">
+        <label>Priority <span class="hint">lower = higher priority, default 10</span></label>
+        <input type="number" id="chPriority" value="10" min="1" style="max-width:100px">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="closeChannelModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="modalSaveBtn" onclick="saveChannel()">Add</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -862,26 +1000,22 @@ function setSectionStatus(id, msg, type) {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
-let providers=[], modelCache={}, currentPromptType='interview-answer';
-let _sidLoading=false;
-
-const PROV_META = {
-  openai: { label:'OpenAI',        ph:'sk-…',     color:'#10a37f', bg:'rgba(16,163,127,0.15)',  char:'O' },
-  grok:   { label:'Groq',          ph:'gsk_…',    color:'#f55036', bg:'rgba(245,80,54,0.15)',   char:'G' },
-  gemini: { label:'Gemini',        ph:'AIzaSy…',  color:'#4285f4', bg:'rgba(66,133,244,0.15)',  char:'G' },
-  claude: { label:'Anthropic',     ph:'sk-ant-…', color:'#d97757', bg:'rgba(217,119,87,0.15)',  char:'A' },
-  ollama: { label:'Ollama (local)', ph:'',        color:'#22c55e', bg:'rgba(34,197,94,0.15)',   char:'L' },
-};
-function getMeta(id) { return PROV_META[id]||{label:id,ph:'API key…',color:'#6366f1',bg:'rgba(99,102,241,0.15)',char:'?'}; }
+let channels = [], currentPromptType = 'interview-answer';
+let _sidLoading = false, _editingName = null;
 
 // ── Load config ────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
+    // Load channel list
+    const chRes = await fetch('/api/channels');
+    const chData = await chRes.json();
+    if (chData.success) channels = chData.channels;
+    renderChannels();
+
+    // Load non-provider settings from old endpoint
     const res  = await fetch('/api/config/full');
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
-
-    providers = (data.providers||[]).map(p=>({...p,newKey:''}));
 
     const sttVal = data.stt_model || 'small';
     if (data.deepgram_enabled) {
@@ -894,7 +1028,6 @@ async function loadConfig() {
       if([...s.options].some(o=>o.value===sttVal)) s.value=sttVal;
     }
 
-    // Deepgram fields
     const dgModel=document.getElementById('deepgramModel');
     if([...dgModel.options].some(o=>o.value===data.deepgram_model)) dgModel.value=data.deepgram_model||'nova-2';
     loadDeepgramEnrollStatus();
@@ -914,153 +1047,271 @@ async function loadConfig() {
     updateSpeakerIdPanel();
     document.getElementById('speakerThreshold').value = data.speaker_id_threshold??0.70;
 
-    renderProviders(); updateFallbackChain();
-    for (const p of providers) { if (p.hasKey) loadModelsForProvider(p.id); }
-    updateSttApiKeyWarn();
   } catch(err) { console.error(err); showToast('Failed to load settings','err'); }
 }
 function reloadSection() { loadConfig(); }
 
-// ── Render providers ───────────────────────────────────────────────────────
-function renderProviders() {
-  const list = document.getElementById('providerList');
-  list.innerHTML = ''; let enabledOrder = 0;
-  providers.forEach((p, idx) => {
-    const m = getMeta(p.id);
-    if (p.enabled) enabledOrder++;
-    const orderNum = p.enabled ? enabledOrder : '—';
-    const models   = modelCache[p.id]||[];
-    const opts     = models.length > 0
-      ? models.map(md=>`<option value="${esc(md.id)}"${md.id===p.model?' selected':''}>${esc(md.name)}</option>`).join('')
-      : `<option value="${esc(p.model||'')}">${esc(p.model||'Loading…')}</option>`;
-    const isLocal = p.local || p.id === 'ollama';
-    const pill = isLocal
-      ? `<span class="key-pill has" style="background:rgba(34,197,94,0.15);color:#22c55e">🖥 local · $0</span>`
-      : (p.hasKey
-          ? `<span class="key-pill has">🔑 key saved</span>`
-          : `<span class="key-pill none">no key</span>`);
+// ── Render channel cards ────────────────────────────────────────────────────
+function renderChannels() {
+  const list = document.getElementById('channelList');
+  const chain = document.getElementById('fallbackChain');
+  list.innerHTML = '';
 
-    // Local providers don't need an API key — replace the key row with a
-    // short "runs locally" note and a connectivity-test button.
-    const keyRow = isLocal
-      ? `<div class="key-row">
-           <div class="key-wrap" style="align-items:center;padding:8px 10px;font-size:12px;color:var(--text2)">
-             Runs locally at <code>localhost:11434</code> — no API key needed.
-           </div>
-           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
-         </div>`
-      : `<div class="key-row">
-           <div class="key-wrap">
-             <input type="password" class="prov-key-input" autocomplete="off" data-idx="${idx}"
-               placeholder="${p.hasKey?'•••  leave blank to keep existing key':m.ph}">
-             <button class="key-toggle" data-idx="${idx}">Show</button>
-           </div>
-           <button class="btn btn-ghost btn-sm test-btn" data-idx="${idx}">Test</button>
-         </div>`;
+  if (channels.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;font-size:13px;color:var(--muted);font-style:italic">No channels configured. Click "Add Channel" to get started.</div>';
+    chain.style.display = 'none';
+    return;
+  }
+
+  // Active channels chain display
+  const active = channels.filter(c => c.status === 'active');
+  if (active.length > 0) {
+    chain.style.display = 'flex';
+    // Sort by priority for display
+    const sorted = [...active].sort((a, b) => (a.priority || 10) - (b.priority || 10));
+    document.getElementById('chainContent').innerHTML = sorted.map((c, i) =>
+      (i ? '<span class="chain-arrow">→</span>' : '') +
+      `<span class="chain-badge">${esc(c.name)} (p${c.priority || 10})</span>`
+    ).join('');
+  } else {
+    chain.style.display = 'none';
+  }
+
+  channels.forEach((ch, idx) => {
+    const avatarClass = ch.serviceType === 'anthropic' ? 'anthropic' : 'openai';
+    const avatarChar = ch.serviceType === 'anthropic' ? 'A' : 'O';
+    const statusBadge = statusPill(ch.status);
 
     const card = document.createElement('div');
-    card.className = `provider-card${p.enabled?' enabled':''}`;
-    card.dataset.idx = idx; card.draggable = !isLocal;
+    card.className = 'channel-card';
+    card.dataset.idx = idx;
+    card.draggable = true;
     card.innerHTML = `
-      <div class="card-header">
-        <span class="drag-handle" title="${isLocal?'Local fallback — fixed position':'Drag to reorder'}">${isLocal?'🔒':'⠿'}</span>
-        <span class="order-badge">${orderNum}</span>
-        <div class="prov-avatar" style="background:${m.bg};color:${m.color}">${m.char}</div>
-        <div class="prov-info">
-          <div class="prov-name">${esc(m.label)}</div>
-          <div class="prov-sub"><span style="font-size:10px">${esc(p.id)}</span>${pill}</div>
+      <div class="ch-header">
+        <span class="ch-drag-handle" title="Drag to reorder">⠿</span>
+        <div class="ch-avatar ${avatarClass}">${avatarChar}</div>
+        <div class="ch-info">
+          <div class="ch-name">
+            ${esc(ch.name)}
+            ${statusBadge}
+            <span class="ch-badge">${esc(ch.serviceType)}</span>
+          </div>
+          <div class="ch-sub">
+            ${ch.baseUrl ? `<code>${esc(ch.baseUrl)}</code>` : '<span style="color:var(--muted)">official API</span>'}
+            · ${(ch.apiKeys||[]).length} key(s) · priority ${ch.priority||10}
+            ${ch.model ? '· ' + esc(ch.model) : ''}
+          </div>
         </div>
-        <div class="card-actions">
-          <label class="toggle">
-            <input type="checkbox" class="prov-toggle" ${p.enabled?'checked':''} data-idx="${idx}">
-            <span class="toggle-track"></span>
-          </label>
-        </div>
-      </div>
-      <div class="card-body">
-        ${keyRow}
-        <div class="model-row">
-          <select class="prov-model-select" data-idx="${idx}">${opts}</select>
-          <button class="btn btn-ghost btn-sm reload-models-btn" data-idx="${idx}" title="Refresh models">↻</button>
+        <div class="ch-actions">
+          <button class="btn btn-ghost btn-sm" onclick="testChannel('${esc(ch.name)}', this)" title="Test connection">▶</button>
+          <button class="btn btn-ghost btn-sm" onclick="openEditChannelModal('${esc(ch.name)}')" title="Edit">✎</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteChannel('${esc(ch.name)}')" title="Delete" style="color:var(--red)">✕</button>
         </div>
       </div>`;
     list.appendChild(card);
   });
-  bindProviderEvents(); setupDragDrop();
+
+  setupChannelDragDrop();
 }
 
-function bindProviderEvents() {
-  document.querySelectorAll('.prov-toggle').forEach(cb => {
-    cb.addEventListener('change', e => { providers[+e.target.dataset.idx].enabled=e.target.checked; renderProviders(); updateFallbackChain(); });
-  });
-  document.querySelectorAll('.prov-key-input').forEach(inp => {
-    inp.addEventListener('input', e => { providers[+e.target.dataset.idx].newKey=e.target.value; });
-  });
-  document.querySelectorAll('.key-toggle').forEach(btn => {
-    btn.addEventListener('click', e => {
-      const inp=document.querySelector(`.prov-key-input[data-idx="${e.target.dataset.idx}"]`);
-      const isPass=inp.type==='password'; inp.type=isPass?'text':'password'; e.target.textContent=isPass?'Hide':'Show';
+function statusPill(status) {
+  if (status === 'active')   return '<span class="ch-status-badge active">● active</span>';
+  if (status === 'paused')   return '<span class="ch-status-badge paused">● paused</span>';
+  return '<span class="ch-status-badge disabled">● disabled</span>';
+}
+
+// ── Drag-to-reorder ─────────────────────────────────────────────────────────
+let _dragIdx = null;
+function setupChannelDragDrop() {
+  document.querySelectorAll('.channel-card').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      _dragIdx = +card.dataset.idx;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
     });
-  });
-  document.querySelectorAll('.prov-model-select').forEach(sel => {
-    sel.addEventListener('change', e => { providers[+e.target.dataset.idx].model=e.target.value; });
-  });
-  document.querySelectorAll('.reload-models-btn').forEach(btn => {
-    btn.addEventListener('click', e => { loadModelsForProvider(providers[+e.target.dataset.idx].id, true); });
-  });
-  document.querySelectorAll('.test-btn').forEach(btn => {
-    btn.addEventListener('click', async e => {
-      const idx=+e.target.dataset.idx; const p=providers[idx];
-      const isLocal = p.local || p.id === 'ollama';
-      const key=p.newKey||null;
-      if (!isLocal && !key && !p.hasKey) { showToast(`No API key for ${getMeta(p.id).label}`,'err'); return; }
-      const orig=e.target.textContent; e.target.textContent='…'; e.target.disabled=true;
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('.channel-card').forEach(c => c.classList.remove('drag-over'));
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (_dragIdx === null || _dragIdx === +card.dataset.idx) return;
+      const m = channels.splice(_dragIdx, 1)[0];
+      channels.splice(+card.dataset.idx, 0, m);
+      _dragIdx = null;
+      renderChannels();
+      // Persist new order
       try {
-        const body = isLocal
-          ? {providerId:p.id}
-          : (key?{providerId:p.id,key}:{providerId:p.id,key:'***STORED***'});
-        const res=await fetch('/api/config/test-provider',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        const d=await res.json();
-        if (d.success) { e.target.textContent='✓'; e.target.className='btn btn-success btn-sm test-btn'; showToast(d.message,'ok'); }
-        else           { e.target.textContent='✗'; e.target.className='btn btn-fail btn-sm test-btn';    showToast(d.error||'Failed','err'); }
-      } catch { e.target.textContent='✗'; e.target.className='btn btn-fail btn-sm test-btn'; showToast('Test failed','err'); }
-      e.target.disabled=false;
-      setTimeout(()=>{ e.target.textContent=orig; e.target.className='btn btn-ghost btn-sm test-btn'; },3000);
+        await fetch('/api/channels/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ names: channels.map(c => c.name) })
+        });
+        showToast('Order saved', 'ok');
+      } catch { showToast('Failed to save order', 'err'); }
     });
   });
 }
 
-let dragSrcIdx=null;
-function setupDragDrop() {
-  document.querySelectorAll('.provider-card').forEach(card => {
-    card.addEventListener('dragstart', e => { dragSrcIdx=+card.dataset.idx; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
-    card.addEventListener('dragend',   () => { card.classList.remove('dragging'); document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('drag-over')); });
-    card.addEventListener('dragover',  e => { e.preventDefault(); e.dataTransfer.dropEffect='move'; document.querySelectorAll('.provider-card').forEach(c=>c.classList.remove('drag-over')); card.classList.add('drag-over'); });
-    card.addEventListener('drop',      e => { e.preventDefault(); const t=+card.dataset.idx; if(dragSrcIdx===null||dragSrcIdx===t)return; const m=providers.splice(dragSrcIdx,1)[0]; providers.splice(t,0,m); dragSrcIdx=null; renderProviders(); updateFallbackChain(); });
+// ── Channel Modal ───────────────────────────────────────────────────────────
+function openAddChannelModal() {
+  _editingName = null;
+  document.getElementById('modalIcon').textContent = '＋';
+  document.getElementById('modalTitle').textContent = 'Add Channel';
+  document.getElementById('modalSub').textContent = 'Configure an AI provider endpoint.';
+  document.getElementById('modalSaveBtn').textContent = 'Add';
+  clearModalForm();
+  document.getElementById('channelModal').classList.add('open');
+}
+
+function openEditChannelModal(name) {
+  const ch = channels.find(c => c.name === name);
+  if (!ch) { showToast('Channel not found', 'err'); return; }
+  _editingName = name;
+  document.getElementById('modalIcon').textContent = '✎';
+  document.getElementById('modalTitle').textContent = 'Edit Channel';
+  document.getElementById('modalSub').textContent = 'Update configuration for "' + esc(name) + '".';
+  document.getElementById('modalSaveBtn').textContent = 'Save';
+  clearModalForm();
+  document.getElementById('chName').value = ch.name;
+  document.getElementById('chServiceType').value = ch.serviceType;
+  document.getElementById('chBaseUrl').value = ch.baseUrl || '';
+  document.getElementById('chModel').value = ch.model || '';
+  document.getElementById('chPriority').value = ch.priority || 10;
+  // API Keys
+  const container = document.getElementById('chApiKeysContainer');
+  container.innerHTML = '';
+  (ch.apiKeys || ['']).forEach((k, i) => {
+    const row = document.createElement('div');
+    row.className = 'api-key-row';
+    row.innerHTML = `<input type="password" class="ch-api-key-input" value="${esc(k)}">
+      ${i > 0 ? '<button class="btn-remove-key" onclick="this.parentElement.remove()">✕</button>' : ''}`;
+    container.appendChild(row);
   });
+  document.getElementById('channelModal').classList.add('open');
 }
 
-function updateFallbackChain() {
-  const en=providers.filter(p=>p.enabled&&(p.hasKey||p.newKey));
-  const chain=document.getElementById('fallbackChain');
-  if (!en.length) { chain.style.display='none'; return; }
-  chain.style.display='flex';
-  document.getElementById('chainContent').innerHTML=en.map((p,i)=>(i?'<span class="chain-arrow">→</span>':'')+`<span class="chain-badge">${esc(getMeta(p.id).label)}</span>`).join('');
+function closeChannelModal() {
+  document.getElementById('channelModal').classList.remove('open');
 }
 
-async function loadModelsForProvider(id, force=false) {
-  if (modelCache[id]&&!force) return;
+function clearModalForm() {
+  document.getElementById('chName').value = '';
+  document.getElementById('chServiceType').value = 'openai-compatible';
+  document.getElementById('chBaseUrl').value = '';
+  document.getElementById('chModel').value = '';
+  document.getElementById('chPriority').value = '10';
+  const container = document.getElementById('chApiKeysContainer');
+  container.innerHTML = '<div class="api-key-row"><input type="password" class="ch-api-key-input" placeholder="sk-…"></div>';
+}
+
+function addKeyField() {
+  const container = document.getElementById('chApiKeysContainer');
+  const row = document.createElement('div');
+  row.className = 'api-key-row';
+  row.innerHTML = `<input type="password" class="ch-api-key-input" placeholder="sk-…">
+    <button class="btn-remove-key" onclick="this.parentElement.remove()">✕</button>`;
+  container.appendChild(row);
+}
+
+async function saveChannel() {
+  const name = document.getElementById('chName').value.trim();
+  if (!name) { showToast('Channel name is required', 'err'); return; }
+  const apiKeys = [...document.querySelectorAll('.ch-api-key-input')].map(i => i.value.trim()).filter(Boolean);
+  if (apiKeys.length === 0) { showToast('At least one API key is required', 'err'); return; }
+  const model = document.getElementById('chModel').value.trim();
+  if (!model) { showToast('Model is required', 'err'); return; }
+
+  const body = {
+    name,
+    serviceType: document.getElementById('chServiceType').value,
+    baseUrl: document.getElementById('chBaseUrl').value.trim(),
+    apiKeys,
+    model,
+    priority: parseInt(document.getElementById('chPriority').value, 10) || 10,
+  };
+
+  const btn = document.getElementById('modalSaveBtn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
   try {
-    const res=await fetch(`/api/config/models/${id}`);
-    const d=await res.json();
-    if (d.success&&d.models.length) {
-      modelCache[id]=d.models;
-      const idx=providers.findIndex(p=>p.id===id); if(idx===-1)return;
-      const sel=document.querySelector(`.prov-model-select[data-idx="${idx}"]`); if(!sel)return;
-      const cur=providers[idx].model;
-      sel.innerHTML=d.models.map(m=>`<option value="${esc(m.id)}"${m.id===cur?' selected':''}>${esc(m.name)}</option>`).join('');
+    const url = _editingName
+      ? `/api/channels/${encodeURIComponent(_editingName)}`
+      : '/api/channels';
+    const method = _editingName ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await res.json();
+    if (d.success) {
+      showToast(_editingName ? 'Channel updated' : 'Channel added', 'ok');
+      closeChannelModal();
+      await loadConfig();
+    } else {
+      showToast(d.error || 'Failed to save', 'err');
     }
-  } catch {}
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+
+// ── Delete confirm ──────────────────────────────────────────────────────────
+let _deleteTarget = null;
+
+function deleteChannel(name) {
+  _deleteTarget = name;
+  document.getElementById('confirmTitle').textContent = 'Delete "' + esc(name) + '"?';
+  document.getElementById('confirmBody').textContent = 'This will remove the channel from configuration. API keys are not recoverable from this UI.';
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function closeConfirm() {
+  document.getElementById('confirmOverlay').classList.remove('open');
+  _deleteTarget = null;
+}
+
+async function confirmAction() {
+  if (!_deleteTarget) return;
+  const name = _deleteTarget;
+  _deleteTarget = null;
+  closeConfirm();
+  try {
+    const res = await fetch(`/api/channels/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const d = await res.json();
+    if (d.success) {
+      showToast('Channel deleted', 'ok');
+      await loadConfig();
+    } else {
+      showToast(d.error || 'Delete failed', 'err');
+    }
+  } catch { showToast('Delete failed', 'err'); }
+}
+
+// ── Test channel ────────────────────────────────────────────────────────────
+async function testChannel(name, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/channels/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const d = await res.json();
+    if (d.success) { showToast(d.message || 'Connected', 'ok'); }
+    else { showToast(d.error || 'Test failed', 'err'); }
+  } catch { showToast('Test failed', 'err'); }
+  btn.disabled = false;
+  btn.textContent = orig;
 }
 
 // ── Platform detection & STT backend ──────────────────────────────────────
@@ -1142,7 +1393,7 @@ function setTabActive(id) {
   document.getElementById('sttLocalPanel').style.display   = id==='tabSttLocal'   ? '' : 'none';
   document.getElementById('sttApiPanel').style.display     = id==='tabSttApi'     ? '' : 'none';
   document.getElementById('sttDeepgramPanel').style.display= id==='tabSttDeepgram'? '' : 'none';
-  if(id==='tabSttApi') updateSttApiKeyWarn();
+  if(id==='tabSttApi') document.getElementById('sttApiKeyWarn').style.display = 'none';
   updateSpeakerIdSectionVisibility(id === 'tabSttDeepgram');
 }
 function updateSpeakerIdSectionVisibility(deepgramActive) {
@@ -1155,7 +1406,7 @@ STT_TABS.forEach(id=>{
   document.getElementById(id).addEventListener('click',()=>setTabActive(id));
 });
 function updateSttApiKeyWarn() {
-  document.getElementById('sttApiKeyWarn').style.display=providers.some(p=>p.id==='openai'&&(p.hasKey||p.newKey))?'none':'flex';
+  document.getElementById('sttApiKeyWarn').style.display = 'none';
 }
 
 // ── Deepgram connection test ───────────────────────────────────────────────
@@ -1530,7 +1781,7 @@ function buildPayload() {
     : document.getElementById('sttLocalModel').value;
 
   return {
-    providers: providers.map(p=>({id:p.id,key:p.newKey||'',enabled:p.enabled,model:p.model||''})),
+    providers: [],  // channels are managed via /api/channels
     stt_model: sttModel,
     hud_opacity: +document.getElementById('opacitySlider').value,
     screenshots_path: document.getElementById('screenshotsPath').value.trim(),

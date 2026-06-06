@@ -3,9 +3,8 @@ import path from 'path';
 import imageProcessingService from './image-processing.service.js';
 import { CONFIG } from '../config/constants.js';
 import logger from '../utils/logger.js';
-import createMouse from 'osx-mouse';
-import sharp from 'sharp';
 import { recordHistogram } from '../utils/telemetry.js';
+import sharp from 'sharp';
 
 const log = logger('ScreenshotMonitor');
 
@@ -22,164 +21,14 @@ class ScreenshotMonitorService {
    * - If first click received, resets timer to 2 more seconds for second click
    * - If no click in first 2 seconds, returns null immediately
    * Returns coordinates object or null if no clicks within timeout
+   *
+   * NOTE: osx-mouse was removed (macOS-only), so this always returns null
+   * on non-macOS platforms. The caller (processScreenshot) already handles
+   * null by processing the full image.
    */
   async waitForCoordinates(timeoutMs = 2000) {
-    return new Promise((resolve) => {
-      let clickCount = 0;
-      const maxClicks = 2;
-      let mouseStream = null;
-      const clicks = [];
-      let timeoutHandle = null;
-      let cleanedUp = false;
-      let resolved = false;
-      let firstClickReceived = false;
-
-      const cleanup = () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-          timeoutHandle = null;
-        }
-
-        if (mouseStream) {
-          setImmediate(() => {
-            try {
-              if (
-                mouseStream &&
-                typeof mouseStream.removeListener === 'function'
-              ) {
-                mouseStream.removeListener('left-down', clickHandler);
-              }
-            } catch (err) {
-              log.warn(`Error removing listener: ${err.message}`);
-            }
-
-            try {
-              if (mouseStream) {
-                if (typeof mouseStream.destroy === 'function') {
-                  mouseStream.destroy();
-                } else if (typeof mouseStream.unref === 'function') {
-                  mouseStream.unref();
-                }
-              }
-            } catch (err) {
-              log.warn(`Error destroying mouse stream: ${err.message}`);
-            }
-            mouseStream = null;
-          });
-        }
-      };
-
-      const resetTimeout = () => {
-        // Clear existing timeout
-        if (timeoutHandle) {
-          clearTimeout(timeoutHandle);
-          timeoutHandle = null;
-        }
-
-        // Set new timeout for second click
-        if (!resolved) {
-          timeoutHandle = setTimeout(() => {
-            if (!resolved) {
-              resolved = true;
-              // Only one click received, timeout waiting for second
-              log.info(
-                'Timeout waiting for second click, will process full image',
-              );
-              cleanup();
-              resolve(null);
-            }
-          }, timeoutMs);
-        }
-      };
-
-      const clickHandler = (x, y) => {
-        if (resolved || cleanedUp) return;
-
-        try {
-          clickCount++;
-          clicks.push({ x, y });
-          log.info(`Mouse Click ${clickCount}: x=${x}, y=${y}`, {
-            clickNumber: clickCount,
-            position:
-              clickCount === 1 ? 'First (top-left)' : 'Second (bottom-right)',
-          });
-
-          if (clickCount === 1) {
-            // First click received - reset timer to 2 more seconds
-            firstClickReceived = true;
-            log.info('First click received, resetting timer for second click');
-            resetTimeout();
-          } else if (clickCount >= maxClicks && !resolved) {
-            // Both clicks received
-            resolved = true;
-
-            const click1 = clicks[0];
-            const click2 = clicks[1];
-            const minX = Math.min(click1.x, click2.x);
-            const maxX = Math.max(click1.x, click2.x);
-            const minY = Math.min(click1.y, click2.y);
-            const maxY = Math.max(click1.y, click2.y);
-
-            const coordinates = {
-              x: minX,
-              y: minY,
-              width: maxX - minX,
-              height: maxY - minY,
-              topLeft: { x: minX, y: minY },
-              bottomRight: { x: maxX, y: maxY },
-              topRight: { x: maxX, y: minY },
-              bottomLeft: { x: minX, y: maxY },
-            };
-
-            log.info('Coordinates captured', {
-              x: coordinates.x,
-              y: coordinates.y,
-              width: coordinates.width,
-              height: coordinates.height,
-            });
-
-            setImmediate(() => {
-              cleanup();
-              resolve(coordinates);
-            });
-          }
-        } catch (error) {
-          log.error(`Error in click handler: ${error.message}`);
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            resolve(null);
-          }
-        }
-      };
-
-      try {
-        mouseStream = createMouse();
-        mouseStream.on('left-down', clickHandler);
-
-        // Initial timeout: wait 2 seconds for first click
-        timeoutHandle = setTimeout(() => {
-          if (!resolved && !firstClickReceived) {
-            // No first click received within initial 2 seconds
-            resolved = true;
-            log.info(
-              'Timeout waiting for first click, will process full image',
-            );
-            cleanup();
-            resolve(null);
-          }
-          // If firstClickReceived is true, the timeout was already reset
-          // and we'll wait for the second click
-        }, timeoutMs);
-      } catch (error) {
-        log.error(`Error setting up mouse monitoring: ${error.message}`);
-        cleanup();
-        resolve(null);
-      }
-    });
+    log.info('Mouse coordinate capture not available on this platform — processing full image');
+    return null;
   }
 
   /**
