@@ -258,6 +258,36 @@ async def health_check():
     }
 
 
+@app.get("/audio-devices")
+async def list_audio_devices():
+    """Return available audio input devices for the settings page UI."""
+    import sounddevice as sd
+    try:
+        devices = sd.query_devices()
+        inputs = [
+            {
+                "index": i,
+                "name": d["name"],
+                "channels": d["max_input_channels"],
+                "is_default": i == sd.default.device[0],
+            }
+            for i, d in enumerate(devices)
+            if d["max_input_channels"] > 0
+        ]
+        current = os.getenv("AUDIO_INPUT_SOURCE", "")
+        return {
+            "devices": inputs,
+            "current": int(current) if current.isdigit() else None,
+            "current_name": (
+                next((d["name"] for d in inputs if d["index"] == int(current)), "")
+                if current.isdigit() else ""
+            ),
+        }
+    except Exception as e:
+        logger.warning("Failed to list audio devices", exc_info=True)
+        return {"devices": [], "current": None, "error": str(e)}
+
+
 @app.post("/reload-telemetry")
 async def reload_telemetry():
     """Re-read .env and reinitialize the OTel exporters.
@@ -539,12 +569,16 @@ async def enroll_voice():
 
     try:
         # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
+        _audio_device = os.getenv("AUDIO_INPUT_SOURCE", "")
+        _device_idx = int(_audio_device) if _audio_device.isdigit() else None
+
         def _record():
             audio = sd.rec(
                 int(ENROLL_SECONDS * SAMPLE_RATE),
                 samplerate=SAMPLE_RATE,
                 channels=1,
                 dtype='float32',
+                device=_device_idx,
             )
             sd.wait()
             return audio.flatten()
@@ -682,6 +716,9 @@ async def enroll_deepgram_voice(body: dict = None):
         logger.info("Deepgram voice enrollment: recording %ds from mic…", duration)
         telemetry.log('deepgram_enrollment_started', duration_s=duration)
 
+        _audio_device = os.getenv("AUDIO_INPUT_SOURCE", "")
+        _device_idx = int(_audio_device) if _audio_device.isdigit() else None
+
         loop = asyncio.get_event_loop()
         audio = await loop.run_in_executor(
             None,
@@ -691,6 +728,7 @@ async def enroll_deepgram_voice(body: dict = None):
                 channels=1,
                 dtype='float32',
                 blocking=True,
+                device=_device_idx,
             )
         )
         audio_flat = audio.flatten()

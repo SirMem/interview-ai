@@ -571,6 +571,14 @@
       </div>
     </div>
     <div class="sec-body">
+      <!-- Audio input source selector -->
+      <div class="field">
+        <label>Audio Input Source <span class="hint">Set to Stereo Mix to capture system audio (VoIP calls) instead of your mic</span></label>
+        <select id="audioInputSource">
+          <option value="">Default microphone</option>
+        </select>
+        <div id="audioSourceHint" class="hint" style="font-size:11px;margin-top:2px"></div>
+      </div>
       <div class="field">
         <label>STT Mode</label>
         <div id="platformBadge" style="display:none;margin-bottom:8px;font-size:11px;color:var(--muted);background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:5px 10px;width:fit-content"></div>
@@ -1047,9 +1055,40 @@ async function loadConfig() {
     updateSpeakerIdPanel();
     document.getElementById('speakerThreshold').value = data.speaker_id_threshold??0.70;
 
+    loadAudioDevices();
   } catch(err) { console.error(err); showToast('Failed to load settings','err'); }
 }
 function reloadSection() { loadConfig(); }
+
+// ── Audio input device list ─────────────────────────────────────────────────
+async function loadAudioDevices() {
+  const sel = document.getElementById('audioInputSource');
+  const currentVal = sel.dataset.currentValue || '';
+  try {
+    const res = await fetch('/api/config/audio-devices');
+    const d = await res.json();
+    if (!d.success && !d.devices) return;
+    sel.innerHTML = '<option value="">Default microphone</option>';
+    d.devices.forEach(dev => {
+      const opt = document.createElement('option');
+      opt.value = String(dev.index);
+      opt.textContent = `[${dev.index}] ${dev.name}${dev.isDefault ? ' (default)' : ''}`;
+      if (dev.index === d.current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    if (d.current !== null && d.current !== undefined) {
+      sel.value = String(d.current);
+      const hint = document.getElementById('audioSourceHint');
+      if (d.current === 0 || (devices && devices.find(dv => dv.index === d.current && dv.name.includes('立体声')))) {
+        hint.textContent = 'Using Stereo Mix — system audio will be captured.';
+        hint.style.color = 'var(--green)';
+      }
+    }
+    sel.dataset.currentValue = sel.value;
+  } catch (e) {
+    console.warn('Could not load audio devices', e);
+  }
+}
 
 // ── Render channel cards ────────────────────────────────────────────────────
 function renderChannels() {
@@ -1783,6 +1822,7 @@ function buildPayload() {
   return {
     providers: [],  // channels are managed via /api/channels
     stt_model: sttModel,
+    audio_input_source: document.getElementById('audioInputSource').value,
     hud_opacity: +document.getElementById('opacitySlider').value,
     screenshots_path: document.getElementById('screenshotsPath').value.trim(),
     interview_role: document.getElementById('interviewRole').value.trim(),

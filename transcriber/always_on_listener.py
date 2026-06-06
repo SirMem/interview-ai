@@ -29,6 +29,7 @@ from typing import Optional
 
 from config import (
     SAMPLE_RATE,
+    AUDIO_INPUT_SOURCE,
     ALWAYS_ON_SILENCE_THRESHOLD,
     ALWAYS_ON_MIN_SPEECH_DURATION,
     ALWAYS_ON_MAX_UTTERANCE_DURATION,
@@ -175,6 +176,7 @@ class AlwaysOnListener:
             dtype='float32',
             blocksize=_BLOCK_SIZE,
             callback=self._audio_callback,
+            device=int(AUDIO_INPUT_SOURCE) if AUDIO_INPUT_SOURCE.isdigit() else None,
         )
         self._stream.start()
         self._streaming_stt.start()

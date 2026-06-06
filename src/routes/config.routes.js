@@ -81,6 +81,19 @@ router.delete('/config/deepgram-enrollment', async (req, res) => {
   }
 });
 
+// ── Audio input device list (proxied from Python transcriber) ─────────────
+router.get('/config/audio-devices', async (req, res) => {
+  try {
+    const r = await fetch('http://localhost:8000/audio-devices', {
+      signal: AbortSignal.timeout(3000),
+    });
+    const data = await r.json().catch(() => ({}));
+    return res.json({ success: true, ...data });
+  } catch (e) {
+    return res.json({ success: true, devices: [], current: null, error: e.message });
+  }
+});
+
 // ── Platform info (OS / Whisper backend) ─────────────────────────────
 router.get('/config/platform', (req, res) => configController.getPlatformInfo(req, res));
 

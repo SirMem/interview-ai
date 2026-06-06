@@ -22,6 +22,10 @@ CHUNK_DURATION: float = 2.0  # seconds per Whisper chunk
 CHANNELS: int      = 1
 BLOCK_SIZE: int    = int(SAMPLE_RATE * CHUNK_DURATION)
 
+# Audio input source (device index or name). Empty string = system default microphone.
+# Set to an index like "12" for Stereo Mix (captures system audio including VoIP calls).
+AUDIO_INPUT_SOURCE: str = os.getenv("AUDIO_INPUT_SOURCE", "")
+
 # ── Whisper ────────────────────────────────────────────────────────────────────
 WHISPER_MODEL:   str = os.getenv("STT_MODEL",      "small")
 LANGUAGE: Optional[str] = os.getenv("LANGUAGE",    "en") or None

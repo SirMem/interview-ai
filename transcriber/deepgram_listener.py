@@ -30,6 +30,7 @@ import numpy as np
 import sounddevice as sd
 
 from config import (
+    AUDIO_INPUT_SOURCE,
     DEEPGRAM_MODEL,
     DEEPGRAM_LANGUAGE,
     DEEPGRAM_ENCODING,
@@ -170,6 +171,7 @@ class DeepgramListener:
             dtype='float32',
             blocksize=_BLOCK_SIZE,
             callback=self._audio_callback,
+            device=int(AUDIO_INPUT_SOURCE) if AUDIO_INPUT_SOURCE.isdigit() else None,
         )
         self._stream.start()
         logger.info("DeepgramListener: mic open (model=%s, endpointing=%dms, diarize=%s)",
