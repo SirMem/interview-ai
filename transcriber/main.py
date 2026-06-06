@@ -277,11 +277,8 @@ async def list_audio_devices():
         current = os.getenv("AUDIO_INPUT_SOURCE", "")
         return {
             "devices": inputs,
-            "current": int(current) if current.isdigit() else None,
-            "current_name": (
-                next((d["name"] for d in inputs if d["index"] == int(current)), "")
-                if current.isdigit() else ""
-            ),
+            "current": current,  # device name string
+            "current_name": current,
         }
     except Exception as e:
         logger.warning("Failed to list audio devices", exc_info=True)
@@ -568,15 +565,16 @@ async def enroll_voice():
     telemetry.log('voice_enrollment_started', seconds=ENROLL_SECONDS)
 
     try:
-        # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
-        _audio_device = os.getenv("AUDIO_INPUT_SOURCE", "")
-        _device_idx = int(_audio_device) if _audio_device.isdigit() else None
+        # Resolve audio input device by name
+        from config import get_audio_input_device
+        _device_idx, _channels = get_audio_input_device()
 
+        # Run blocking sd.rec + sd.wait in a thread so we don't block the event loop
         def _record():
             audio = sd.rec(
                 int(ENROLL_SECONDS * SAMPLE_RATE),
                 samplerate=SAMPLE_RATE,
-                channels=1,
+                channels=_channels,
                 dtype='float32',
                 device=_device_idx,
             )
@@ -716,8 +714,8 @@ async def enroll_deepgram_voice(body: dict = None):
         logger.info("Deepgram voice enrollment: recording %ds from mic…", duration)
         telemetry.log('deepgram_enrollment_started', duration_s=duration)
 
-        _audio_device = os.getenv("AUDIO_INPUT_SOURCE", "")
-        _device_idx = int(_audio_device) if _audio_device.isdigit() else None
+        from config import get_audio_input_device
+        _device_idx, _channels = get_audio_input_device()
 
         loop = asyncio.get_event_loop()
         audio = await loop.run_in_executor(
@@ -725,7 +723,7 @@ async def enroll_deepgram_voice(body: dict = None):
             lambda: sd.rec(
                 int(duration * _SAMPLE_RATE_INT),
                 samplerate=_SAMPLE_RATE_INT,
-                channels=1,
+                channels=_channels,
                 dtype='float32',
                 blocking=True,
                 device=_device_idx,

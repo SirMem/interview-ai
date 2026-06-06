@@ -1063,7 +1063,6 @@ function reloadSection() { loadConfig(); }
 // ── Audio input device list ─────────────────────────────────────────────────
 async function loadAudioDevices() {
   const sel = document.getElementById('audioInputSource');
-  const currentVal = sel.dataset.currentValue || '';
   try {
     const res = await fetch('/api/config/audio-devices');
     const d = await res.json();
@@ -1071,20 +1070,19 @@ async function loadAudioDevices() {
     sel.innerHTML = '<option value="">Default microphone</option>';
     d.devices.forEach(dev => {
       const opt = document.createElement('option');
-      opt.value = String(dev.index);
-      opt.textContent = `[${dev.index}] ${dev.name}${dev.isDefault ? ' (default)' : ''}`;
-      if (dev.index === d.current) opt.selected = true;
+      opt.value = dev.name;  // store by NAME, not index
+      opt.textContent = `[${dev.index}] ${dev.name} (${dev.channels}ch)${dev.isDefault ? ' ← default' : ''}`;
+      if (d.current && d.current === dev.name) opt.selected = true;
       sel.appendChild(opt);
     });
-    if (d.current !== null && d.current !== undefined) {
-      sel.value = String(d.current);
-      const hint = document.getElementById('audioSourceHint');
-      if (d.current === 0 || (devices && devices.find(dv => dv.index === d.current && dv.name.includes('立体声')))) {
-        hint.textContent = 'Using Stereo Mix — system audio will be captured.';
-        hint.style.color = 'var(--green)';
-      }
+    const hint = document.getElementById('audioSourceHint');
+    if (d.current) {
+      hint.textContent = `Using: ${d.current}`;
+      hint.style.color = 'var(--green)';
+    } else {
+      hint.textContent = 'Using system default microphone.';
+      hint.style.color = 'var(--muted)';
     }
-    sel.dataset.currentValue = sel.value;
   } catch (e) {
     console.warn('Could not load audio devices', e);
   }

@@ -31,6 +31,7 @@ import sounddevice as sd
 
 from config import (
     AUDIO_INPUT_SOURCE,
+    get_audio_input_device,
     DEEPGRAM_MODEL,
     DEEPGRAM_LANGUAGE,
     DEEPGRAM_ENCODING,
@@ -165,13 +166,15 @@ class DeepgramListener:
         )
         self._sender_thread.start()
 
+        _device_idx, _channels = get_audio_input_device()
+
         self._stream = sd.InputStream(
             samplerate=_SAMPLE_RATE,
-            channels=1,
+            channels=_channels,
             dtype='float32',
             blocksize=_BLOCK_SIZE,
             callback=self._audio_callback,
-            device=int(AUDIO_INPUT_SOURCE) if AUDIO_INPUT_SOURCE.isdigit() else None,
+            device=_device_idx,
         )
         self._stream.start()
         logger.info("DeepgramListener: mic open (model=%s, endpointing=%dms, diarize=%s)",

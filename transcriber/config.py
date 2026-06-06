@@ -22,9 +22,33 @@ CHUNK_DURATION: float = 2.0  # seconds per Whisper chunk
 CHANNELS: int      = 1
 BLOCK_SIZE: int    = int(SAMPLE_RATE * CHUNK_DURATION)
 
-# Audio input source (device index or name). Empty string = system default microphone.
-# Set to an index like "12" for Stereo Mix (captures system audio including VoIP calls).
+# Audio input source (device name). Empty string = system default microphone.
+# Set to a device name like "立体声混音 (Realtek HD Audio Stereo input)"
+# to capture system audio (including VoIP calls) instead of your mic.
 AUDIO_INPUT_SOURCE: str = os.getenv("AUDIO_INPUT_SOURCE", "")
+
+
+def get_audio_input_device():
+    """Resolve the configured audio input source to (device_index, channels).
+
+    Returns (None, 1) when using the system default microphone.
+    The device is looked up by name (not index) so it survives index
+    drift across reboots / device reconnects.
+    """
+    source = os.getenv("AUDIO_INPUT_SOURCE", "").strip()
+    if not source:
+        return None, 1
+    try:
+        import sounddevice as sd
+        devices = sd.query_devices()
+        for i, d in enumerate(devices):
+            if d["name"] == source and d["max_input_channels"] > 0:
+                return i, d["max_input_channels"]
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("Audio device '%s' not found — falling back to default mic", source)
+    except Exception:
+        pass
+    return None, 1
 
 # ── Whisper ────────────────────────────────────────────────────────────────────
 WHISPER_MODEL:   str = os.getenv("STT_MODEL",      "small")

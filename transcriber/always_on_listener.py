@@ -30,6 +30,7 @@ from typing import Optional
 from config import (
     SAMPLE_RATE,
     AUDIO_INPUT_SOURCE,
+    get_audio_input_device,
     ALWAYS_ON_SILENCE_THRESHOLD,
     ALWAYS_ON_MIN_SPEECH_DURATION,
     ALWAYS_ON_MAX_UTTERANCE_DURATION,
@@ -170,19 +171,22 @@ class AlwaysOnListener:
         if self._speaker_id_worker is not None:
             self._speaker_id_worker.start()
 
+        _device_idx, _channels = get_audio_input_device()
+
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
-            channels=1,
+            channels=_channels,
             dtype='float32',
             blocksize=_BLOCK_SIZE,
             callback=self._audio_callback,
-            device=int(AUDIO_INPUT_SOURCE) if AUDIO_INPUT_SOURCE.isdigit() else None,
+            device=_device_idx,
         )
         self._stream.start()
         self._streaming_stt.start()
         logger.info(
             "AlwaysOnListener started "
-            "(silence_threshold=%ss, min_speech=%ss, speaker_id=%s, auto_answer=%s)",
+            "(silence_threshold=%ss, min_speech=%ss, speaker_id=%s, auto_answer=%s, device=%s)",
+            ALWAYS_ON_SILENCE_THRESHOLD,
             ALWAYS_ON_SILENCE_THRESHOLD,
             ALWAYS_ON_MIN_SPEECH_DURATION,
             "enabled" if self._speaker_id_worker else "disabled",
