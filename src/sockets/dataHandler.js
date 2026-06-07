@@ -43,10 +43,6 @@ class DataHandler extends EventEmitter {
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
     this.pendingPrompts = new Map();
     this.transcriptBuffer = new InterviewTranscriptBuffer();
-    this.transcriptBuffer.setSummarizeFn(
-      (q, a) => aiService.summarizeQAPair(q, a),
-      (entries) => aiService.summarizeMerge(entries),
-    );
     this._cleanupTimer = null;
     this.setupNamespace();
     this._startMessageCleanup();

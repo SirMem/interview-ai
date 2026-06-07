@@ -15,7 +15,7 @@ const log = logger('AIService');
 // ── AI pricing table ─────────────────────────────────────────────────────────
 // USD per 1M tokens, last updated 2026-04-22. Update when providers change pricing.
 // Unknown models log a one-time warning and record cost as 0 (tokens still tracked).
-// Use "<provider>:*" as a fallback prefix (e.g. "ollama:*") for $0 local models.
+// Use "<provider>:*" as a fallback prefix for pricing
 const AI_PRICING = {
   // OpenAI
   'gpt-4o':                       { in: 2.50,  out: 10.00 },
@@ -54,8 +54,6 @@ const AI_PRICING = {
   'claude-haiku-4-5-20251001':    { in: 1.00,  out: 5.00 },
   'claude-3-5-sonnet-20241022':   { in: 3.00,  out: 15.00 },
   'claude-3-5-haiku-20241022':    { in: 0.80,  out: 4.00 },
-  // Local — Ollama models cost $0 (electricity not modeled)
-  'ollama:*':                     { in: 0,     out: 0 },
 };
 const _unknownModelWarned = new Set();
 function _priceFor(model) {
@@ -143,8 +141,6 @@ class AIService {
           grok:   process.env.MODEL_GROK   || 'llama-3.3-70b-versatile',
           claude: process.env.MODEL_CLAUDE || 'claude-sonnet-4-5',
         },
-        ollama_model:    process.env.OLLAMA_MODEL    || 'llama3.2:1b',
-        ollama_enabled:  process.env.OLLAMA_ENABLED  !== 'false',
         answer_mode:     process.env.ANSWER_MODE     || 'auto',
         interview_role:  process.env.INTERVIEW_ROLE  || '',
       };
@@ -286,20 +282,18 @@ class AIService {
   }
 
   getAvailableProviders() {
-    if (!this.config) return ['ollama'];
+    if (!this.config) return [];
 
     const enabledProviders = this.config.enabled || [];
     const providersToUse =
       enabledProviders.length > 0
         ? enabledProviders
         : (this.config.order || []).filter((id) => {
-            if (id === 'ollama') return true;
             const key = this.config.keys[id];
             return key && key.trim().length > 0;
           });
 
     const availableProviders = providersToUse.filter((id) => {
-      if (id === 'ollama') return true;
       const key = this.config.keys[id];
       return key && key.trim().length > 0;
     });
@@ -318,9 +312,6 @@ class AIService {
       return false;
     });
 
-    if (this.config?.ollama_enabled !== false && !alive.includes('ollama')) {
-      alive.push('ollama');
-    }
     return alive;
   }
 
@@ -546,7 +537,6 @@ class AIService {
    * Priority order:
    *   1. Active channels (via channel.service — priority + round-robin)
    *   2. Old .env-based providers (backward compat during transition)
-   *   3. Ollama (terminal fallback)
    */
   async callAIWithFallback(messages, options = {}) {
     // ── Try channels first ─────────────────────────────────────────
@@ -584,7 +574,7 @@ class AIService {
     // ── Legacy .env providers (backward compat) ────────────────────
     const providers = this.getAvailableProviders();
     if (providers.length === 0) {
-      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
+      throw new Error('No AI providers available — configure at least one channel or API key.');
     }
 
     let lastError = null;
@@ -595,7 +585,6 @@ class AIService {
         switch (providerId) {
           case 'openai':  result = await this.callOpenAI(messages, options); break;
           case 'claude':  result = await this.callClaude(messages, options); break;
-          case 'ollama':  result = await this.callOllama(messages, options); break;
           default: throw new Error(`Unknown legacy provider: ${providerId}`);
         }
         this.markProviderAsSuccess(providerId);
@@ -738,20 +727,17 @@ class AIService {
     // ── Legacy .env providers ──────────────────────────────────────
     const providers = this.getAvailableProviders();
     if (providers.length === 0) {
-      throw new Error('No AI providers available — Ollama fallback was disabled and no other keys are configured.');
+      throw new Error('No AI providers available — configure at least one channel or API key.');
     }
 
     let lastError = null;
     for (const providerId of providers) {
-      const model = providerId === 'ollama'
-        ? `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`
-        : (this.config?.models?.[providerId] || '');
+      const model = (this.config?.models?.[providerId] || '');
       try {
         let gen;
         switch (providerId) {
           case 'openai': gen = this.streamOpenAI(messages, options); break;
           case 'claude': gen = this.streamClaude(messages, options); break;
-          case 'ollama': gen = this._streamOllama(messages, options); break;
           default: throw new Error(`Unknown provider: ${providerId}`);
         }
 
@@ -874,92 +860,6 @@ Question: ${question}`;
 
   // ==================== Interview Listener ====================
 
-  async _callOllamaClassifier(messages, modelOverride) {
-    const model = modelOverride || this.config?.keys?.ollama_model || 'llama3.2:1b';
-    const openai = new OpenAI({
-      apiKey: 'ollama',
-      baseURL: 'http://localhost:11434/v1',
-    });
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: 0,
-      max_tokens: 256,
-      response_format: { type: 'json_object' },
-    });
-    return completion.choices[0]?.message?.content || '';
-  }
-
-  async *_streamOllama(messages, options = {}) {
-    const model = options.model || this.config?.keys?.ollama_model || 'llama3.2:1b';
-    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
-    const stream = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: options.temperature || 0.7,
-      max_tokens: options.max_tokens || 2048,
-      stream: true,
-      stream_options: { include_usage: true },
-    });
-    let usage = null;
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta;
-      const text = delta?.content || delta?.reasoning_content || '';
-      if (text) yield { text };
-      if (chunk.usage) usage = chunk.usage;
-    }
-    if (usage) {
-      yield { usage: { input_tokens: usage.prompt_tokens || 0, output_tokens: usage.completion_tokens || 0 } };
-    } else {
-      yield { usage: { input_tokens: 0, output_tokens: 0 } };
-    }
-  }
-
-  async summarizeQAPair(question, answer) {
-    const model = this.config?.keys?.ollama_model || 'llama3.2:1b';
-    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
-    const messages = [
-      {
-        role: 'system',
-        content: 'Summarize this interview Q&A into one concise line (max 40 words). Include the topic and key points covered. No bullet points, no preamble — just the summary line.',
-      },
-      { role: 'user', content: `Q: ${question}\nA: ${answer}` },
-    ];
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: 0,
-      max_tokens: 100,
-    });
-    return completion.choices[0]?.message?.content || '';
-  }
-
-  async summarizeMerge(entries) {
-    const model = this.config?.keys?.ollama_model || 'llama3.2:1b';
-    const openai = new OpenAI({ apiKey: 'ollama', baseURL: 'http://localhost:11434/v1' });
-
-    const formatted = entries.map((e, i) => {
-      if (e.type === 'merged') return `[${i + 1}] Prior summary: ${e.text}`;
-      if (e.summary) return `[${i + 1}] ${e.summary}`;
-      return `[${i + 1}] Q: ${e.q}\n    A: ${e.a}`;
-    }).join('\n');
-
-    const messages = [
-      {
-        role: 'system',
-        content: 'You are compressing interview conversation history. Merge the following entries into a single concise summary (max 120 words) that preserves topics, key facts, and the chronological flow. No bullet points, no preamble — just the merged summary paragraph.',
-      },
-      { role: 'user', content: formatted },
-    ];
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: 0,
-      max_tokens: 250,
-    });
-    return completion.choices[0]?.message?.content || '';
-  }
-
   setAnswerMode(mode) {
     this._answerMode = mode;
     log.info(`Answer mode set to: ${mode}`);
@@ -978,53 +878,6 @@ Question: ${question}`;
       { role: 'user', content: questionText },
     ];
 
-    const answerMode = this._answerMode || this.config?.answer_mode || 'auto';
-
-    // Direct mode: ollama
-    if (answerMode === 'ollama') {
-      const ollamaModel = `ollama:${this.config?.ollama_model || 'llama3.2:1b'}`;
-      try {
-        for await (const chunk of this._streamOllama(messages, { temperature: 0.7, max_tokens: 2048 })) {
-          if (chunk.text)  yield { token: chunk.text, provider: 'ollama', model: ollamaModel };
-          if (chunk.usage) yield { usage: chunk.usage, provider: 'ollama', model: ollamaModel };
-        }
-        addCounter('ai_provider_success_total', 1, { provider: 'ollama', flow: 'transcription' });
-        return;
-      } catch (err) {
-        addCounter('ai_provider_failure_total', 1, {
-          provider: 'ollama', flow: 'transcription',
-          error_class: (err && err.constructor && err.constructor.name) || 'Error',
-        });
-        log.warn('Ollama answer streaming failed, falling back to remote', { error: err.message });
-      }
-    } else if (['openai', 'claude'].includes(answerMode)) {
-      // Direct mode: use the channel-like approach for the specified legacy provider
-      const model = this.config?.models?.[answerMode] || '';
-      try {
-        const opts = { temperature: 0.7, max_tokens: 2048 };
-        let gen;
-        switch (answerMode) {
-          case 'openai': gen = this.streamOpenAI(messages, opts); break;
-          case 'claude': gen = this.streamClaude(messages, opts); break;
-        }
-        for await (const chunk of gen) {
-          if (chunk.text)  yield { token: chunk.text, provider: answerMode, model };
-          if (chunk.usage) yield { usage: chunk.usage, provider: answerMode, model };
-        }
-        addCounter('ai_provider_success_total', 1, { provider: answerMode, flow: 'transcription' });
-        return;
-      } catch (err) {
-        addCounter('ai_provider_failure_total', 1, {
-          provider: answerMode, flow: 'transcription',
-          error_class: (err && err.constructor && err.constructor.name) || 'Error',
-        });
-        _providerLogLevel(err) === 'error'
-          ? log.error(`${answerMode} answer streaming failed, falling back`, err)
-          : log.warn(`${answerMode} answer streaming failed, falling back`, { error: err.message, status: err?.status });
-      }
-    }
-
-    // 'auto' or fallback — uses channel-based dispatch
     yield* this.callAIWithFallbackStream(messages, { temperature: 0.7, max_tokens: 2048 });
   }
 
