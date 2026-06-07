@@ -145,6 +145,20 @@ recordings/
 
 # API Keys configuration
 config/api-keys.json
+config/channels.json
+
+# Local SQLite databases
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Local reference repos
+ccx-main/
+
+# Local-only installed skills
+.claude/skills/*
+!.claude/skills/run-solvewatchai/
+!.claude/skills/run-solvewatchai/**
 
 # Email configuration
 config/email-config.json

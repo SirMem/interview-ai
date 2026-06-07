@@ -1,61 +1,63 @@
-# Task Plan: 捕获系统音频（微信通话等）用于面试 AI 助手
+# Task Plan: SolveWatch AI —— 从"语音转写管道"到"AI Agent 框架"
 
-> 在 Windows 面试场景下，戴着耳机听面试官说话时，麦克风收不到对方声音。
-> 需要捕获"系统正在播放的音频"（扬声器输出）——包括微信/Zoom/腾讯会议等 VoIP 通话。
-> 目标：让 Python 转写器能读取系统音频流，不依赖麦克风。
+> 当前状态：基础设施已就绪（channel 调度 + WASAPI loopback + 多 channel UI），
+> 核心 AI 调用层仍然是"一次 question → 一次 AI → 一次 answer"的简单管道。
+> 下一步是引入 session 管理、RAG、工具调用、技能系统，使面试助手具备 Agent 能力。
 
 ## Current Phase
-Phase 2 — 方案调研与重定向
+Base Complete (所有基础管线就绪)
 
-## Phases
+## 已完成的工作
 
-### Phase 1（已完成，已废弃）: Stereo Mix 方案
-- [x] `config.py` — 新增 `AUDIO_INPUT_SOURCE` + `get_audio_input_device()` 函数
-- [x] `always_on_listener.py` / `deepgram_listener.py` — 按名称查找设备 + 动态声道数
-- [x] `main.py` — 新增 `/audio-devices` 端点 + sd.rec 传 device
-- [x] `config.controller.js` — 读写 `audio_input_source`
-- [x] `config.routes.js` — 代理 `/config/audio-devices`
-- [x] `settings.html` — 音频源下拉框（按名称存储）
-- **Status:** 已完成并合入 main
-- **结论:** ❌ Stereo Mix 依赖声卡驱动，设备索引漂移，实际不可用（`PaErrorCode -9996`）
+### Multi-Channel AI Provider (已合入 main)
+- `config/channels.json` — JSON 存储替代扁平 `.env`
+- `channel.service.js` — CRUD + priority 排序 + round-robin + circuit breaker
+- `ai.service.js` — SDK 工厂（openai-compatible / anthropic）
+- `channel.controller.js` + routes — REST API
+- `settings.html` — ccx-main 风格 channel 管理 UI（拖拽排序、添加/编辑弹窗、状态切换、测试）
+- 移除了 Groq、Gemini 独立 SDK 调用
 
-### Phase 2: 方案调研
-- [x] 确认 Stereo Mix 失败原因（设备索引漂移 + channels 不匹配）
-- [x] 调研替代方案：
-  - **VB-Cable**（虚拟声卡，零代码改动，收费 $40）
-  - **pyaudiowpatch**（WASAPI loopback，需改捕获路径）
-  - **soundcard**（新捕获路径）
-- **Status:** 待决策
-- **结论:** 有三个候选方案，待选一个实现
+### WASAPI Loopback 系统音频捕获 (已合入 main)
+- `system_audio_capture.py` — pyaudiowpatch WASAPI loopback 封装
+- `always_on_listener.py` — 双路径（mic / system audio）
+- settings.html 音频源切换（麦克风 / 系统音频）
+- 前两次 Stereo Mix 尝试被废弃
 
-## Key Questions
-1. ~~Stereo Mix 能直接用吗？~~ → ❌ 不可靠，设备名编码 + 索引漂移
-2. 替代方案选哪个？（待决策）
+### DeepSeek 推理模型修复 (已合入 main)
+- 流式响应中 fallback `delta.reasoning_content`（推理模型特有）
 
-## Decisions Made
-| Decision | Rationale |
-|----------|-----------|
-| ~~Stereo Mix~~ | ❌ 实施后发现不可靠 |
-| ~~用设备索引存~~ | ❌ 重启漂移 |
-| ~~用设备名称存~~ | ❌ 中文编码问题 + 设备名可能不存在 |
-| — | — |
+### Ollama 已完全移除 (已合入 main)
+- `ai.service.js`: 删除 callOllama / _streamOllama / _callOllamaClassifier / summarizeQAPair / summarizeMerge
+- `config.controller.js`: 删除 ollama provider 枚举、模型获取、测试端点
+- `InterviewTranscriptBuffer.js`: 从 210 行简化到 65 行（纯 rolling Q&A storage，无压缩/摘要）
+- `dataHandler.js`: 删除 setSummarizeFn 绑定
 
-## Errors Encountered
-| Error | Attempt | Resolution |
-|-------|---------|------------|
-| `Invalid device [PaErrorCode -9996]` | Stereo Mix 设备索引漂移 | 改为按名称查找（但中文名有编码风险）|
-| `Invalid number of channels [PaErrorCode -9998]` | 写死 channels=1 | 改为动态 max_input_channels（治标不治本）|
-| Stereo Mix 在设备管理器中不存在 | 设备列表无此设备 | 根本原因是声卡驱动不提供 Stereo Mix |
+### Channel 状态切换按钮 (已合入 main)
+- `settings.html` channel card 新增 pause/resume toggle 按钮
 
-## 候选方案对比
+## 项目当前架构
 
-| 方案 | 代码改动 | 所需安装 | 稳定性 | 成本 |
-|------|---------|---------|--------|------|
-| **VB-Cable** ⭐ | 零改动 | VB-Cable 虚拟声卡 | ✅ 极高 | $40 / 免费版≤10min |
-| **pyaudiowpatch** | 中等 → 新增捕获路径 | `pip install pyaudiowpatch` | ✅ 高 | 免费 |
-| **VoiceMeeter Banana** | 零改动 | 虚拟调音台 | ✅ 高 | 免费/捐赠 |
+```
+Python (语音捕获)                      Node.js (AI 调度 + HUD)
+┌─────────────────┐                  ┌──────────────────────────┐
+│ VAD → Whisper   │──stt_final──→    │ dataHandler.js            │
+│ mic / loopback  │   HTTP POST      │  → answerInterviewQuestion│
+└─────────────────┘                  │  → channel.service.js     │
+                                     │  → SDK 工厂 → AI API     │
+                                     │  → Socket.IO → HUD       │
+                                     └──────────────────────────┘
+```
 
-## Notes
-- 先有 `8135435` `ed21fb7` 两次 Stereo Mix 提交
-- VB-Cable 本质是虚拟声卡：系统音频输出 → VB-Cable → 显示为普通输入设备 → sd.InputStream 无感使用
-- pyaudiowpatch 直接 WASAPI loopback：不走虚拟设备，直接从扬声器偷听
+## 当前局限性
+
+| 维度 | 现状 | 目标 |
+|------|------|------|
+| 对话记忆 | 最近 N 条 Q&A 原文注入（无压缩） | Session 管理 + 持久化 |
+| 检索增强 | 无 | RAG（历史 + 知识库）|
+| 工具调用 | 无 | function calling |
+| 技能系统 | interview-answer-prompt.txt × 1 | 多预设技能切换 |
+| Agent 循环 | 一次调用 | 多轮自查/反思 |
+
+## 规划中的下一代
+
+见后续讨论（搬运 openclaw/hermes 等 Python agent 框架的架构模式）。

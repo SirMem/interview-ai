@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Example OpenAI-Compatible Channel",
+    "serviceType": "openai-compatible",
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKeys": [
+      "YOUR_OPENAI_COMPATIBLE_API_KEY"
+    ],
+    "model": "gpt-4o-mini",
+    "priority": 10,
+    "status": "active"
+  },
+  {
+    "name": "Example Anthropic Channel",
+    "serviceType": "anthropic",
+    "baseUrl": "",
+    "apiKeys": [
+      "YOUR_ANTHROPIC_API_KEY"
+    ],
+    "model": "claude-sonnet-4-5",
+    "priority": 20,
+    "status": "disabled"
+  }
+]
