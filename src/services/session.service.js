@@ -227,6 +227,7 @@ export class SessionService {
     );
 
     this.activeSessionId = id;
+    this.appendEvent(id, 'session_started', { type: normalized.type, title: normalized.title });
     return this.getSession(id);
   }
 
@@ -275,6 +276,7 @@ export class SessionService {
     }
     // Auto-create a default live session
     const session = this.createSession({});
+    this.appendEvent(session.id, 'session_auto_created', { title: session.title });
     log.info('Auto-created active session', { sessionId: session.id, title: session.title });
     return session;
   }
@@ -375,6 +377,11 @@ export class SessionService {
       'UPDATE sessions SET updated_at = ? WHERE id = ?'
     ).run(timestamp, sessionId);
 
+    this.appendEvent(sessionId, 'conversation_turn_created', {
+      turnId: id,
+      turnIndex,
+    });
+
     return {
       id,
       session_id: sessionId,
@@ -422,6 +429,45 @@ export class SessionService {
       created_at: row.created_at,
       metadata: parseJsonObject(row.metadata_json),
     }));
+  }
+
+  // ── Session Events ─────────────────────────────────────────────────────
+
+  /**
+   * Append a lifecycle or processing-stage event to a session.
+   *
+   * @param {string} sessionId  - The session to record the event against
+   * @param {string} eventType  - Event type (e.g. 'session_started', 'stt_final_received')
+   * @param {object} [payload={}] - Optional JSON-serialisable payload
+   * @returns {object} The created event { id, session_id, event_type, event_time, payload }
+   * @throws {SessionValidationError} on invalid input
+   */
+  appendEvent(sessionId, eventType, payload = {}) {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new SessionValidationError('sessionId is required');
+    }
+    if (!eventType || typeof eventType !== 'string') {
+      throw new SessionValidationError('eventType is required');
+    }
+    if (!isPlainObject(payload)) {
+      throw new SessionValidationError('payload must be a plain object');
+    }
+
+    const id = randomUUID();
+    const timestamp = toIsoString();
+
+    this.db.prepare(`
+      INSERT INTO session_events (id, session_id, event_type, event_time, payload_json)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, sessionId, eventType, timestamp, JSON.stringify(payload));
+
+    return {
+      id,
+      session_id: sessionId,
+      event_type: eventType,
+      event_time: timestamp,
+      payload,
+    };
   }
 
   close() {

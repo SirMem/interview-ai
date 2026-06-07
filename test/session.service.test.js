@@ -384,3 +384,234 @@ test('appendTurn syncs FTS5 table — turn is searchable', () => {
     service.close();
   }
 });
+
+// ── Session Events ──────────────────────────────────────────────────────
+
+test('appendEvent writes an event with correct fields', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({});
+
+    const event = service.appendEvent(session.id, 'test_event', { some: 'data', count: 42 });
+
+    assert.ok(event.id);
+    assert.equal(event.session_id, session.id);
+    assert.equal(event.event_type, 'test_event');
+    assert.deepEqual(event.payload, { some: 'data', count: 42 });
+    assert.ok(event.event_time);
+
+    // Verify it's persisted in the database
+    const row = service.db.prepare('SELECT * FROM session_events WHERE id = ?').get(event.id);
+    assert.ok(row);
+    assert.equal(row.event_type, 'test_event');
+    assert.equal(row.session_id, session.id);
+  } finally {
+    service.close();
+  }
+});
+
+test('appendEvent rejects missing sessionId', () => {
+  const service = createService();
+  try {
+    assert.throws(
+      () => service.appendEvent(null, 'test_event', {}),
+      /sessionId is required/,
+    );
+    assert.throws(
+      () => service.appendEvent('', 'test_event', {}),
+      /sessionId is required/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('appendEvent rejects missing eventType', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({});
+    assert.throws(
+      () => service.appendEvent(session.id, null, {}),
+      /eventType is required/,
+    );
+    assert.throws(
+      () => service.appendEvent(session.id, '', {}),
+      /eventType is required/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('appendEvent rejects non-object payload', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({});
+    assert.throws(
+      () => service.appendEvent(session.id, 'test_event', 'bad'),
+      /payload must be a plain object/,
+    );
+    assert.throws(
+      () => service.appendEvent(session.id, 'test_event', 42),
+      /payload must be a plain object/,
+    );
+    assert.throws(
+      () => service.appendEvent(session.id, 'test_event', null),
+      /payload must be a plain object/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('createSession records a session_started event', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ type: 'mock', title: 'My Session' });
+
+    const events = service.db.prepare(`
+      SELECT * FROM session_events WHERE session_id = ? ORDER BY event_time ASC
+    `).all(session.id);
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event_type, 'session_started');
+    assert.equal(events[0].session_id, session.id);
+
+    const payload = JSON.parse(events[0].payload_json);
+    assert.equal(payload.type, 'mock');
+    assert.equal(payload.title, 'My Session');
+  } finally {
+    service.close();
+  }
+});
+
+test('ensureActiveSession auto-create records session_started and session_auto_created', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const events = service.db.prepare(`
+      SELECT event_type FROM session_events WHERE session_id = ? ORDER BY event_time ASC
+    `).all(session.id);
+
+    assert.equal(events.length, 2);
+    assert.equal(events[0].event_type, 'session_started');
+    assert.equal(events[1].event_type, 'session_auto_created');
+  } finally {
+    service.close();
+  }
+});
+
+test('ensureActiveSession returning existing session does not record session_auto_created', () => {
+  const service = createService();
+  try {
+    const first = service.createSession({ title: 'Manual' });
+    const eventsBefore = service.db.prepare(
+      'SELECT event_type FROM session_events WHERE session_id = ?'
+    ).all(first.id);
+    assert.equal(eventsBefore.length, 1);
+    assert.equal(eventsBefore[0].event_type, 'session_started');
+
+    // ensureActiveSession should find the existing active session
+    const second = service.ensureActiveSession();
+    assert.equal(second.id, first.id);
+
+    // No new events should have been recorded — session_auto_created must NOT be added
+    const eventsAfter = service.db.prepare(
+      'SELECT event_type FROM session_events WHERE session_id = ?'
+    ).all(first.id);
+    assert.equal(eventsAfter.length, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn records a conversation_turn_created event', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const turn = service.appendTurn(session.id, {
+      raw_transcript: 'What is Redis?',
+      answer: 'Redis is a cache.',
+    });
+
+    const events = service.db.prepare(`
+      SELECT * FROM session_events WHERE session_id = ? ORDER BY event_time ASC
+    `).all(session.id);
+
+    // Expect: session_started, session_auto_created, conversation_turn_created
+    const turnEvent = events.find(e => e.event_type === 'conversation_turn_created');
+    assert.ok(turnEvent, 'conversation_turn_created event should exist');
+    assert.equal(turnEvent.session_id, session.id);
+
+    const payload = JSON.parse(turnEvent.payload_json);
+    assert.equal(payload.turnId, turn.id);
+    assert.equal(payload.turnIndex, 0);
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn records event even when the turn is not the first turn', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const turn1 = service.appendTurn(session.id, { raw_transcript: 'Q1', answer: 'A1' });
+    const turn2 = service.appendTurn(session.id, { raw_transcript: 'Q2', answer: 'A2' });
+    const turn3 = service.appendTurn(session.id, { raw_transcript: 'Q3', answer: 'A3' });
+
+    const turnEvents = service.db.prepare(`
+      SELECT event_type, payload_json FROM session_events
+      WHERE session_id = ? AND event_type = 'conversation_turn_created'
+      ORDER BY event_time ASC
+    `).all(session.id);
+
+    assert.equal(turnEvents.length, 3);
+    assert.equal(JSON.parse(turnEvents[0].payload_json).turnIndex, 0);
+    assert.equal(JSON.parse(turnEvents[1].payload_json).turnIndex, 1);
+    assert.equal(JSON.parse(turnEvents[2].payload_json).turnIndex, 2);
+  } finally {
+    service.close();
+  }
+});
+
+// ── Integrated lifecycle path ───────────────────────────────────────────
+
+test('full lifecycle: create → appendTurn produces a chronological event chain', () => {
+  const service = createService();
+  try {
+    // Create a manual session
+    const session = service.createSession({ title: 'Interview' });
+
+    // Append two turns
+    service.appendTurn(session.id, { raw_transcript: 'Q1', answer: 'A1' });
+    service.appendTurn(session.id, { raw_transcript: 'Q2', answer: 'A2' });
+
+    // Fetch all events in order
+    const events = service.db.prepare(`
+      SELECT event_type, payload_json FROM session_events
+      WHERE session_id = ?
+      ORDER BY event_time ASC
+    `).all(session.id);
+
+    assert.equal(events.length, 3);
+
+    // 1. session_started
+    assert.equal(events[0].event_type, 'session_started');
+    const startedPayload = JSON.parse(events[0].payload_json);
+    assert.equal(startedPayload.title, 'Interview');
+    assert.equal(startedPayload.type, 'live');
+
+    // 2. conversation_turn_created (turn 0)
+    assert.equal(events[1].event_type, 'conversation_turn_created');
+    assert.equal(JSON.parse(events[1].payload_json).turnIndex, 0);
+
+    // 3. conversation_turn_created (turn 1)
+    assert.equal(events[2].event_type, 'conversation_turn_created');
+    assert.equal(JSON.parse(events[2].payload_json).turnIndex, 1);
+  } finally {
+    service.close();
+  }
+});
