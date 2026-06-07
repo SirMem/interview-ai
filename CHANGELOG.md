@@ -8,9 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- **SQLite Session store** (`src/services/session.service.js`) — durable Interview Session persistence backed by `better-sqlite3` at `data/solvewatch.db`. Initializes the first-version schema: `sessions`, `conversation_turns`, `session_events`, and a `conversation_turns_fts` FTS5 search table. The Session service is the only module that writes Session data and exposes `createSession`, `listSessions`, and `getSession` for this slice.
-- **Manual Session REST APIs** — `POST /api/sessions` (create), `GET /api/sessions` (list with bounded pagination), and `GET /api/sessions/:id` (fetch one) via new `src/controllers/session.controller.js` and `src/routes/session.routes.js`, mounted under `/api` in `src/app.js`.
-- **Node test runner** — `npm test` now runs `node --test "test/**/*.test.js"`. Added `test/session.service.test.js` and `test/session.routes.test.js` covering schema init, create/list/get, validation, 404/400 paths, and the FTS5 scaffold, using in-memory SQLite so tests never touch the production database.
+- **Conversation Turn persistence** (`src/services/session.service.js`) — three new methods for the live interview path: `ensureActiveSession()` auto-creates a default live Session when none is active; `appendTurn()` writes one Conversation Turn (with `raw_transcript`, `cleaned_question`, `answer`, provider/model, token usage, latency) to both `conversation_turns` and `conversation_turns_fts` with `turn_index = MAX(turn_index) + 1`; `getTurns()` returns all turns for a Session ordered by `turn_index`.
+- **Live Q&A automatically persisted** — `dataHandler.js` now hooks into `handleSttFinal()` after a successful AI answer: fires `ensureActiveSession()` + `appendTurn()` via `setTimeout(0).unref()` so the SQLite write never blocks the HUD token streaming. `_streamInterviewAnswer()` also returns `cleanedQuestion` for the turn record.
+- **`GET /api/sessions/:id/turns`** endpoint — returns all Conversation Turns for a Session, ordered by `turn_index`. Returns 404 for missing sessions.
+- **New error class `TurnValidationError`** for `appendTurn()` validation: rejects empty turns, non-existent sessions, and ended sessions.
+
+### Tests
+- **20 service tests** — covers `ensureActiveSession` (auto-create, return existing, stale session recovery), `appendTurn` (field mapping, cleaned_question fallback, turn_index increment, validation errors, FTS5 sync), and `getTurns` (ordering, isolation between sessions).
+- **2 new route tests** — `GET /api/sessions/:id/turns` happy path (returns turns in index order) and 404 for missing session. Total route tests: 7.
+
+### Changed
+- `src/controllers/session.controller.js` — added `getTurns` handler with `SessionValidationError`/`TurnValidationError` catch.
+- `src/routes/session.routes.js` — added `GET /sessions/:id/turns` route.
+- `src/sockets/dataHandler.js` — `_streamInterviewAnswer()` now returns `cleanedQuestion` alongside `answerText`, `stageLatencies`, `providerInfo`, and `tokens`.
 
 ### Changed
 - `.gitignore` — ignore local SQLite runtime files (`data/*.db`, `data/*.sqlite*`, and their `-wal`/`-shm` variants).

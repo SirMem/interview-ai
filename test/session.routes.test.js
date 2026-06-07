@@ -140,3 +140,60 @@ test('Session routes validate invalid input', async () => {
     await server.close();
   }
 });
+
+test('GET /api/sessions/:id/turns returns turns for a session', async () => {
+  const server = await createTestServer();
+  try {
+    // Create a session
+    const created = await jsonRequest(server.baseUrl, '/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Turns test' }),
+    });
+    const sessionId = created.body.session.id;
+
+    // Add turns directly via service
+    server.service.appendTurn(sessionId, {
+      raw_transcript: 'What is Redis?',
+      cleaned_question: 'Explain Redis',
+      answer: 'Redis is a cache.',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      input_tokens: 100,
+      output_tokens: 50,
+      cost_usd: 0.001,
+      latency_ms: 500,
+    });
+    server.service.appendTurn(sessionId, {
+      raw_transcript: 'What is Node.js?',
+      cleaned_question: 'Explain Node.js',
+      answer: 'Node.js is a runtime.',
+    });
+
+    // Fetch turns via REST
+    const { response, body } = await jsonRequest(server.baseUrl, `/api/sessions/${sessionId}/turns`);
+
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.session_id, sessionId);
+    assert.equal(body.turns.length, 2);
+    assert.equal(body.turns[0].turn_index, 0);
+    assert.equal(body.turns[0].raw_transcript, 'What is Redis?');
+    assert.equal(body.turns[1].turn_index, 1);
+    assert.equal(body.turns[1].raw_transcript, 'What is Node.js?');
+  } finally {
+    await server.close();
+  }
+});
+
+test('GET /api/sessions/:id/turns returns 404 for missing session', async () => {
+  const server = await createTestServer();
+  try {
+    const { response, body } = await jsonRequest(server.baseUrl, '/api/sessions/missing-id/turns');
+
+    assert.equal(response.status, 404);
+    assert.equal(body.success, false);
+    assert.match(body.error, /not found/);
+  } finally {
+    await server.close();
+  }
+});
