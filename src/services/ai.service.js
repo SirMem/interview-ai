@@ -428,7 +428,8 @@ class AIService {
     );
     let usage = null;
     for await (const chunk of stream) {
-      const text = chunk.choices?.[0]?.delta?.content || '';
+      const delta = chunk.choices?.[0]?.delta;
+      const text = delta?.content || delta?.reasoning_content || '';
       if (text) yield { text };
       if (chunk.usage) usage = chunk.usage;
     }
@@ -629,7 +630,8 @@ class AIService {
     );
     let usage = null;
     for await (const chunk of stream) {
-      const text = chunk.choices?.[0]?.delta?.content || '';
+      const delta = chunk.choices?.[0]?.delta;
+      const text = delta?.content || delta?.reasoning_content || '';
       if (text) yield { text };
       if (chunk.usage) usage = chunk.usage;
     }
@@ -901,7 +903,8 @@ Question: ${question}`;
     });
     let usage = null;
     for await (const chunk of stream) {
-      const text = chunk.choices?.[0]?.delta?.content || '';
+      const delta = chunk.choices?.[0]?.delta;
+      const text = delta?.content || delta?.reasoning_content || '';
       if (text) yield { text };
       if (chunk.usage) usage = chunk.usage;
     }
