@@ -27,6 +27,11 @@ BLOCK_SIZE: int    = int(SAMPLE_RATE * CHUNK_DURATION)
 # to capture system audio (including VoIP calls) instead of your mic.
 AUDIO_INPUT_SOURCE: str = os.getenv("AUDIO_INPUT_SOURCE", "")
 
+# Audio source mode: "mic" (microphone, default) or "system" (WASAPI loopback).
+# When "system", the transcriber captures speaker output directly instead of
+# microphone input — useful for capturing VoIP call audio while wearing headphones.
+AUDIO_SOURCE_MODE: str = os.getenv("AUDIO_SOURCE_MODE", "mic")
+
 
 def get_audio_input_device():
     """Resolve the configured audio input source to (device_index, channels).

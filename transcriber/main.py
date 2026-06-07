@@ -260,9 +260,22 @@ async def health_check():
 
 @app.get("/audio-devices")
 async def list_audio_devices():
-    """Return available audio input devices for the settings page UI."""
-    import sounddevice as sd
+    """Return available audio input devices for the settings page UI.
+
+    Reports whether WASAPI loopback (system audio capture) is available,
+    plus the list of conventional input devices for reference.
+    """
+    current_mode = os.getenv("AUDIO_SOURCE_MODE", "mic")
+    loopback_available = False
     try:
+        from system_audio_capture import is_loopback_available
+        loopback_available = is_loopback_available()
+    except Exception:
+        pass
+
+    inputs = []
+    try:
+        import sounddevice as sd
         devices = sd.query_devices()
         inputs = [
             {
@@ -274,15 +287,14 @@ async def list_audio_devices():
             for i, d in enumerate(devices)
             if d["max_input_channels"] > 0
         ]
-        current = os.getenv("AUDIO_INPUT_SOURCE", "")
-        return {
-            "devices": inputs,
-            "current": current,  # device name string
-            "current_name": current,
-        }
-    except Exception as e:
-        logger.warning("Failed to list audio devices", exc_info=True)
-        return {"devices": [], "current": None, "error": str(e)}
+    except Exception:
+        pass
+
+    return {
+        "devices": inputs,
+        "loopback_available": loopback_available,
+        "current_mode": current_mode,
+    }
 
 
 @app.post("/reload-telemetry")

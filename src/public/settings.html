@@ -571,11 +571,12 @@
       </div>
     </div>
     <div class="sec-body">
-      <!-- Audio input source selector -->
+      <!-- Audio source mode -->
       <div class="field">
-        <label>Audio Input Source <span class="hint">Set to Stereo Mix to capture system audio (VoIP calls) instead of your mic</span></label>
-        <select id="audioInputSource">
-          <option value="">Default microphone</option>
+        <label>Audio Source <span class="hint">Choose what audio to transcribe</span></label>
+        <select id="audioSourceMode">
+          <option value="mic">🎤 Microphone</option>
+          <option value="system">🔊 System Audio (speaker output)</option>
         </select>
         <div id="audioSourceHint" class="hint" style="font-size:11px;margin-top:2px"></div>
       </div>
@@ -1062,29 +1063,32 @@ function reloadSection() { loadConfig(); }
 
 // ── Audio input device list ─────────────────────────────────────────────────
 async function loadAudioDevices() {
-  const sel = document.getElementById('audioInputSource');
+  const sel = document.getElementById('audioSourceMode');
+  const hint = document.getElementById('audioSourceHint');
   try {
     const res = await fetch('/api/config/audio-devices');
     const d = await res.json();
-    if (!d.success && !d.devices) return;
-    sel.innerHTML = '<option value="">Default microphone</option>';
-    d.devices.forEach(dev => {
-      const opt = document.createElement('option');
-      opt.value = dev.name;  // store by NAME, not index
-      opt.textContent = `[${dev.index}] ${dev.name} (${dev.channels}ch)${dev.isDefault ? ' ← default' : ''}`;
-      if (d.current && d.current === dev.name) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    const hint = document.getElementById('audioSourceHint');
-    if (d.current) {
-      hint.textContent = `Using: ${d.current}`;
-      hint.style.color = 'var(--green)';
+    if (d.current_mode === 'system') {
+      sel.value = 'system';
     } else {
-      hint.textContent = 'Using system default microphone.';
+      sel.value = 'mic';
+    }
+    if (sel.value === 'system') {
+      if (d.loopback_available) {
+        hint.textContent = 'Capturing speaker output — you should hear your interviewer.';
+        hint.style.color = 'var(--green)';
+      } else {
+        hint.textContent = 'WASAPI loopback not available on this system — try Microphone mode.';
+        hint.style.color = 'var(--red)';
+      }
+    } else {
+      hint.textContent = d.loopback_available
+        ? 'Switch to "System Audio" to capture VoIP calls while wearing headphones.'
+        : 'Using default microphone.';
       hint.style.color = 'var(--muted)';
     }
   } catch (e) {
-    console.warn('Could not load audio devices', e);
+    console.warn('Could not load audio device info', e);
   }
 }
 
@@ -1820,7 +1824,8 @@ function buildPayload() {
   return {
     providers: [],  // channels are managed via /api/channels
     stt_model: sttModel,
-    audio_input_source: document.getElementById('audioInputSource').value,
+    audio_input_source: '',  // no longer used (replaced by audio_source_mode)
+    audio_source_mode: document.getElementById('audioSourceMode').value,
     hud_opacity: +document.getElementById('opacitySlider').value,
     screenshots_path: document.getElementById('screenshotsPath').value.trim(),
     interview_role: document.getElementById('interviewRole').value.trim(),

@@ -120,6 +120,7 @@ class ConfigController {
       interview_role:       process.env.INTERVIEW_ROLE                         || '',
       stt_model:            process.env.STT_MODEL                              || 'small',
       audio_input_source:   process.env.AUDIO_INPUT_SOURCE                     || '',
+      audio_source_mode:    process.env.AUDIO_SOURCE_MODE                      || 'mic',
       hud_opacity:          parseInt(process.env.HUD_OPACITY, 10)              || 27,
       screenshots_path:     process.env.SCREENSHOTS_PATH                       || '',
       speaker_id_threshold: parseFloat(process.env.SPEAKER_ID_THRESHOLD)       || 0.6,
@@ -241,6 +242,7 @@ class ConfigController {
         providers,
         stt_model:            config.stt_model             || 'small',
         audio_input_source:   config.audio_input_source    || '',
+        audio_source_mode:    config.audio_source_mode     || 'mic',
         answer_mode:          config.answer_mode            || 'auto',
         hud_opacity:          config.hud_opacity            ?? 27,
         screenshots_path:     config.screenshots_path       || '',
@@ -269,7 +271,7 @@ class ConfigController {
   saveFullConfig(req, res) {
     try {
       const {
-        providers, stt_model, audio_input_source, answer_mode, hud_opacity, screenshots_path,
+        providers, stt_model, audio_input_source, audio_source_mode, answer_mode, hud_opacity, screenshots_path,
         interview_role, speaker_id_threshold, speaker_id_enabled,
         deepgram_enabled, deepgram_api_key, deepgram_model, deepgram_language,
         deepgram_endpointing_ms, deepgram_utterance_end_ms, deepgram_min_word_count,
@@ -305,6 +307,7 @@ class ConfigController {
 
       if (stt_model            !== undefined) updates.STT_MODEL             = stt_model;
       if (audio_input_source   !== undefined) updates.AUDIO_INPUT_SOURCE    = audio_input_source;
+      if (audio_source_mode    !== undefined) updates.AUDIO_SOURCE_MODE     = audio_source_mode;
       if (answer_mode          !== undefined) updates.ANSWER_MODE           = answer_mode;
       if (hud_opacity          !== undefined) updates.HUD_OPACITY           = String(hud_opacity);
       if (screenshots_path     !== undefined) updates.SCREENSHOTS_PATH      = screenshots_path;

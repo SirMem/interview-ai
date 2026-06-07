@@ -29,7 +29,7 @@ from typing import Optional
 
 from config import (
     SAMPLE_RATE,
-    AUDIO_INPUT_SOURCE,
+    AUDIO_SOURCE_MODE,
     get_audio_input_device,
     ALWAYS_ON_SILENCE_THRESHOLD,
     ALWAYS_ON_MIN_SPEECH_DURATION,
@@ -171,27 +171,42 @@ class AlwaysOnListener:
         if self._speaker_id_worker is not None:
             self._speaker_id_worker.start()
 
-        _device_idx, _channels = get_audio_input_device()
+        if AUDIO_SOURCE_MODE == 'system':
+            from system_audio_capture import WASAPILoopbackCapture
+            self._stream = WASAPILoopbackCapture(
+                samplerate=SAMPLE_RATE,
+                blocksize=_BLOCK_SIZE,
+                callback=self._audio_callback,
+            )
+            self._stream.start()
+            logger.info(
+                "AlwaysOnListener started (system audio / WASAPI loopback, " +
+                "speaker_id=%s, auto_answer=%s)",
+                "enabled" if self._speaker_id_worker else "disabled",
+                "disabled" if self._auto_answer_disabled else "enabled",
+            )
+        else:
+            _device_idx, _channels = get_audio_input_device()
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=_channels,
+                dtype='float32',
+                blocksize=_BLOCK_SIZE,
+                callback=self._audio_callback,
+                device=_device_idx,
+            )
+            self._stream.start()
+            logger.info(
+                "AlwaysOnListener started " +
+                "(silence_threshold=%ss, min_speech=%ss, speaker_id=%s, " +
+                "auto_answer=%s, device=%s)",
+                ALWAYS_ON_SILENCE_THRESHOLD,
+                ALWAYS_ON_SILENCE_THRESHOLD,
+                "enabled" if self._speaker_id_worker else "disabled",
+                "disabled" if self._auto_answer_disabled else "enabled",
+            )
 
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=_channels,
-            dtype='float32',
-            blocksize=_BLOCK_SIZE,
-            callback=self._audio_callback,
-            device=_device_idx,
-        )
-        self._stream.start()
         self._streaming_stt.start()
-        logger.info(
-            "AlwaysOnListener started "
-            "(silence_threshold=%ss, min_speech=%ss, speaker_id=%s, auto_answer=%s, device=%s)",
-            ALWAYS_ON_SILENCE_THRESHOLD,
-            ALWAYS_ON_SILENCE_THRESHOLD,
-            ALWAYS_ON_MIN_SPEECH_DURATION,
-            "enabled" if self._speaker_id_worker else "disabled",
-            "disabled" if self._auto_answer_disabled else "enabled",
-        )
         log_writer.log('always_on_started',
                        silence_threshold=ALWAYS_ON_SILENCE_THRESHOLD,
                        min_speech=ALWAYS_ON_MIN_SPEECH_DURATION,
