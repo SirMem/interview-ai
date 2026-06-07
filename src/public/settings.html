@@ -1144,7 +1144,8 @@ function renderChannels() {
           </div>
         </div>
         <div class="ch-actions">
-          <button class="btn btn-ghost btn-sm" onclick="testChannel('${esc(ch.name)}', this)" title="Test connection">▶</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleChannelStatus('${esc(ch.name)}')" title="${ch.status === 'paused' ? 'Resume' : 'Pause'}">${ch.status === 'paused' ? '▶' : '❚❚'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="testChannel('${esc(ch.name)}', this)" title="Test connection">⚡</button>
           <button class="btn btn-ghost btn-sm" onclick="openEditChannelModal('${esc(ch.name)}')" title="Edit">✎</button>
           <button class="btn btn-ghost btn-sm" onclick="deleteChannel('${esc(ch.name)}')" title="Delete" style="color:var(--red)">✕</button>
         </div>
@@ -1353,6 +1354,27 @@ async function testChannel(name, btn) {
   } catch { showToast('Test failed', 'err'); }
   btn.disabled = false;
   btn.textContent = orig;
+}
+
+// ── Toggle channel status (pause / resume) ────────────────────────────────
+async function toggleChannelStatus(name) {
+  const ch = channels.find(c => c.name === name);
+  if (!ch) return;
+  const newStatus = ch.status === 'paused' ? 'active' : 'paused';
+  try {
+    const res = await fetch(`/api/channels/${encodeURIComponent(name)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    });
+    const d = await res.json();
+    if (d.success) {
+      showToast(`Channel "${name}" ${newStatus === 'active' ? 'resumed' : 'paused'}`, 'ok');
+      await loadConfig();
+    } else {
+      showToast(d.error || 'Toggle failed', 'err');
+    }
+  } catch { showToast('Toggle failed', 'err'); }
 }
 
 // ── Platform detection & STT backend ──────────────────────────────────────
