@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **SQLite Session store** (`src/services/session.service.js`) — durable Interview Session persistence backed by `better-sqlite3` at `data/solvewatch.db`. Initializes the first-version schema: `sessions`, `conversation_turns`, `session_events`, and a `conversation_turns_fts` FTS5 search table. The Session service is the only module that writes Session data and exposes `createSession`, `listSessions`, and `getSession` for this slice.
+- **Manual Session REST APIs** — `POST /api/sessions` (create), `GET /api/sessions` (list with bounded pagination), and `GET /api/sessions/:id` (fetch one) via new `src/controllers/session.controller.js` and `src/routes/session.routes.js`, mounted under `/api` in `src/app.js`.
+- **Node test runner** — `npm test` now runs `node --test "test/**/*.test.js"`. Added `test/session.service.test.js` and `test/session.routes.test.js` covering schema init, create/list/get, validation, 404/400 paths, and the FTS5 scaffold, using in-memory SQLite so tests never touch the production database.
+
+### Changed
+- `.gitignore` — ignore local SQLite runtime files (`data/*.db`, `data/*.sqlite*`, and their `-wal`/`-shm` variants).
+
+---
+
 ## [2.2.0] — 2026-04-25
 
 ### Added
