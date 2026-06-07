@@ -5,6 +5,32 @@
 
 ---
 
+## Development Workflow — Branch Strategy
+
+All development **must** follow this workflow:
+
+```
+main  ← merge via PR only (squash)
+ └── feat/<short-description>    # new feature
+ └── fix/<short-description>     # bug fix
+ └── refactor/<short-description> # refactoring
+ └── docs/<short-description>    # documentation
+```
+
+**Rules (non-negotiable):**
+
+1. **Never commit directly to `main`** — all changes go through feature branches.
+2. **Always start from `main`** — before creating a branch, `git checkout main && git pull` to ensure you're up to date.
+3. **Branch naming** — use prefixed kebab-case: `feat/sqlite-session-store`, `fix/stt-crash`, `docs/adr-0003`.
+4. **Commit on the feature branch** — make incremental commits as you work.
+5. **Open a Pull Request** — use `gh pr create` with the filled PR template. Never `git push origin main`.
+6. **PR merges to `main`** — always merge via GitHub (squash or merge commit), not by local push.
+7. **After merge** — delete the feature branch (GitHub does this automatically when you merge via the PR).
+
+**Exception:** trivial one-file fixes (typos, README, CI config) may use a `fix/` or `docs/` branch — still no direct push to `main`.
+
+---
+
 ## Creating Pull Requests — Required Checklist
 
 Before opening any PR, you MUST complete both steps in order:

@@ -13,6 +13,13 @@ const DEFAULT_LIST_LIMIT = 20;
 const VALID_SESSION_TYPES = new Set(['live', 'mock', 'resume_review', 'practice']);
 const VALID_SESSION_STATUSES = new Set(['active', 'ended', 'archived']);
 
+export class TurnValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'TurnValidationError';
+  }
+}
+
 export class SessionValidationError extends Error {
   constructor(message) {
     super(message);
@@ -252,6 +259,169 @@ export class SessionService {
     if (!normalizedId) return null;
     const row = this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(normalizedId);
     return this._mapSession(row);
+  }
+
+  /**
+   * Ensure an active session exists. If this.activeSessionId is set and the
+   * session is still active in the database, return it. Otherwise auto-create
+   * a default live session and make it active.
+   */
+  ensureActiveSession() {
+    if (this.activeSessionId) {
+      const existing = this.getSession(this.activeSessionId);
+      if (existing && existing.status === 'active') {
+        return existing;
+      }
+    }
+    // Auto-create a default live session
+    const session = this.createSession({});
+    log.info('Auto-created active session', { sessionId: session.id, title: session.title });
+    return session;
+  }
+
+  /**
+   * Append a conversation turn to a session.
+   * @param {string} sessionId
+   * @param {object} turnInput
+   * @param {string} turnInput.raw_transcript - Raw STT transcript text
+   * @param {string} turnInput.cleaned_question - AI-cleaned question text (falls back to raw_transcript)
+   * @param {string} turnInput.answer - Answer body (no Q:/A: prefix)
+   * @param {string} [turnInput.provider=''] - AI provider name
+   * @param {string} [turnInput.model=''] - AI model name
+   * @param {number} [turnInput.input_tokens=0] - Input token count
+   * @param {number} [turnInput.output_tokens=0] - Output token count
+   * @param {number} [turnInput.cost_usd=0] - Cost in USD
+   * @param {number} [turnInput.latency_ms=0] - AI latency in ms
+   * @returns {object} The created turn
+   * @throws {TurnValidationError} on invalid input
+   */
+  appendTurn(sessionId, turnInput = {}) {
+    if (!sessionId || typeof sessionId !== 'string') {
+      throw new TurnValidationError('sessionId is required');
+    }
+    if (!isPlainObject(turnInput)) {
+      throw new TurnValidationError('turnInput must be an object');
+    }
+
+    // Verify session exists and is active
+    const session = this.getSession(sessionId);
+    if (!session) {
+      throw new TurnValidationError(`Session "${sessionId}" not found`);
+    }
+    if (session.status !== 'active') {
+      throw new TurnValidationError(`Session "${sessionId}" is not active (status: ${session.status})`);
+    }
+
+    // Validate fields
+    const rawTranscript = normalizeOptionalString(turnInput.raw_transcript, 'raw_transcript', { max: 10000, defaultValue: '' });
+    const cleanedQuestion = normalizeOptionalString(turnInput.cleaned_question, 'cleaned_question', { max: 10000, defaultValue: rawTranscript || '' });
+    const answer = normalizeOptionalString(turnInput.answer, 'answer', { max: 50000, defaultValue: '' });
+
+    // At minimum, should have either a transcript or an answer
+    if (!rawTranscript && !cleanedQuestion && !answer) {
+      throw new TurnValidationError('At least one of raw_transcript, cleaned_question, or answer is required');
+    }
+
+    const provider = normalizeOptionalString(turnInput.provider, 'provider', { max: 64, defaultValue: '' });
+    const model = normalizeOptionalString(turnInput.model, 'model', { max: 128, defaultValue: '' });
+    const inputTokens = normalizePositiveInteger(turnInput.input_tokens, 'input_tokens', { defaultValue: 0 });
+    const outputTokens = normalizePositiveInteger(turnInput.output_tokens, 'output_tokens', { defaultValue: 0 });
+    const costUsd = (() => {
+      if (turnInput.cost_usd === undefined || turnInput.cost_usd === null || turnInput.cost_usd === '') return 0;
+      const num = Number(turnInput.cost_usd);
+      if (typeof num !== 'number' || num < 0 || num > 999) {
+        throw new TurnValidationError('cost_usd must be a number between 0 and 999');
+      }
+      return num;
+    })();
+    const latencyMs = normalizePositiveInteger(turnInput.latency_ms, 'latency_ms', { defaultValue: 0 });
+    const metadata = this._validateMetadata(turnInput.metadata);
+
+    // Compute turn_index = MAX(turn_index) + 1 within this session
+    const maxResult = this.db.prepare(
+      'SELECT COALESCE(MAX(turn_index), -1) AS max_index FROM conversation_turns WHERE session_id = ?'
+    ).get(sessionId);
+    const turnIndex = maxResult.max_index + 1;
+
+    const now = new Date();
+    const id = randomUUID();
+    const timestamp = toIsoString(now);
+
+    // Insert turn
+    this.db.prepare(`
+      INSERT INTO conversation_turns (
+        id, session_id, turn_index,
+        raw_transcript, cleaned_question, answer,
+        provider, model,
+        input_tokens, output_tokens, cost_usd, latency_ms,
+        created_at, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, sessionId, turnIndex,
+      rawTranscript, cleanedQuestion, answer,
+      provider, model,
+      inputTokens, outputTokens, costUsd, latencyMs,
+      timestamp, JSON.stringify(metadata),
+    );
+
+    // Sync FTS5 table
+    this.db.prepare(`
+      INSERT INTO conversation_turns_fts(turn_id, session_id, cleaned_question, answer, raw_transcript)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, sessionId, cleanedQuestion, answer, rawTranscript);
+
+    // Touch session.updated_at
+    this.db.prepare(
+      'UPDATE sessions SET updated_at = ? WHERE id = ?'
+    ).run(timestamp, sessionId);
+
+    return {
+      id,
+      session_id: sessionId,
+      turn_index: turnIndex,
+      raw_transcript: rawTranscript,
+      cleaned_question: cleanedQuestion,
+      answer,
+      provider,
+      model,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cost_usd: costUsd,
+      latency_ms: latencyMs,
+      created_at: timestamp,
+      metadata,
+    };
+  }
+
+  /**
+   * Fetch all conversation turns for a session, ordered by turn_index.
+   * @param {string} sessionId
+   * @returns {Array<object>}
+   */
+  getTurns(sessionId) {
+    const normalizedId = normalizeOptionalString(sessionId, 'sessionId', { max: 128, defaultValue: '' });
+    if (!normalizedId) return [];
+    const rows = this.db.prepare(`
+      SELECT * FROM conversation_turns
+      WHERE session_id = ?
+      ORDER BY turn_index ASC
+    `).all(normalizedId);
+    return rows.map(row => ({
+      id: row.id,
+      session_id: row.session_id,
+      turn_index: row.turn_index,
+      raw_transcript: row.raw_transcript,
+      cleaned_question: row.cleaned_question,
+      answer: row.answer,
+      provider: row.provider,
+      model: row.model,
+      input_tokens: row.input_tokens,
+      output_tokens: row.output_tokens,
+      cost_usd: row.cost_usd,
+      latency_ms: row.latency_ms,
+      created_at: row.created_at,
+      metadata: parseJsonObject(row.metadata_json),
+    }));
   }
 
   close() {

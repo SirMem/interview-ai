@@ -7,6 +7,7 @@ export function createSessionRouter(controller = sessionController) {
   router.post('/sessions',      (req, res) => controller.create(req, res));
   router.get('/sessions',       (req, res) => controller.list(req, res));
   router.get('/sessions/:id',   (req, res) => controller.get(req, res));
+  router.get('/sessions/:id/turns', (req, res) => controller.getTurns(req, res));
 
   return router;
 }

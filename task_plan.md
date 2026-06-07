@@ -1,63 +1,85 @@
-# Task Plan: SolveWatch AI —— 从"语音转写管道"到"AI Agent 框架"
+# Task Plan: SolveWatch AI — SQLite Session History & Manual Restore
 
-> 当前状态：基础设施已就绪（channel 调度 + WASAPI loopback + 多 channel UI），
-> 核心 AI 调用层仍然是"一次 question → 一次 AI → 一次 answer"的简单管道。
-> 下一步是引入 session 管理、RAG、工具调用、技能系统，使面试助手具备 Agent 能力。
+> 基于 PRD-ai-interview-operating-system.md + ADR-0002 的 9-Issue 分阶段计划。
+> 目标是：从实时面试辅助升级为可追溯面试操作系统，第一波集中在 Session 持久化与手动恢复。
 
 ## Current Phase
-Base Complete (所有基础管线就绪)
+Phase 1 + Phase 2 Complete ✅ — Issue #1 和 Issue #2 均已实现
+
+## 下一步：Issue #3 — Record key Session Events for traceability
+
+Session Events 增加 traceability 记录关键生命周期事件（session_started, ai_answer_completed 等）
 
 ## 已完成的工作
 
-### Multi-Channel AI Provider (已合入 main)
-- `config/channels.json` — JSON 存储替代扁平 `.env`
-- `channel.service.js` — CRUD + priority 排序 + round-robin + circuit breaker
-- `ai.service.js` — SDK 工厂（openai-compatible / anthropic）
-- `channel.controller.js` + routes — REST API
-- `settings.html` — ccx-main 风格 channel 管理 UI（拖拽排序、添加/编辑弹窗、状态切换、测试）
-- 移除了 Groq、Gemini 独立 SDK 调用
+### ✓ Issue #1 — SQLite Session Store + REST APIs (已完成)
+- `src/services/session.service.js` — SQLite 持久化，建 4 张表（sessions / conversation_turns / session_events / conversation_turns_fts），提供 `createSession/listSessions/getSession`
+- `src/controllers/session.controller.js` — 校验 + JSON 响应映射
+- `src/routes/session.routes.js` — POST/GET /sessions, GET /sessions/:id
+- `test/session.service.test.js` + `test/session.routes.test.js` — 12 tests, all passing
+- `data/solvewatch.db` — 自动创建并 gitignored
+- `package.json` — 添加 `better-sqlite3`，`node --test` 为测试运行器
+- `CHANGELOG.md` — [Unreleased] 条目已添加
+- PR #10 merged → main（`76f083e`）
 
-### WASAPI Loopback 系统音频捕获 (已合入 main)
-- `system_audio_capture.py` — pyaudiowpatch WASAPI loopback 封装
-- `always_on_listener.py` — 双路径（mic / system audio）
-- settings.html 音频源切换（麦克风 / 系统音频）
-- 前两次 Stereo Mix 尝试被废弃
+### ✓ Issue #2 — Persist live Q&A as Conversation Turns (已完成)
+- `sessionService.ensureActiveSession()` — 若没有 active session，自动创建默认 live Session
+- `sessionService.appendTurn(sessionId, turnInput)` — 写入 conversation_turns + conversation_turns_fts
+- `sessionService.getTurns(sessionId)` — 返回 ordered turns
+- 保存 `raw_transcript` + `cleaned_question` + `answer` + provider/model/tokens/latency
+- fallback 规则：cleaned_question 失败时 = raw_transcript
+- `turn_index = MAX(turn_index) + 1`
+- `GET /api/sessions/:id/turns` — REST endpoint
+- 写库通过 `setTimeout(0).unref()` 不阻塞 HUD token streaming
+- 测试 27 个（20 service + 7 routes），全部通过
+- `dataHandler.js`: `_streamInterviewAnswer()` now returns `cleanedQuestion`; `handleSttFinal()` 尾部 fire-and-forget 持久化
 
-### DeepSeek 推理模型修复 (已合入 main)
-- 流式响应中 fallback `delta.reasoning_content`（推理模型特有）
+## 当前 Phase — Issue #2: Persist live Q&A as Conversation Turns
 
-### Ollama 已完全移除 (已合入 main)
-- `ai.service.js`: 删除 callOllama / _streamOllama / _callOllamaClassifier / summarizeQAPair / summarizeMerge
-- `config.controller.js`: 删除 ollama provider 枚举、模型获取、测试端点
-- `InterviewTranscriptBuffer.js`: 从 210 行简化到 65 行（纯 rolling Q&A storage，无压缩/摘要）
-- `dataHandler.js`: 删除 setSummarizeFn 绑定
+### Scope
+将实时面试的完整问答（STT final → AI answer）持久化到 Conversation Turns。
 
-### Channel 状态切换按钮 (已合入 main)
-- `settings.html` channel card 新增 pause/resume toggle 按钮
+### 关键实现点
+- `sessionService.ensureActiveSession()` — 若没有 active session，自动创建默认 live Session
+- `sessionService.appendTurn(sessionId, turnInput)` — 写入 conversation_turns + conversation_turns_fts
+- 保存 `raw_transcript` + `cleaned_question` + `answer`
+- fallback 规则：cleaned_question 失败时 = raw_transcript
+- `answer` 只存答案正文，不含 Q:/A: 前缀
+- `turn_index = MAX(turn_index) + 1`
+- `GET /api/sessions/:id/turns`
+- 写库不能阻塞 HUD token streaming
 
-## 项目当前架构
+### 被阻塞依赖
+Blocked by: Issue #1（已完成）
+
+## 规划中的后续 Issues
+
+| Issue | 内容 |
+|-------|------|
+| #2 | Persist live interview Q&A as Conversation Turns ← **当前** |
+| #3 | Record key Session Events for traceability |
+| #4 | Add FTS5 search across Conversation Turns |
+| #5 | Support manual end and stale Session archival |
+| #6 | Restore Sessions into Interview memory |
+| #7 | Isolate Session persistence failures from live answering |
+| #8 | Document Session Console API contracts |
+| #9 | Verify Session backend end-to-end |
+
+## 项目架构（当前状态）
 
 ```
-Python (语音捕获)                      Node.js (AI 调度 + HUD)
+Python (语音捕获)                      Node.js (AI 调度 + 持久化)
 ┌─────────────────┐                  ┌──────────────────────────┐
 │ VAD → Whisper   │──stt_final──→    │ dataHandler.js            │
 │ mic / loopback  │   HTTP POST      │  → answerInterviewQuestion│
 └─────────────────┘                  │  → channel.service.js     │
                                      │  → SDK 工厂 → AI API     │
+                                     │  → session.service.js     │
                                      │  → Socket.IO → HUD       │
-                                     └──────────────────────────┘
+                                     └──────────┬───────────────┘
+                                                │
+                                         ┌──────▼────────┐
+                                         │ data/solvewatch│
+                                         │ .db (SQLite)  │
+                                         └───────────────┘
 ```
-
-## 当前局限性
-
-| 维度 | 现状 | 目标 |
-|------|------|------|
-| 对话记忆 | 最近 N 条 Q&A 原文注入（无压缩） | Session 管理 + 持久化 |
-| 检索增强 | 无 | RAG（历史 + 知识库）|
-| 工具调用 | 无 | function calling |
-| 技能系统 | interview-answer-prompt.txt × 1 | 多预设技能切换 |
-| Agent 循环 | 一次调用 | 多轮自查/反思 |
-
-## 规划中的下一代
-
-见后续讨论（搬运 openclaw/hermes 等 Python agent 框架的架构模式）。

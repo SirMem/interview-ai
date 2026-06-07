@@ -21,6 +21,7 @@ import { recordHistogram, addCounter } from '../utils/telemetry.js';
 import aiService, { aiCostUSD } from '../services/ai.service.js';
 import imageProcessingService from '../services/image-processing.service.js';
 import InterviewTranscriptBuffer from './InterviewTranscriptBuffer.js';
+import sessionService from '../services/session.service.js';
 
 const log = logger('DataHandler');
 
@@ -529,6 +530,7 @@ class DataHandler extends EventEmitter {
 
     return {
       answerText,
+      cleanedQuestion: match ? match[1].trim() : buffer.trim(),
       stageLatencies: {
         ai_ttft_ms:  firstTokenAt !== null ? firstTokenAt - startedAt : null,
         ai_total_ms: totalMs,
@@ -571,7 +573,7 @@ class DataHandler extends EventEmitter {
         text, questionId, transcriptContext, memoryContext,
         typeof silence_started_at === 'number' ? silence_started_at : null,
       );
-      const { answerText, stageLatencies, providerInfo, tokens } = result;
+      const { answerText, cleanedQuestion, stageLatencies, providerInfo, tokens } = result;
       this.namespace.emit('question_answer_complete', { questionId, response: answerText });
       log.info('stt_final question answered', { questionId, responseLength: answerText.length });
 
@@ -592,6 +594,29 @@ class DataHandler extends EventEmitter {
       });
 
       if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
+
+      // Fire-and-forget: persist conversation turn.
+      // Write must not block the socket event — setTimeout(0) defers it past
+      // question_answer_complete so the HUD gets its tokens without delay.
+      setTimeout(() => {
+        try {
+          const session = sessionService.ensureActiveSession();
+          sessionService.appendTurn(session.id, {
+            raw_transcript: text,
+            cleaned_question: cleanedQuestion || text,
+            answer: answerText,
+            provider: providerInfo.provider,
+            model: providerInfo.model,
+            input_tokens: tokens.input,
+            output_tokens: tokens.output,
+            cost_usd: tokens.cost_usd,
+            latency_ms: Math.round(stageLatencies.ai_total_ms || 0),
+          });
+          log.info('Conversation turn persisted', { sessionId: session.id });
+        } catch (sessionErr) {
+          log.warn('Failed to persist conversation turn', { questionId, error: sessionErr.message });
+        }
+      }, 0).unref();
     } catch (err) {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });

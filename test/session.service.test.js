@@ -133,3 +133,254 @@ test('SessionService creates a usable FTS5 table scaffold', () => {
     service.close();
   }
 });
+
+// ── ensureActiveSession ──────────────────────────────────────────────
+
+test('ensureActiveSession auto-creates a session when none exists', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    assert.ok(session.id);
+    assert.equal(session.status, 'active');
+    assert.equal(session.type, 'live');
+    assert.match(session.title, /^Live Interview - \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    assert.equal(service.activeSessionId, session.id);
+  } finally {
+    service.close();
+  }
+});
+
+test('ensureActiveSession returns existing active session', () => {
+  const service = createService();
+  try {
+    const first = service.createSession({ title: 'My Session' });
+    const second = service.ensureActiveSession();
+
+    assert.equal(second.id, first.id);
+    assert.equal(second.title, 'My Session');
+  } finally {
+    service.close();
+  }
+});
+
+test('ensureActiveSession auto-creates new session when tracked session is no longer active', () => {
+  const service = createService();
+  try {
+    const first = service.createSession({ title: 'First' });
+    assert.equal(service.activeSessionId, first.id);
+
+    // Simulate external end via direct SQL
+    service.db.prepare('UPDATE sessions SET status = ? WHERE id = ?').run('ended', first.id);
+
+    const second = service.ensureActiveSession();
+    assert.notEqual(second.id, first.id);
+    assert.equal(second.status, 'active');
+  } finally {
+    service.close();
+  }
+});
+
+// ── appendTurn ───────────────────────────────────────────────────────
+
+test('appendTurn writes a turn and returns it with correct fields', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const turn = service.appendTurn(session.id, {
+      raw_transcript: 'What is Redis?',
+      cleaned_question: 'Explain Redis caching',
+      answer: 'Redis is an in-memory data store.',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      input_tokens: 100,
+      output_tokens: 50,
+      cost_usd: 0.002,
+      latency_ms: 1200,
+    });
+
+    assert.ok(turn.id);
+    assert.equal(turn.session_id, session.id);
+    assert.equal(turn.turn_index, 0);
+    assert.equal(turn.raw_transcript, 'What is Redis?');
+    assert.equal(turn.cleaned_question, 'Explain Redis caching');
+    assert.equal(turn.answer, 'Redis is an in-memory data store.');
+    assert.equal(turn.provider, 'openai');
+    assert.equal(turn.model, 'gpt-4o-mini');
+    assert.equal(turn.input_tokens, 100);
+    assert.equal(turn.output_tokens, 50);
+    assert.equal(turn.cost_usd, 0.002);
+    assert.equal(turn.latency_ms, 1200);
+    assert.ok(turn.created_at);
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn uses raw_transcript as cleaned_question fallback', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const turn = service.appendTurn(session.id, {
+      raw_transcript: 'user raw speech here',
+      answer: 'Some answer.',
+    });
+
+    assert.equal(turn.raw_transcript, 'user raw speech here');
+    // cleaned_question should fall back to raw_transcript
+    assert.equal(turn.cleaned_question, 'user raw speech here');
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn increments turn_index for each successive turn', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    const turn0 = service.appendTurn(session.id, {
+      raw_transcript: 'First question',
+      answer: 'First answer',
+    });
+    assert.equal(turn0.turn_index, 0);
+
+    const turn1 = service.appendTurn(session.id, {
+      raw_transcript: 'Second question',
+      answer: 'Second answer',
+    });
+    assert.equal(turn1.turn_index, 1);
+
+    const turn2 = service.appendTurn(session.id, {
+      raw_transcript: 'Third question',
+      answer: 'Third answer',
+    });
+    assert.equal(turn2.turn_index, 2);
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn throws for non-existent session', () => {
+  const service = createService();
+  try {
+    assert.throws(
+      () => service.appendTurn('nonexistent-id', { raw_transcript: 'test', answer: 'test' }),
+      /Session "nonexistent-id" not found/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn throws for non-active session', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({});
+    // End the session via direct SQL
+    service.db.prepare('UPDATE sessions SET status = ? WHERE id = ?').run('ended', session.id);
+
+    assert.throws(
+      () => service.appendTurn(session.id, { raw_transcript: 'test', answer: 'test' }),
+      /is not active/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn throws when empty input is provided (no transcript, no answer)', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    assert.throws(
+      () => service.appendTurn(session.id, {}),
+      /At least one of/,
+    );
+  } finally {
+    service.close();
+  }
+});
+
+// ── getTurns ─────────────────────────────────────────────────────────
+
+test('getTurns returns empty array for session with no turns', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({});
+    const turns = service.getTurns(session.id);
+    assert.deepEqual(turns, []);
+  } finally {
+    service.close();
+  }
+});
+
+test('getTurns returns turns ordered by turn_index', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    service.appendTurn(session.id, { raw_transcript: 'Q zero', answer: 'A zero' });
+    service.appendTurn(session.id, { raw_transcript: 'Q one', answer: 'A one' });
+    service.appendTurn(session.id, { raw_transcript: 'Q two', answer: 'A two' });
+
+    const turns = service.getTurns(session.id);
+    assert.equal(turns.length, 3);
+    assert.equal(turns[0].turn_index, 0);
+    assert.equal(turns[1].turn_index, 1);
+    assert.equal(turns[2].turn_index, 2);
+    assert.equal(turns[0].raw_transcript, 'Q zero');
+    assert.equal(turns[1].raw_transcript, 'Q one');
+    assert.equal(turns[2].raw_transcript, 'Q two');
+  } finally {
+    service.close();
+  }
+});
+
+test('getTurns returns only turns for the specified session, not others', () => {
+  const service = createService();
+  try {
+    const s1 = service.createSession({ title: 'S1' });
+    const s2 = service.createSession({ title: 'S2' });
+
+    service.appendTurn(s1.id, { raw_transcript: 'Q1', answer: 'A1' });
+    service.appendTurn(s1.id, { raw_transcript: 'Q2', answer: 'A2' });
+    service.appendTurn(s2.id, { raw_transcript: 'Q3', answer: 'A3' });
+
+    const turns1 = service.getTurns(s1.id);
+    assert.equal(turns1.length, 2);
+    assert.equal(turns1[0].raw_transcript, 'Q1');
+    assert.equal(turns1[1].raw_transcript, 'Q2');
+
+    const turns2 = service.getTurns(s2.id);
+    assert.equal(turns2.length, 1);
+    assert.equal(turns2[0].raw_transcript, 'Q3');
+  } finally {
+    service.close();
+  }
+});
+
+test('appendTurn syncs FTS5 table — turn is searchable', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+
+    service.appendTurn(session.id, {
+      raw_transcript: 'How does cache work in Redis?',
+      cleaned_question: 'Explain Redis caching mechanism',
+      answer: 'Redis uses an in-memory key-value store.',
+    });
+
+    const result = service.db.prepare(`
+      SELECT turn_id FROM conversation_turns_fts
+      WHERE conversation_turns_fts MATCH ?
+    `).get('Redis');
+
+    assert.ok(result);
+    assert.ok(result.turn_id);
+  } finally {
+    service.close();
+  }
+});
