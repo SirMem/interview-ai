@@ -107,6 +107,7 @@ class DataHandler extends EventEmitter {
     socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
     socket.on('set_vad_config', (data) => this.handleSetVadConfig(socket, data));
     socket.on('end_session', () => this.handleEndSession(socket));
+    socket.on('restore_session', (data) => this.handleRestoreSession(socket, data));
   }
 
   handleDisconnect(socket, reason) {
@@ -872,6 +873,54 @@ class DataHandler extends EventEmitter {
     } catch (err) {
       log.error('Error ending session via Socket.IO', { error: err.message });
       this.emitToSocket(socket, 'end_session_error', { error: err.message });
+    }
+  }
+
+  async handleRestoreSession(socket, data) {
+    const { sessionId } = data || {};
+    if (!sessionId) {
+      this.emitToSocket(socket, 'restore_session_error', { error: 'sessionId is required' });
+      return;
+    }
+
+    log.info('Restore session requested', { sessionId });
+
+    try {
+      // Verify the session exists and is ended
+      const session = this.sessionService.getSession(sessionId);
+      if (!session) {
+        this.emitToSocket(socket, 'restore_session_error', { error: `Session "${sessionId}" not found` });
+        return;
+      }
+      if (session.status !== 'ended') {
+        this.emitToSocket(socket, 'restore_session_error', {
+          error: `Session "${sessionId}" is not ended (status: ${session.status})`,
+        });
+        return;
+      }
+
+      // Reactivate the session
+      const restored = this.sessionService.reactivateSession(sessionId);
+
+      // Load recent turns into interview memory
+      const recentTurns = this.sessionService.getTurns(sessionId, { limit: 8 });
+      this.transcriptBuffer.clear();
+      this.transcriptBuffer.hydrateFromTurns(recentTurns);
+
+      log.info('Session restored', {
+        sessionId: restored.id,
+        title: restored.title,
+        turnCount: recentTurns.length,
+      });
+
+      this.namespace.emit('session_restored', {
+        sessionId: restored.id,
+        title: restored.title,
+        restoredTurnCount: recentTurns.length,
+      });
+    } catch (err) {
+      log.error('Error restoring session', { sessionId, error: err.message });
+      this.emitToSocket(socket, 'restore_session_error', { error: err.message });
     }
   }
 }

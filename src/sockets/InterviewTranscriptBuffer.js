@@ -32,6 +32,37 @@ class InterviewTranscriptBuffer {
   }
 
   /**
+   * Clear all entries and utterances. Used before hydrating
+   * from a restored Session's conversation turns.
+   */
+  clear() {
+    this._entries = [];
+    this._utterances = [];
+  }
+
+  /**
+   * Hydrate memory from a list of conversation turns.
+   * Clears existing entries first, then loads the most recent
+   * N turns (capped at maxEntries) as Q&A pairs.
+   *
+   * @param {Array} turns - Conversation turns from sessionService.getTurns()
+   *   Each turn should have cleaned_question and answer (string) fields.
+   *   Falls back cleaned_question → raw_transcript if cleaned is empty.
+   */
+  hydrateFromTurns(turns) {
+    this.clear();
+    if (!Array.isArray(turns) || turns.length === 0) return;
+    const recent = turns.slice(-this.maxEntries);
+    for (const turn of recent) {
+      const q = (turn.cleaned_question || turn.raw_transcript || '').trim();
+      const a = (turn.answer || '').trim();
+      if (q || a) {
+        this._entries.push({ q, a, ts: Date.now() });
+      }
+    }
+  }
+
+  /**
    * Build memory context string for prompt injection.
    * Returns the last N Q&A pairs as formatted text.
    */
