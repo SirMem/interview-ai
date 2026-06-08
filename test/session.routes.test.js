@@ -240,7 +240,47 @@ test('GET /api/sessions/search without q returns 400', async () => {
 
     assert.equal(response.status, 400);
     assert.equal(body.success, false);
-    assert.match(body.error, /query is required/);
+    assert.match(body.error, /query.*is required/);
+  } finally {
+    await server.close();
+  }
+});
+
+// ── end session ─────────────────────────────────────────────────────────
+
+test('POST /api/sessions/:id/end ends an active session', async () => {
+  const server = await createTestServer();
+  try {
+    const created = await jsonRequest(server.baseUrl, '/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'To end' }),
+    });
+    const sessionId = created.body.session.id;
+
+    const { response, body } = await jsonRequest(server.baseUrl, `/api/sessions/${sessionId}/end`, {
+      method: 'POST',
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.session.id, sessionId);
+    assert.equal(body.session.status, 'ended');
+    assert.ok(body.session.ended_at);
+  } finally {
+    await server.close();
+  }
+});
+
+test('POST /api/sessions/:id/end returns 404 for missing session', async () => {
+  const server = await createTestServer();
+  try {
+    const { response, body } = await jsonRequest(server.baseUrl, '/api/sessions/nonexistent-id/end', {
+      method: 'POST',
+    });
+
+    assert.equal(response.status, 404);
+    assert.equal(body.success, false);
+    assert.match(body.error, /not found/);
   } finally {
     await server.close();
   }

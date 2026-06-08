@@ -72,7 +72,11 @@ export class SessionController {
 
   search(req, res) {
     try {
-      const result = this.service.searchTurns(req.query.q, {
+      const query = req.query.q;
+      if (!query || !query.trim()) {
+        return res.status(400).json({ success: false, error: 'Search query "q" is required' });
+      }
+      const result = this.service.searchTurns(query.trim(), {
         limit: req.query.limit,
         offset: req.query.offset,
       });
@@ -81,8 +85,24 @@ export class SessionController {
       if (err instanceof SessionValidationError) {
         return res.status(400).json({ success: false, error: err.message });
       }
-      log.error('Error searching turns', { error: err.message });
-      res.status(500).json({ success: false, error: 'Failed to search turns' });
+      log.error('Error searching sessions', { error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to search sessions' });
+    }
+  }
+
+  end(req, res) {
+    try {
+      const session = this.service.endSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ success: false, error: `Session "${req.params.id}" not found` });
+      }
+      res.json({ success: true, session });
+    } catch (err) {
+      if (err instanceof SessionValidationError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      log.error('Error ending session', { sessionId: req.params.id, error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to end session' });
     }
   }
 }

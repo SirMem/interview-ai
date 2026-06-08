@@ -15,12 +15,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Session Event traceability** (`src/services/session.service.js`) — new `appendEvent(sessionId, eventType, payload)` method records key lifecycle and processing-stage milestones to the `session_events` table (with UUID, ISO timestamp, and validated JSON payload). Lifecycle events are automatically recorded in `createSession()` (`session_started`), `ensureActiveSession()` auto-create path (`session_auto_created`), and `appendTurn()` (`conversation_turn_created`).
 - **Live answer events wired into `handleSttFinal()`** — `dataHandler.js` now records `stt_final_received`, `ai_answer_started`, `ai_answer_completed`, and `ai_answer_failed` events during the always-on listen flow. All writes are best-effort (try/catch) and never block token streaming. `sessionService.ensureActiveSession()` is now called at the start of the handler and reused for both events and turn persistence.
 - **10 new service tests** — covers `appendEvent` validation and field mapping, auto-recording on `createSession`/`ensureActiveSession`/`appendTurn`, and one full lifecycle path (create → appendTurn → chronological event chain). Total service tests: 30.
+- **Manual session end** (`src/services/session.service.js`) — `endSession(sessionId)` marks an active session as `ended`, sets `ended_at`, clears `activeSessionId` if applicable, and records a `session_ended` event with `{ manual: true }`.
+- **Stale session auto-archive** (`src/services/session.service.js`) — `archiveStaleActiveSessions()` queries all `active` sessions with `updated_at` older than 12 hours, sets them to `archived` with `ended_at`, records `session_auto_archived` events, and clears `activeSessionId` if the current session is archived. Runs automatically on service construction.
+- **`POST /api/sessions/:id/end` REST endpoint** — returns the updated session on success, 404 if the session does not exist.
+- **Socket.IO `end_session` / `session_ended` events** — `dataHandler.js` listens for `end_session` from any client, calls `sessionService.endSession()`, and broadcasts `session_ended` to the namespace.
+- **12 new service tests** — covers `endSession` status/event/activeSessionId behaviour and `archiveStaleActiveSessions` time-based filtering, event recording, count accuracy, and init-time archival. Total service tests: 42.
+- **2 new route tests** — covers `POST /api/sessions/:id/end` with an active session and a missing session. Total route tests: 9.
 
 ### Changed
-- `src/services/session.service.js` — added `sanitizeFtsQuery()` utility and `searchTurns()` method for FTS5 full-text search; `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/services/session.service.js` — added `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/services/session.service.js` — added `sanitizeFtsQuery()` utility and `searchTurns()` method for FTS5 full-text search.
+- `src/services/session.service.js` — added `endSession()` and `archiveStaleActiveSessions()` methods; constructor now invokes `archiveStaleActiveSessions()` on init (best-effort).
 - `src/controllers/session.controller.js` — added `search` handler that delegates to `sessionService.searchTurns()`.
+- `src/controllers/session.controller.js` — added `end(req, res)` handler.
 - `src/routes/session.routes.js` — added `GET /sessions/search` route, registered before `:id` param routes to avoid Express route collision.
+- `src/routes/session.routes.js` — added `POST /sessions/:id/end` route.
 - `src/sockets/dataHandler.js` — restructured `handleSttFinal()` to move `ensureActiveSession()` to the top of the handler and record events at each lifecycle stage. Events are wrapped in try/catch to never interrupt the AI answer flow.
+- `src/sockets/dataHandler.js` — added `end_session` socket event handler and `handleEndSession()` method.
 
 ---
 

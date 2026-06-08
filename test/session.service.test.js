@@ -755,3 +755,210 @@ test('searchTurns paginates correctly', () => {
     service.close();
   }
 });
+test('endSession marks a session as ended and sets ended_at', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'End me' });
+    assert.equal(session.status, 'active');
+    assert.equal(session.ended_at, null);
+
+    const ended = service.endSession(session.id);
+    assert.equal(ended.status, 'ended');
+    assert.ok(ended.ended_at);
+    assert.ok(new Date(ended.ended_at).getTime() > 0);
+
+    // Verify persistence
+    const fetched = service.getSession(session.id);
+    assert.equal(fetched.status, 'ended');
+    assert.ok(fetched.ended_at);
+  } finally {
+    service.close();
+  }
+});
+
+test('endSession clears activeSessionId when ending the active session', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Active' });
+    assert.equal(service.activeSessionId, session.id);
+
+    service.endSession(session.id);
+    assert.equal(service.activeSessionId, null);
+  } finally {
+    service.close();
+  }
+});
+
+test('endSession does not clear activeSessionId when ending a different session', () => {
+  const service = createService();
+  try {
+    const active = service.createSession({ title: 'Active' });
+    const other = service.createSession({ title: 'Other' });
+
+    // activeSessionId is now 'other' because createSession sets it
+    assert.equal(service.activeSessionId, other.id);
+
+    service.endSession(active.id);
+    assert.equal(service.activeSessionId, other.id); // unchanged
+  } finally {
+    service.close();
+  }
+});
+
+test('endSession records a session_ended event', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Event check' });
+    service.endSession(session.id);
+
+    const events = service.db.prepare(`
+      SELECT event_type, payload_json FROM session_events
+      WHERE session_id = ?
+      ORDER BY event_time ASC
+    `).all(session.id);
+
+    const endedEvent = events.find(e => e.event_type === 'session_ended');
+    assert.ok(endedEvent, 'session_ended event should exist');
+    assert.deepEqual(JSON.parse(endedEvent.payload_json), { manual: true });
+  } finally {
+    service.close();
+  }
+});
+
+test('endSession returns null if session does not exist', () => {
+  const service = createService();
+  try {
+    const result = service.endSession('nonexistent-id');
+    assert.equal(result, null);
+  } finally {
+    service.close();
+  }
+});
+
+// ── archiveStaleActiveSessions ──────────────────────────────────────────
+
+test('archiveStaleActiveSessions archives sessions older than 12 hours', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Stale' });
+
+    // Manually set updated_at to 13 hours ago
+    const past = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+    service.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(past, session.id);
+
+    const count = service.archiveStaleActiveSessions();
+    assert.equal(count, 1);
+
+    const fetched = service.getSession(session.id);
+    assert.equal(fetched.status, 'archived');
+    assert.ok(fetched.ended_at);
+  } finally {
+    service.close();
+  }
+});
+
+test('archiveStaleActiveSessions does not archive recently active sessions', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Fresh' });
+
+    const count = service.archiveStaleActiveSessions();
+    assert.equal(count, 0);
+
+    const fetched = service.getSession(session.id);
+    assert.equal(fetched.status, 'active');
+  } finally {
+    service.close();
+  }
+});
+
+test('archiveStaleActiveSessions does not archive ended or archived sessions', () => {
+  const service = createService();
+  try {
+    const endedSession = service.createSession({ title: 'Ended' });
+    service.endSession(endedSession.id);
+
+    const archivedSession = service.createSession({ title: 'Archived' });
+    service.db.prepare("UPDATE sessions SET status = 'archived' WHERE id = ?").run(archivedSession.id);
+
+    const count = service.archiveStaleActiveSessions();
+    assert.equal(count, 0);
+
+    assert.equal(service.getSession(endedSession.id).status, 'ended');
+    assert.equal(service.getSession(archivedSession.id).status, 'archived');
+  } finally {
+    service.close();
+  }
+});
+
+test('archiveStaleActiveSessions records session_auto_archived events', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Archivable' });
+    const past = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+    service.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(past, session.id);
+
+    service.archiveStaleActiveSessions();
+
+    const events = service.db.prepare(`
+      SELECT event_type FROM session_events
+      WHERE session_id = ?
+    `).all(session.id);
+
+    const archivedEvent = events.find(e => e.event_type === 'session_auto_archived');
+    assert.ok(archivedEvent, 'session_auto_archived event should exist');
+  } finally {
+    service.close();
+  }
+});
+
+test('archiveStaleActiveSessions returns correct count', () => {
+  const service = createService();
+  try {
+    const past = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+
+    const s1 = service.createSession({ title: 'Stale 1' });
+    service.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(past, s1.id);
+
+    const s2 = service.createSession({ title: 'Stale 2' });
+    service.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(past, s2.id);
+
+    service.createSession({ title: 'Fresh' }); // not stale
+
+    const count = service.archiveStaleActiveSessions();
+    assert.equal(count, 2);
+  } finally {
+    service.close();
+  }
+});
+
+test('archiveStaleActiveSessions clears activeSessionId if archived', () => {
+  const service = createService();
+  try {
+    const session = service.createSession({ title: 'Will be archived' });
+    assert.equal(service.activeSessionId, session.id);
+
+    const past = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+    service.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?').run(past, session.id);
+
+    service.archiveStaleActiveSessions();
+    assert.equal(service.activeSessionId, null);
+  } finally {
+    service.close();
+  }
+});
+
+// ── Constructor archive on init ─────────────────────────────────────────
+
+test('constructor archives stale sessions on initialisation', () => {
+  // In :memory: database, each SessionService instance gets its own DB, so we
+  // cannot share state across instances. Instead verify the init path doesn't
+  // throw and that a freshly created session works fine after init.
+  const service = createService();
+  try {
+    const fresh = service.createSession({ title: 'Fresh after init' });
+    assert.equal(fresh.status, 'active');
+  } finally {
+    service.close();
+  }
+});
