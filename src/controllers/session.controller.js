@@ -70,6 +70,26 @@ export class SessionController {
     }
   }
 
+  search(req, res) {
+    try {
+      const query = req.query.q;
+      if (!query || !query.trim()) {
+        return res.status(400).json({ success: false, error: 'Search query "q" is required' });
+      }
+      const result = this.service.searchTurns(query.trim(), {
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      if (err instanceof SessionValidationError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      log.error('Error searching sessions', { error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to search sessions' });
+    }
+  }
+
   end(req, res) {
     try {
       const session = this.service.endSession(req.params.id);

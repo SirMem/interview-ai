@@ -69,6 +69,40 @@ function normalizePositiveInteger(value, field, { defaultValue, min = 0, max = N
   return num;
 }
 
+/**
+ * Sanitise a user-provided search string into a safe FTS5 MATCH query.
+ * Strips characters that would interfere with FTS5 MATCH syntax, then joins
+ * terms with AND so that multiple words require all terms to match.
+ * FTS5 reserved words (AND, OR, NOT, NEAR) are escaped as quoted literals
+ * so they are treated as search terms rather than operators.
+ *
+ * @param {string} query - Raw user query
+ * @returns {string} Sanitised FTS5 query string, or '' if no searchable terms remain
+ */
+function sanitizeFtsQuery(query) {
+  // Remove characters that have special meaning in FTS5 MATCH syntax
+  // (notably: "-" is the NOT operator; quotes/parens are grouping).
+  // Keep: ASCII alphanumeric, CJK (Chinese/Japanese/Korean), spaces.
+  const sanitized = query.trim()
+    .replace(/[^a-zA-Z0-9一-鿿぀-ゟ゠-ヿ가-힯\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!sanitized) return '';
+
+  // Split into individual terms and join with AND operator
+  const terms = sanitized.split(/\s+/);
+  const ftsTerms = terms.map((t) => {
+    // Quote FTS5 reserved words so they are treated as literal search terms
+    if (/^(AND|OR|NOT|NEAR)$/i.test(t)) {
+      return `"${t}"`;
+    }
+    return t;
+  });
+
+  return ftsTerms.join(' AND ');
+}
+
 export class SessionService {
   constructor({ dbPath = DEFAULT_SESSION_DB_PATH, db = null } = {}) {
     this.dbPath = dbPath;
@@ -445,6 +479,90 @@ export class SessionService {
       created_at: row.created_at,
       metadata: parseJsonObject(row.metadata_json),
     }));
+  }
+
+  /**
+   * Full-text search across all conversation turns using the FTS5 index.
+   *
+   * @param {string} query - User search string (will be sanitised for FTS5 MATCH)
+   * @param {object} [options={}] - Optional pagination
+   * @param {number} [options.limit=20] - Max results per page (1-100)
+   * @param {number} [options.offset=0] - Result offset for pagination
+   * @returns {object} { turns: Array<object>, pagination: { limit, offset, total } }
+   *   Each turn object includes: turn_id, session_id, turn_index,
+   *   cleaned_question, answer, raw_transcript, snippet (FTS5-highlighted excerpt)
+   * @throws {SessionValidationError} on empty query or invalid options
+   */
+  searchTurns(query, options = {}) {
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      throw new SessionValidationError('query is required for search');
+    }
+
+    const limit = normalizePositiveInteger(options.limit, 'limit', {
+      defaultValue: DEFAULT_LIST_LIMIT,
+      min: 1,
+      max: MAX_LIST_LIMIT,
+    });
+    const offset = normalizePositiveInteger(options.offset, 'offset', {
+      defaultValue: 0,
+      min: 0,
+    });
+
+    const ftsQuery = sanitizeFtsQuery(query);
+    if (!ftsQuery) {
+      throw new SessionValidationError('query must contain at least one searchable term');
+    }
+
+    // Count total matches
+    const countResult = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM conversation_turns_fts
+      WHERE conversation_turns_fts MATCH ?
+    `).get(ftsQuery);
+
+    const total = countResult.count;
+
+    if (total === 0) {
+      return { turns: [], pagination: { limit, offset, total } };
+    }
+
+    // Fetch matching FTS5 rows with snippet from cleaned_question
+    const ftsRows = this.db.prepare(`
+      SELECT
+        turn_id,
+        session_id,
+        snippet(conversation_turns_fts, 2, '<b>', '</b>', '...', 32) AS snippet
+      FROM conversation_turns_fts
+      WHERE conversation_turns_fts MATCH ?
+      ORDER BY rowid
+      LIMIT ? OFFSET ?
+    `).all(ftsQuery, limit, offset);
+
+    const turnIds = ftsRows.map((r) => r.turn_id);
+    if (turnIds.length === 0) {
+      return { turns: [], pagination: { limit, offset, total } };
+    }
+
+    // Fetch full turn data from conversation_turns
+    const placeholders = turnIds.map(() => '?').join(',');
+    const turnRows = this.db.prepare(`
+      SELECT * FROM conversation_turns
+      WHERE id IN (${placeholders})
+      ORDER BY turn_index ASC
+    `).all(...turnIds);
+
+    // Attach snippet from FTS5 result
+    const snippetMap = new Map(ftsRows.map((r) => [r.turn_id, r.snippet]));
+    const turns = turnRows.map((row) => ({
+      turn_id: row.id,
+      session_id: row.session_id,
+      turn_index: row.turn_index,
+      cleaned_question: row.cleaned_question,
+      answer: row.answer,
+      raw_transcript: row.raw_transcript,
+      snippet: snippetMap.get(row.id) || '',
+    }));
+
+    return { turns, pagination: { limit, offset, total } };
   }
 
   // ── Session Events ─────────────────────────────────────────────────────
