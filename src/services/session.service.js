@@ -77,6 +77,22 @@ export class SessionService {
     this.activeSessionId = null;
     this._configureDatabase();
     this._initializeSchema();
+    this._archiveStaleOnInit();
+  }
+
+  /**
+   * Archive stale sessions on service initialisation.
+   * Best-effort — failures must not block service construction.
+   */
+  _archiveStaleOnInit() {
+    try {
+      const count = this.archiveStaleActiveSessions();
+      if (count > 0) {
+        log.info(`Archived ${count} stale session(s) at startup`);
+      }
+    } catch (err) {
+      log.warn('Failed to archive stale sessions at startup', { error: err.message });
+    }
   }
 
   _openDatabase(dbPath) {
@@ -468,6 +484,64 @@ export class SessionService {
       event_time: timestamp,
       payload,
     };
+  }
+
+  /**
+   * End an active session manually.
+   * @param {string} sessionId
+   * @returns {object|null} The updated session, or null if not found
+   */
+  endSession(sessionId) {
+    const session = this.getSession(sessionId);
+    if (!session) return null;
+
+    const now = toIsoString();
+
+    this.db.prepare(`
+      UPDATE sessions SET status = 'ended', ended_at = ?, updated_at = ? WHERE id = ?
+    `).run(now, now, sessionId);
+
+    if (this.activeSessionId === sessionId) {
+      this.activeSessionId = null;
+    }
+
+    this.appendEvent(sessionId, 'session_ended', { manual: true });
+
+    return this.getSession(sessionId);
+  }
+
+  /**
+   * Archive all active sessions that haven't been updated in over 12 hours.
+   * @returns {number} Number of sessions archived
+   */
+  archiveStaleActiveSessions() {
+    const cutoff = toIsoString(new Date(Date.now() - 12 * 60 * 60 * 1000));
+
+    const staleRows = this.db.prepare(`
+      SELECT id FROM sessions WHERE status = 'active' AND updated_at < ?
+    `).all(cutoff);
+
+    if (staleRows.length === 0) return 0;
+
+    const now = toIsoString();
+    const updateStmt = this.db.prepare(`
+      UPDATE sessions SET status = 'archived', ended_at = ?, updated_at = ? WHERE id = ?
+    `);
+
+    for (const row of staleRows) {
+      updateStmt.run(now, now, row.id);
+      this.appendEvent(row.id, 'session_auto_archived', {});
+    }
+
+    // If the current active session was archived, clear it
+    if (this.activeSessionId) {
+      const archivedIds = new Set(staleRows.map(r => r.id));
+      if (archivedIds.has(this.activeSessionId)) {
+        this.activeSessionId = null;
+      }
+    }
+
+    return staleRows.length;
   }
 
   close() {
