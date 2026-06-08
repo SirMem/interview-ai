@@ -8,22 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
-- **Conversation Turn persistence** (`src/services/session.service.js`) — three new methods for the live interview path: `ensureActiveSession()` auto-creates a default live Session when none is active; `appendTurn()` writes one Conversation Turn (with `raw_transcript`, `cleaned_question`, `answer`, provider/model, token usage, latency) to both `conversation_turns` and `conversation_turns_fts` with `turn_index = MAX(turn_index) + 1`; `getTurns()` returns all turns for a Session ordered by `turn_index`.
-- **Live Q&A automatically persisted** — `dataHandler.js` now hooks into `handleSttFinal()` after a successful AI answer: fires `ensureActiveSession()` + `appendTurn()` via `setTimeout(0).unref()` so the SQLite write never blocks the HUD token streaming. `_streamInterviewAnswer()` also returns `cleanedQuestion` for the turn record.
-- **`GET /api/sessions/:id/turns`** endpoint — returns all Conversation Turns for a Session, ordered by `turn_index`. Returns 404 for missing sessions.
-- **New error class `TurnValidationError`** for `appendTurn()` validation: rejects empty turns, non-existent sessions, and ended sessions.
-
-### Tests
-- **20 service tests** — covers `ensureActiveSession` (auto-create, return existing, stale session recovery), `appendTurn` (field mapping, cleaned_question fallback, turn_index increment, validation errors, FTS5 sync), and `getTurns` (ordering, isolation between sessions).
-- **2 new route tests** — `GET /api/sessions/:id/turns` happy path (returns turns in index order) and 404 for missing session. Total route tests: 7.
+- **Session Event traceability** (`src/services/session.service.js`) — new `appendEvent(sessionId, eventType, payload)` method records key lifecycle and processing-stage milestones to the `session_events` table (with UUID, ISO timestamp, and validated JSON payload). Lifecycle events are automatically recorded in `createSession()` (`session_started`), `ensureActiveSession()` auto-create path (`session_auto_created`), and `appendTurn()` (`conversation_turn_created`).
+- **Live answer events wired into `handleSttFinal()`** — `dataHandler.js` now records `stt_final_received`, `ai_answer_started`, `ai_answer_completed`, and `ai_answer_failed` events during the always-on listen flow. All writes are best-effort (try/catch) and never block token streaming. `sessionService.ensureActiveSession()` is now called at the start of the handler and reused for both events and turn persistence.
+- **10 new service tests** — covers `appendEvent` validation and field mapping, auto-recording on `createSession`/`ensureActiveSession`/`appendTurn`, and one full lifecycle path (create → appendTurn → chronological event chain). Total service tests: 30.
 
 ### Changed
-- `src/controllers/session.controller.js` — added `getTurns` handler with `SessionValidationError`/`TurnValidationError` catch.
-- `src/routes/session.routes.js` — added `GET /sessions/:id/turns` route.
-- `src/sockets/dataHandler.js` — `_streamInterviewAnswer()` now returns `cleanedQuestion` alongside `answerText`, `stageLatencies`, `providerInfo`, and `tokens`.
-
-### Changed
-- `.gitignore` — ignore local SQLite runtime files (`data/*.db`, `data/*.sqlite*`, and their `-wal`/`-shm` variants).
+- `src/services/session.service.js` — added `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/sockets/dataHandler.js` — restructured `handleSttFinal()` to move `ensureActiveSession()` to the top of the handler and record events at each lifecycle stage. Events are wrapped in try/catch to never interrupt the AI answer flow.
 
 ---
 

@@ -565,8 +565,22 @@ class DataHandler extends EventEmitter {
 
     log.info('Processing stt_final as interview question', { questionId, uid, textLength: text.length });
 
+    // ── Session: ensure active + record STT event ──
+    let session;
+    try {
+      session = sessionService.ensureActiveSession();
+      sessionService.appendEvent(session.id, 'stt_final_received', { questionId, textLength: text.length });
+    } catch (sessionErr) {
+      log.warn('Failed to record stt_final_received event', { questionId, error: sessionErr.message });
+    }
+
     this.namespace.emit('interviewer_question', { questionId, questionText: text });
     this.namespace.emit('question_answer_started', { questionId });
+
+    // ── Record AI answer started ──
+    if (session) {
+      try { sessionService.appendEvent(session.id, 'ai_answer_started', { questionId }); } catch (_) { /* best-effort */ }
+    }
 
     try {
       const result = await this._streamInterviewAnswer(
@@ -595,13 +609,26 @@ class DataHandler extends EventEmitter {
 
       if (text && answerText) this.transcriptBuffer.addQAPair(text, answerText);
 
+      // ── Record answer completed ──
+      if (session) {
+        try {
+          sessionService.appendEvent(session.id, 'ai_answer_completed', {
+            questionId,
+            provider: providerInfo.provider,
+            model: providerInfo.model,
+            latency_ms: Math.round(stageLatencies.ai_total_ms || 0),
+            output_tokens: tokens.output,
+          });
+        } catch (_) { /* best-effort */ }
+      }
+
       // Fire-and-forget: persist conversation turn.
       // Write must not block the socket event — setTimeout(0) defers it past
       // question_answer_complete so the HUD gets its tokens without delay.
       setTimeout(() => {
         try {
-          const session = sessionService.ensureActiveSession();
-          sessionService.appendTurn(session.id, {
+          const sid = session ? session.id : sessionService.ensureActiveSession().id;
+          sessionService.appendTurn(sid, {
             raw_transcript: text,
             cleaned_question: cleanedQuestion || text,
             answer: answerText,
@@ -612,7 +639,7 @@ class DataHandler extends EventEmitter {
             cost_usd: tokens.cost_usd,
             latency_ms: Math.round(stageLatencies.ai_total_ms || 0),
           });
-          log.info('Conversation turn persisted', { sessionId: session.id });
+          log.info('Conversation turn persisted', { sessionId: sid });
         } catch (sessionErr) {
           log.warn('Failed to persist conversation turn', { questionId, error: sessionErr.message });
         }
@@ -621,6 +648,13 @@ class DataHandler extends EventEmitter {
       log.error('Error answering stt_final question', { questionId, error: err.message });
       this.namespace.emit('question_answer_complete', { questionId, response: 'Error generating answer.' });
       logEvent('question_answer_failed', 'ERROR', { flow: 'transcription', error: err.message });
+
+      // ── Record answer failed ──
+      if (session) {
+        try {
+          sessionService.appendEvent(session.id, 'ai_answer_failed', { questionId, error: err.message });
+        } catch (_) { /* best-effort */ }
+      }
     }
   }
 
