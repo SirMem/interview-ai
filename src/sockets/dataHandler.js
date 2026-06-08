@@ -105,6 +105,7 @@ class DataHandler extends EventEmitter {
     socket.on('get_settings', () => this.handleGetSettings(socket));
     socket.on('set_hud_opacity', (data) => this.handleSetHudOpacity(data));
     socket.on('set_vad_config', (data) => this.handleSetVadConfig(socket, data));
+    socket.on('end_session', () => this.handleEndSession(socket));
   }
 
   handleDisconnect(socket, reason) {
@@ -843,6 +844,31 @@ class DataHandler extends EventEmitter {
     // Broadcast to all clients (HUD will pick this up)
     if (this.namespace) {
       this.namespace.emit('hud_opacity_updated', { value: clamped });
+    }
+  }
+
+  async handleEndSession(socket) {
+    try {
+      if (!sessionService.activeSessionId) {
+        this.emitToSocket(socket, 'end_session_error', { error: 'No active session to end' });
+        return;
+      }
+
+      const session = sessionService.endSession(sessionService.activeSessionId);
+      if (!session) {
+        this.emitToSocket(socket, 'end_session_error', { error: 'Active session not found' });
+        return;
+      }
+
+      log.info('Session ended via Socket.IO', { sessionId: session.id, status: session.status });
+      this.namespace.emit('session_ended', {
+        sessionId: session.id,
+        status: session.status,
+        ended_at: session.ended_at,
+      });
+    } catch (err) {
+      log.error('Error ending session via Socket.IO', { error: err.message });
+      this.emitToSocket(socket, 'end_session_error', { error: err.message });
     }
   }
 }

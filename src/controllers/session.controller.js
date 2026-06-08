@@ -69,6 +69,22 @@ export class SessionController {
       res.status(500).json({ success: false, error: 'Failed to get turns' });
     }
   }
+
+  end(req, res) {
+    try {
+      const session = this.service.endSession(req.params.id);
+      if (!session) {
+        return res.status(404).json({ success: false, error: `Session "${req.params.id}" not found` });
+      }
+      res.json({ success: true, session });
+    } catch (err) {
+      if (err instanceof SessionValidationError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      log.error('Error ending session', { sessionId: req.params.id, error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to end session' });
+    }
+  }
 }
 
 export default new SessionController();
