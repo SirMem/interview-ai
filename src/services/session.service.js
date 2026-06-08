@@ -460,10 +460,14 @@ export class SessionService {
 
   /**
    * Fetch all conversation turns for a session, ordered by turn_index.
+   * When `options.limit` is set, returns only the N most recent turns.
+   *
    * @param {string} sessionId
+   * @param {string|object} [options] - Options object or limit number (backward compat)
+   * @param {number} [options.limit] - If set, return only the N most recent turns
    * @returns {Array<object>}
    */
-  getTurns(sessionId) {
+  getTurns(sessionId, options = {}) {
     const normalizedId = normalizeOptionalString(sessionId, 'sessionId', { max: 128, defaultValue: '' });
     if (!normalizedId) return [];
     const rows = this.db.prepare(`
@@ -471,7 +475,7 @@ export class SessionService {
       WHERE session_id = ?
       ORDER BY turn_index ASC
     `).all(normalizedId);
-    return rows.map(row => ({
+    const turns = rows.map(row => ({
       id: row.id,
       session_id: row.session_id,
       turn_index: row.turn_index,
@@ -487,6 +491,11 @@ export class SessionService {
       created_at: row.created_at,
       metadata: parseJsonObject(row.metadata_json),
     }));
+    // When limit is set, return N most recent (last by turn_index)
+    if (typeof options.limit === 'number' && options.limit >= 0) {
+      return turns.slice(-options.limit);
+    }
+    return turns;
   }
 
   /**
@@ -632,6 +641,38 @@ export class SessionService {
     }
 
     this.appendEvent(sessionId, 'session_ended', { manual: true });
+
+    return this.getSession(sessionId);
+  }
+
+  /**
+   * Reactivate an ended session (restore to active).
+   * @param {string} sessionId
+   * @returns {object|null} The reactivated session, or null if not found
+   * @throws {SessionValidationError} if session is not ended (e.g. active or archived)
+   */
+  reactivateSession(sessionId) {
+    const session = this.getSession(sessionId);
+    if (!session) return null;
+
+    if (session.status === 'active') {
+      throw new SessionValidationError(`Session "${sessionId}" is already active (status: active)`);
+    }
+    if (session.status === 'archived') {
+      throw new SessionValidationError(`Session "${sessionId}" is archived and cannot be reactivated`);
+    }
+    if (session.status !== 'ended') {
+      throw new SessionValidationError(`Session "${sessionId}" cannot be reactivated (status: ${session.status})`);
+    }
+
+    const now = toIsoString();
+    this.db.prepare(`
+      UPDATE sessions SET status = 'active', ended_at = NULL, updated_at = ? WHERE id = ?
+    `).run(now, sessionId);
+
+    this.activeSessionId = sessionId;
+
+    this.appendEvent(sessionId, 'session_restored', { title: session.title });
 
     return this.getSession(sessionId);
   }
