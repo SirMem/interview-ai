@@ -615,3 +615,143 @@ test('full lifecycle: create → appendTurn produces a chronological event chain
     service.close();
   }
 });
+
+// ── searchTurns ─────────────────────────────────────────────────────────
+
+test('searchTurns matches cleaned_question', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    service.appendTurn(session.id, {
+      cleaned_question: 'Explain Redis caching',
+      answer: 'Redis is an in-memory data store.',
+    });
+    const result = service.searchTurns('Redis');
+
+    assert.equal(result.turns.length, 1);
+    assert.equal(result.turns[0].turn_id, result.turns[0].turn_id);
+    assert.equal(result.turns[0].session_id, session.id);
+    assert.equal(result.turns[0].cleaned_question, 'Explain Redis caching');
+    assert.equal(result.turns[0].answer, 'Redis is an in-memory data store.');
+    assert.equal(result.turns[0].raw_transcript, '');
+    assert.ok(result.turns[0].snippet);
+    assert.equal(result.pagination.total, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns matches answer text', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    service.appendTurn(session.id, {
+      raw_transcript: 'What is Redis?',
+      answer: 'Redis is an in-memory key-value store with persistence.',
+    });
+    const result = service.searchTurns('persistence');
+
+    assert.equal(result.turns.length, 1);
+    assert.equal(result.turns[0].answer, 'Redis is an in-memory key-value store with persistence.');
+    assert.equal(result.pagination.total, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns matches raw_transcript text', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    service.appendTurn(session.id, {
+      raw_transcript: 'Could you explain how Node.js event loop works?',
+      answer: 'Node.js uses libuv event loop.',
+    });
+    const result = service.searchTurns('event loop');
+
+    assert.equal(result.turns.length, 1);
+    assert.equal(result.turns[0].raw_transcript, 'Could you explain how Node.js event loop works?');
+    assert.equal(result.pagination.total, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns returns empty array when no match is found', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    service.appendTurn(session.id, {
+      cleaned_question: 'Explain Redis',
+      answer: 'Redis is a cache.',
+    });
+    const result = service.searchTurns('PostgreSQL');
+    assert.deepEqual(result.turns, []);
+    assert.equal(result.pagination.total, 0);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns throws validation error on empty query', () => {
+  const service = createService();
+  try {
+    assert.throws(() => service.searchTurns(null), SessionValidationError);
+    assert.throws(() => service.searchTurns(undefined), SessionValidationError);
+    assert.throws(() => service.searchTurns(''), SessionValidationError);
+    assert.throws(() => service.searchTurns('   '), SessionValidationError);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns handles Chinese text search', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    service.appendTurn(session.id, {
+      cleaned_question: 'Redis 缓存 机制 是什么',
+      answer: 'Redis 是 内存 数据库',
+    });
+    const result = service.searchTurns('缓存');
+
+    assert.equal(result.turns.length, 1);
+    assert.equal(result.turns[0].cleaned_question, 'Redis 缓存 机制 是什么');
+    assert.equal(result.turns[0].answer, 'Redis 是 内存 数据库');
+    assert.ok(result.turns[0].snippet);
+    assert.equal(result.pagination.total, 1);
+  } finally {
+    service.close();
+  }
+});
+
+test('searchTurns paginates correctly', () => {
+  const service = createService();
+  try {
+    const session = service.ensureActiveSession();
+    for (let i = 0; i < 5; i++) {
+      service.appendTurn(session.id, {
+        cleaned_question: `Question about caching part ${i}`,
+        answer: 'Redis is a cache.',
+      });
+    }
+
+    const page1 = service.searchTurns('caching', { limit: 2, offset: 0 });
+    assert.equal(page1.turns.length, 2);
+    assert.equal(page1.pagination.total, 5);
+    assert.equal(page1.pagination.limit, 2);
+    assert.equal(page1.pagination.offset, 0);
+
+    const page2 = service.searchTurns('caching', { limit: 2, offset: 2 });
+    assert.equal(page2.turns.length, 2);
+    assert.equal(page2.pagination.total, 5);
+    assert.equal(page2.pagination.limit, 2);
+    assert.equal(page2.pagination.offset, 2);
+
+    const page3 = service.searchTurns('caching', { limit: 2, offset: 4 });
+    assert.equal(page3.turns.length, 1);
+    assert.equal(page3.pagination.total, 5);
+  } finally {
+    service.close();
+  }
+});

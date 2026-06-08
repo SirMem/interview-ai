@@ -197,3 +197,51 @@ test('GET /api/sessions/:id/turns returns 404 for missing session', async () => 
     await server.close();
   }
 });
+
+// ── search ──────────────────────────────────────────────────────────────
+
+test('GET /api/sessions/search?q=... returns matching results', async () => {
+  const server = await createTestServer();
+  try {
+    // Create a session with turns
+    const created = await jsonRequest(server.baseUrl, '/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'Search test' }),
+    });
+    const sessionId = created.body.session.id;
+
+    server.service.appendTurn(sessionId, {
+      raw_transcript: 'How does Redis work?',
+      cleaned_question: 'Explain Redis caching',
+      answer: 'Redis is an in-memory data store.',
+    });
+    server.service.appendTurn(sessionId, {
+      raw_transcript: 'What is Node.js?',
+      cleaned_question: 'Explain Node.js event loop',
+      answer: 'Node.js uses libuv.',
+    });
+
+    const { response, body } = await jsonRequest(server.baseUrl, '/api/sessions/search?q=Redis');
+
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.turns.length, 1);
+    assert.equal(body.turns[0].cleaned_question, 'Explain Redis caching');
+    assert.equal(body.pagination.total, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('GET /api/sessions/search without q returns 400', async () => {
+  const server = await createTestServer();
+  try {
+    const { response, body } = await jsonRequest(server.baseUrl, '/api/sessions/search');
+
+    assert.equal(response.status, 400);
+    assert.equal(body.success, false);
+    assert.match(body.error, /query is required/);
+  } finally {
+    await server.close();
+  }
+});

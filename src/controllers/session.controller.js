@@ -69,6 +69,22 @@ export class SessionController {
       res.status(500).json({ success: false, error: 'Failed to get turns' });
     }
   }
+
+  search(req, res) {
+    try {
+      const result = this.service.searchTurns(req.query.q, {
+        limit: req.query.limit,
+        offset: req.query.offset,
+      });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      if (err instanceof SessionValidationError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      log.error('Error searching turns', { error: err.message });
+      res.status(500).json({ success: false, error: 'Failed to search turns' });
+    }
+  }
 }
 
 export default new SessionController();

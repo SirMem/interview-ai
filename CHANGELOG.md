@@ -8,12 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **FTS5 full-text search across Conversation Turns** (#4) — new `searchTurns(query, options)` method on `SessionService` executes FTS5 `MATCH` queries against the `conversation_turns_fts` virtual table. User input is automatically sanitised (special chars stripped, spaces converted to `AND`) to produce safe FTS5 queries. Results include `turn_id`, `session_id`, `turn_index`, `cleaned_question`, `answer`, `raw_transcript`, an FTS5 `snippet` with `<b>` highlights, and pagination metadata.
+- **`GET /api/sessions/search` route** — bound to `search` controller handler before the `:id` param routes to prevent route collision. Accepts `?q=` for the search term and optional `limit`/`offset` for pagination.
+- **7 new service tests** — covers search across `cleaned_question`, `answer`, `raw_transcript`, no-match case, empty query validation error, Chinese text search, and pagination. Total service tests: 37.
+- **2 new route tests** — covers successful search response and 400 on missing `q` parameter.
 - **Session Event traceability** (`src/services/session.service.js`) — new `appendEvent(sessionId, eventType, payload)` method records key lifecycle and processing-stage milestones to the `session_events` table (with UUID, ISO timestamp, and validated JSON payload). Lifecycle events are automatically recorded in `createSession()` (`session_started`), `ensureActiveSession()` auto-create path (`session_auto_created`), and `appendTurn()` (`conversation_turn_created`).
 - **Live answer events wired into `handleSttFinal()`** — `dataHandler.js` now records `stt_final_received`, `ai_answer_started`, `ai_answer_completed`, and `ai_answer_failed` events during the always-on listen flow. All writes are best-effort (try/catch) and never block token streaming. `sessionService.ensureActiveSession()` is now called at the start of the handler and reused for both events and turn persistence.
 - **10 new service tests** — covers `appendEvent` validation and field mapping, auto-recording on `createSession`/`ensureActiveSession`/`appendTurn`, and one full lifecycle path (create → appendTurn → chronological event chain). Total service tests: 30.
 
 ### Changed
-- `src/services/session.service.js` — added `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/services/session.service.js` — added `sanitizeFtsQuery()` utility and `searchTurns()` method for FTS5 full-text search; `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/controllers/session.controller.js` — added `search` handler that delegates to `sessionService.searchTurns()`.
+- `src/routes/session.routes.js` — added `GET /sessions/search` route, registered before `:id` param routes to avoid Express route collision.
 - `src/sockets/dataHandler.js` — restructured `handleSttFinal()` to move `ensureActiveSession()` to the top of the handler and record events at each lifecycle stage. Events are wrapped in try/catch to never interrupt the AI answer flow.
 
 ---
