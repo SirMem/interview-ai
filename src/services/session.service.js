@@ -277,7 +277,11 @@ export class SessionService {
     );
 
     this.activeSessionId = id;
-    this.appendEvent(id, 'session_started', { type: normalized.type, title: normalized.title });
+    try {
+      this.appendEvent(id, 'session_started', { type: normalized.type, title: normalized.title });
+    } catch (err) {
+      log.warn('Failed to record session_started event', { sessionId: id, error: err.message });
+    }
     return this.getSession(id);
   }
 
@@ -326,7 +330,11 @@ export class SessionService {
     }
     // Auto-create a default live session
     const session = this.createSession({});
-    this.appendEvent(session.id, 'session_auto_created', { title: session.title });
+    try {
+      this.appendEvent(session.id, 'session_auto_created', { title: session.title });
+    } catch (err) {
+      log.warn('Failed to record session_auto_created event', { sessionId: session.id, error: err.message });
+    }
     log.info('Auto-created active session', { sessionId: session.id, title: session.title });
     return session;
   }

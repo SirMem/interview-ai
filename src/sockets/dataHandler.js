@@ -36,9 +36,10 @@ const MESSAGE_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
 class DataHandler extends EventEmitter {
-  constructor(io) {
+  constructor(io, options = {}) {
     super();
     this.io = io;
+    this.sessionService = options.sessionService || sessionService;
     this.namespace = null;
     this.selectedPrompts = new Map();
     this.messageData = new Map(); // messageId -> { question, answer, promptType, socketId, timestamp }
@@ -440,6 +441,7 @@ class DataHandler extends EventEmitter {
     let buffer = '';
     let answerText = '';
     let questionExtracted = false;
+    let match = null;
     let firstTokenAt = null;
     let providerInfo = null;
     let usage        = null;   // { input_tokens, output_tokens } captured on the final chunk
@@ -474,9 +476,10 @@ class DataHandler extends EventEmitter {
       if (!questionExtracted) {
         buffer += token;
         // Match the required format: Q: <question>\nA: (with optional extra newlines)
-        const match = buffer.match(/^Q:\s*(.+?)\n+A:\s*/s);
-        if (match) {
+        const _match = buffer.match(/^Q:\s*(.+?)\n+A:\s*/s);
+        if (_match) {
           questionExtracted = true;
+          match = _match;
           // How long did the user see raw transcript before the AI-cleaned
           // question appeared in the Q&A card? = total time the "Q: …" prefix
           // needed to finish streaming.
@@ -569,8 +572,8 @@ class DataHandler extends EventEmitter {
     // ── Session: ensure active + record STT event ──
     let session;
     try {
-      session = sessionService.ensureActiveSession();
-      sessionService.appendEvent(session.id, 'stt_final_received', { questionId, textLength: text.length });
+      session = this.sessionService.ensureActiveSession();
+      this.sessionService.appendEvent(session.id, 'stt_final_received', { questionId, textLength: text.length });
     } catch (sessionErr) {
       log.warn('Failed to record stt_final_received event', { questionId, error: sessionErr.message });
     }
@@ -580,7 +583,7 @@ class DataHandler extends EventEmitter {
 
     // ── Record AI answer started ──
     if (session) {
-      try { sessionService.appendEvent(session.id, 'ai_answer_started', { questionId }); } catch (_) { /* best-effort */ }
+      try { this.sessionService.appendEvent(session.id, 'ai_answer_started', { questionId }); } catch (_) { /* best-effort */ }
     }
 
     try {
@@ -613,7 +616,7 @@ class DataHandler extends EventEmitter {
       // ── Record answer completed ──
       if (session) {
         try {
-          sessionService.appendEvent(session.id, 'ai_answer_completed', {
+          this.sessionService.appendEvent(session.id, 'ai_answer_completed', {
             questionId,
             provider: providerInfo.provider,
             model: providerInfo.model,
@@ -628,8 +631,8 @@ class DataHandler extends EventEmitter {
       // question_answer_complete so the HUD gets its tokens without delay.
       setTimeout(() => {
         try {
-          const sid = session ? session.id : sessionService.ensureActiveSession().id;
-          sessionService.appendTurn(sid, {
+          const sid = session ? session.id : this.sessionService.ensureActiveSession().id;
+          this.sessionService.appendTurn(sid, {
             raw_transcript: text,
             cleaned_question: cleanedQuestion || text,
             answer: answerText,
@@ -653,7 +656,7 @@ class DataHandler extends EventEmitter {
       // ── Record answer failed ──
       if (session) {
         try {
-          sessionService.appendEvent(session.id, 'ai_answer_failed', { questionId, error: err.message });
+          this.sessionService.appendEvent(session.id, 'ai_answer_failed', { questionId, error: err.message });
         } catch (_) { /* best-effort */ }
       }
     }
@@ -849,12 +852,12 @@ class DataHandler extends EventEmitter {
 
   async handleEndSession(socket) {
     try {
-      if (!sessionService.activeSessionId) {
+      if (!this.sessionService.activeSessionId) {
         this.emitToSocket(socket, 'end_session_error', { error: 'No active session to end' });
         return;
       }
 
-      const session = sessionService.endSession(sessionService.activeSessionId);
+      const session = this.sessionService.endSession(this.sessionService.activeSessionId);
       if (!session) {
         this.emitToSocket(socket, 'end_session_error', { error: 'Active session not found' });
         return;

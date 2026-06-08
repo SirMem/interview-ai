@@ -8,6 +8,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Session persistence failure isolation** (#7) — new `options.sessionService` constructor parameter on `DataHandler` enables dependency injection for testing. `createSession()` and `ensureActiveSession()` now wrap internal `appendEvent` calls in try/catch so event-recording failures never prevent session creation or answer streaming.
+- **14 new failure-isolation tests** — 7 session-service-level tests (`test/session-service-failures.test.js`) verify that `createSession()` and `ensureActiveSession()` degrade gracefully when `appendEvent` throws, and that error messages carry diagnostic context. 7 DataHandler-level tests (`test/datahandler-failures.test.js`) use mock Socket.IO namespace + mock session service + mock AI stream to prove `question_answer_complete` fires even when ALL session writes fail, AI errors are caught, and empty text produces no events.
 - **FTS5 full-text search across Conversation Turns** (#4) — new `searchTurns(query, options)` method on `SessionService` executes FTS5 `MATCH` queries against the `conversation_turns_fts` virtual table. User input is automatically sanitised (special chars stripped, spaces converted to `AND`) to produce safe FTS5 queries. Results include `turn_id`, `session_id`, `turn_index`, `cleaned_question`, `answer`, `raw_transcript`, an FTS5 `snippet` with `<b>` highlights, and pagination metadata.
 - **`GET /api/sessions/search` route** — bound to `search` controller handler before the `:id` param routes to prevent route collision. Accepts `?q=` for the search term and optional `limit`/`offset` for pagination.
 - **7 new service tests** — covers search across `cleaned_question`, `answer`, `raw_transcript`, no-match case, empty query validation error, Chinese text search, and pagination. Total service tests: 37.
@@ -23,11 +25,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **2 new route tests** — covers `POST /api/sessions/:id/end` with an active session and a missing session. Total route tests: 9.
 
 ### Changed
-- `src/services/session.service.js` — added `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`.
+- `src/services/session.service.js` — added `appendEvent()` method; `createSession()` now records `session_started`; `ensureActiveSession()` records `session_auto_created` on auto-create; `appendTurn()` records `conversation_turn_created`; `createSession()` and `ensureActiveSession()` wrap internal `appendEvent` calls in try/catch for resilience (#7).
+- `src/sockets/dataHandler.js` — added optional `options.sessionService` constructor parameter for dependency injection. All internal `sessionService` references changed to `this.sessionService`. This is backward compatible — existing code passes no options and falls through to the default singleton (#7).
 - `src/services/session.service.js` — added `sanitizeFtsQuery()` utility and `searchTurns()` method for FTS5 full-text search.
 - `src/services/session.service.js` — added `endSession()` and `archiveStaleActiveSessions()` methods; constructor now invokes `archiveStaleActiveSessions()` on init (best-effort).
 - `src/controllers/session.controller.js` — added `search` handler that delegates to `sessionService.searchTurns()`.
 - `src/controllers/session.controller.js` — added `end(req, res)` handler.
+
+### Fixed
+- **`_streamInterviewAnswer()` `match` variable scoping** (#7) — hoisted `match` from block-level `const` to function-level `let` so the final return statement can reference it without throwing `ReferenceError`. This bug caused `question_answer_complete` to fire with "Error generating answer" after the real answer had already streamed successfully.
 - `src/routes/session.routes.js` — added `GET /sessions/search` route, registered before `:id` param routes to avoid Express route collision.
 - `src/routes/session.routes.js` — added `POST /sessions/:id/end` route.
 - `src/sockets/dataHandler.js` — restructured `handleSttFinal()` to move `ensureActiveSession()` to the top of the handler and record events at each lifecycle stage. Events are wrapped in try/catch to never interrupt the AI answer flow.
