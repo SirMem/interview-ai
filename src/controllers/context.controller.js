@@ -1,34 +1,27 @@
 import imageProcessingService from '../services/image-processing.service.js';
-import logger from '../utils/logger.js';
-
-const log = logger('ContextController');
+import { sendSuccess, sendError } from '../lib/response.js';
+import { badRequest, internal } from '../lib/errors.js';
 
 class ContextController {
-  getContextState(req, res) {
+  getContextState(req, res, next) {
     try {
       const useContextEnabled = imageProcessingService.getUseContextEnabled();
-      res.json({ useContextEnabled });
+      return sendSuccess(res, { useContextEnabled });
     } catch (err) {
-      log.error('Error getting context state', err);
-      res.status(500).json({ error: 'Failed to get context state' });
+      return sendError(res, internal('Failed to get context state'));
     }
   }
 
-  updateContextState(req, res) {
+  updateContextState(req, res, next) {
     try {
       const { enabled } = req.body;
-      if (typeof enabled === 'boolean') {
-        imageProcessingService.setUseContextEnabled(enabled);
-        log.info(`Use Context ${enabled ? 'ENABLED' : 'DISABLED'}`);
-        res.json({ success: true, useContextEnabled: enabled });
-      } else {
-        res
-          .status(400)
-          .json({ error: 'Invalid request. "enabled" must be a boolean.' });
+      if (typeof enabled !== 'boolean') {
+        throw badRequest('"enabled" must be a boolean');
       }
+      imageProcessingService.setUseContextEnabled(enabled);
+      return sendSuccess(res, { useContextEnabled: enabled });
     } catch (err) {
-      log.error('Error updating context state', err);
-      res.status(500).json({ error: 'Failed to update context state' });
+      return sendError(res, err);
     }
   }
 }

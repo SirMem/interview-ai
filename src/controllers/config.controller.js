@@ -5,6 +5,8 @@ import OpenAI from 'openai';
 import Groq from 'groq-sdk';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { sendSuccess, sendError } from '../lib/response.js';
+import { badRequest, notFound, internal } from '../lib/errors.js';
 import logger from '../utils/logger.js';
 import {
   initTelemetry,
@@ -25,7 +27,6 @@ const KNOWN_PROVIDER_LABELS = {
   claude: 'Claude (Anthropic)',
 };
 
-// Fallback model lists per provider (used when live fetch fails or as initial options)
 const FALLBACK_MODELS = {
   openai: [
     { id: 'gpt-4o', name: 'GPT-4o' },
@@ -61,16 +62,12 @@ const DEFAULT_MODELS = {
 };
 
 class ConfigController {
-  // ── .env helpers ──────────────────────────────────────────────────────────
+  // ── .env helpers ─────────────────────────────────────────────────────
 
   _reloadEnv() {
     dotenv.config({ path: ENV_FILE_PATH, override: true });
   }
 
-  /**
-   * Update specific keys in .env in-place, preserving all comments and order.
-   * Appends keys that do not yet exist. Reloads process.env after writing.
-   */
   _writeDotEnvKeys(updates) {
     let content = '';
     if (fs.existsSync(ENV_FILE_PATH)) {
@@ -138,12 +135,12 @@ class ConfigController {
     };
   }
 
-  // ── Legacy endpoints (kept for backwards compat) ──────────────────
+  // ── Legacy endpoints ───────────────────────────────────
 
-  getApiKeys(req, res) {
+  getApiKeys(req, res, next) {
     try {
       const config = this._readConfig();
-      if (!config) return res.json({ success: true, config: null });
+      if (!config) return sendSuccess(res, { config: null });
 
       const maskedKeys = {};
       if (config.keys) {
@@ -152,8 +149,7 @@ class ConfigController {
         });
       }
 
-      res.json({
-        success: true,
+      return sendSuccess(res, {
         config: {
           keys: maskedKeys,
           order: config.order || [],
@@ -162,15 +158,15 @@ class ConfigController {
       });
     } catch (err) {
       log.error('Error reading API keys config', err);
-      res.status(500).json({ success: false, error: 'Failed to read configuration' });
+      return sendError(res, internal('Failed to read configuration'));
     }
   }
 
-  saveApiKeys(req, res) {
+  saveApiKeys(req, res, next) {
     try {
       const { keys, order, enabled } = req.body;
       if (!order || !Array.isArray(order)) {
-        return res.status(400).json({ success: false, error: 'Invalid configuration format' });
+        throw badRequest('Invalid configuration format');
       }
 
       const updates = {};
@@ -184,17 +180,19 @@ class ConfigController {
       updates.PROVIDER_ENABLED = (enabled && Array.isArray(enabled) ? enabled : order).join(',');
       this._writeDotEnvKeys(updates);
 
-      const maskedKeys = { openai: '***', grok: '***', gemini: '***', claude: '***' };
-      res.json({ success: true, message: 'Configuration saved', config: { keys: maskedKeys, order, enabled: (enabled || order) } });
+      return sendSuccess(res, {
+        message: 'Configuration saved',
+        config: { keys: { openai: '***', grok: '***', gemini: '***', claude: '***' }, order, enabled: (enabled || order) },
+      });
     } catch (err) {
       log.error('Error saving API keys config', err);
-      res.status(500).json({ success: false, error: 'Failed to save configuration' });
+      return sendError(res, internal('Failed to save configuration'));
     }
   }
 
-  // ── Full settings read ─────────────────────────────────────────────
+  // ── Full settings read ─────────────────────────────────
 
-  getFullConfig(req, res) {
+  getFullConfig(req, res, next) {
     try {
       const config = this._readConfig();
 
@@ -213,8 +211,7 @@ class ConfigController {
         model:   (config.models?.[id] || DEFAULT_MODELS[id] || ''),
       }));
 
-      res.json({
-        success: true,
+      return sendSuccess(res, {
         providers,
         stt_model:            config.stt_model             || 'small',
         audio_input_source:   config.audio_input_source    || '',
@@ -238,13 +235,13 @@ class ConfigController {
       });
     } catch (err) {
       log.error('Error reading full config', err);
-      res.status(500).json({ success: false, error: 'Failed to read configuration' });
+      return sendError(res, internal('Failed to read configuration'));
     }
   }
 
-  // ── Full settings save ─────────────────────────────────────────────
+  // ── Full settings save ─────────────────────────────────
 
-  saveFullConfig(req, res) {
+  saveFullConfig(req, res, next) {
     try {
       const {
         providers, stt_model, audio_input_source, audio_source_mode, answer_mode, hud_opacity, screenshots_path,
@@ -285,7 +282,6 @@ class ConfigController {
       if (interview_role       !== undefined) updates.INTERVIEW_ROLE        = interview_role;
       if (speaker_id_threshold !== undefined) updates.SPEAKER_ID_THRESHOLD  = String(speaker_id_threshold);
       if (speaker_id_enabled   !== undefined) updates.SPEAKER_ID_ENABLED    = speaker_id_enabled ? 'true' : 'false';
-
       if (deepgram_enabled      !== undefined) updates.DEEPGRAM_ENABLED      = deepgram_enabled ? 'true' : 'false';
       if (deepgram_api_key && deepgram_api_key !== '***') updates.DEEPGRAM_API_KEY = deepgram_api_key.trim();
       if (deepgram_model        !== undefined) updates.DEEPGRAM_MODEL        = deepgram_model;
@@ -300,25 +296,24 @@ class ConfigController {
       this._writeDotEnvKeys(updates);
       log.info('Full config saved', { providers: order, stt_model, answer_mode, deepgram_enabled });
 
-      res.json({ success: true, message: 'Settings saved successfully' });
+      return sendSuccess(res, { message: 'Settings saved successfully' });
     } catch (err) {
       log.error('Error saving full config', err);
-      res.status(500).json({ success: false, error: 'Failed to save configuration' });
+      return sendError(res, internal('Failed to save configuration'));
     }
   }
 
-  // ── Model list for a provider ──────────────────────────────────────
+  // ── Model list for a provider ─────────────────────────
 
-  async getProviderModels(req, res) {
+  async getProviderModels(req, res, next) {
     const { providerId } = req.params;
     const config = this._readConfig() || {};
     const apiKey = config.keys?.[providerId];
 
-    // Always return fallback list; try live fetch as bonus
     const fallback = FALLBACK_MODELS[providerId] || [];
 
     if (!apiKey) {
-      return res.json({ success: true, models: fallback, source: 'fallback' });
+      return sendSuccess(res, { models: fallback, source: 'fallback' });
     }
 
     try {
@@ -339,33 +334,31 @@ class ConfigController {
           .map(m => ({ id: m.id, name: m.id }))
           .sort((a, b) => a.name.localeCompare(b.name));
       } else if (providerId === 'gemini') {
-        // Gemini doesn't have a list endpoint in the SDK; return fallback
         models = fallback;
       } else if (providerId === 'claude') {
-        // Anthropic doesn't expose a public model list endpoint; return fallback
         models = fallback;
       } else {
         models = fallback;
       }
 
       if (models.length === 0) models = fallback;
-      return res.json({ success: true, models, source: 'live' });
+      return sendSuccess(res, { models, source: 'live' });
     } catch (err) {
       log.warn(`Could not fetch models for ${providerId}`, { error: err.message });
-      return res.json({ success: true, models: fallback, source: 'fallback' });
+      return sendSuccess(res, { models: fallback, source: 'fallback' });
     }
   }
 
-  // ── Test Deepgram connection ───────────────────────────────────────
+  // ── Test Deepgram connection ─────────────────────────
 
-  async testDeepgramKey(req, res) {
+  async testDeepgramKey(req, res, next) {
     let { api_key: apiKey } = req.body || {};
     if (!apiKey || apiKey === '***') {
       this._reloadEnv();
       apiKey = process.env.DEEPGRAM_API_KEY || '';
     }
     if (!apiKey) {
-      return res.status(400).json({ success: false, error: 'No Deepgram API key provided' });
+      return sendError(res, badRequest('No Deepgram API key provided'));
     }
     try {
       const r = await fetch('https://api.deepgram.com/v1/models', {
@@ -373,20 +366,20 @@ class ConfigController {
         signal: AbortSignal.timeout(6000),
       });
       if (r.status === 401) {
-        return res.status(400).json({ success: false, error: 'Invalid Deepgram API key (HTTP 401 — check key at console.deepgram.com)' });
+        return sendError(res, badRequest('Invalid Deepgram API key (HTTP 401 — check key at console.deepgram.com)'));
       }
       if (!r.ok) {
-        return res.status(400).json({ success: false, error: `Deepgram returned HTTP ${r.status}` });
+        return sendError(res, badRequest(`Deepgram returned HTTP ${r.status}`));
       }
-      return res.json({ success: true, message: 'Deepgram API key is valid' });
+      return sendSuccess(res, { message: 'Deepgram API key is valid' });
     } catch (err) {
-      return res.status(400).json({ success: false, error: `Could not reach Deepgram: ${err.message}` });
+      return sendError(res, badRequest(`Could not reach Deepgram: ${err.message}`));
     }
   }
 
-  // ── Prompt preview ─────────────────────────────────────────────────
+  // ── Prompt preview ────────────────────────────────────
 
-  getPromptPreview(req, res) {
+  getPromptPreview(req, res, next) {
     try {
       const { type = 'interview-answer' } = req.query;
       const config = this._readConfig() || {};
@@ -400,7 +393,7 @@ class ConfigController {
 
       const filename = PROMPT_FILES[type];
       if (!filename) {
-        return res.status(400).json({ success: false, error: `Unknown prompt type: ${type}` });
+        return sendError(res, badRequest(`Unknown prompt type: ${type}`));
       }
 
       const promptPath = path.join(process.cwd(), 'prompts', filename);
@@ -408,35 +401,32 @@ class ConfigController {
       try {
         promptText = fs.readFileSync(promptPath, 'utf8').trim();
       } catch {
-        return res.status(404).json({ success: false, error: 'Prompt file not found' });
+        return sendError(res, notFound('Prompt file not found'));
       }
 
-      // Inject role prefix the same way ai.service.js does
       const rolePrefix = role
         ? `## Interview Context\nRole: ${role}\nTailor your answer specifically for a ${role} interview — use relevant tools, frameworks, and terminology for this domain.\n\n`
         : '';
 
-      res.json({
-        success: true,
+      return sendSuccess(res, {
         type,
         role: role || null,
         prompt: rolePrefix + promptText,
       });
     } catch (err) {
       log.error('Error reading prompt preview', err);
-      res.status(500).json({ success: false, error: 'Failed to read prompt' });
+      return sendError(res, internal('Failed to read prompt'));
     }
   }
 
-  // ── Test provider connection ───────────────────────────────────────
+  // ── Test provider connection ─────────────────────────
 
-  async testProvider(req, res) {
+  async testProvider(req, res, next) {
     const { providerId, key: rawKey } = req.body;
     if (!providerId) {
-      return res.status(400).json({ success: false, error: 'providerId is required' });
+      return sendError(res, badRequest('providerId is required'));
     }
 
-    // Use stored key if client sent placeholder or no key
     let key = rawKey;
     if (!key || key === '***' || key === '***STORED***') {
       const config = this._readConfig() || {};
@@ -444,7 +434,7 @@ class ConfigController {
     }
 
     if (!key) {
-      return res.status(400).json({ success: false, error: `No API key found for ${providerId}` });
+      return sendError(res, badRequest(`No API key found for ${providerId}`));
     }
 
     try {
@@ -466,26 +456,25 @@ class ConfigController {
           messages: [{ role: 'user', content: 'Hi' }],
         });
       } else {
-        return res.status(400).json({ success: false, error: `Unknown provider: ${providerId}` });
+        return sendError(res, badRequest(`Unknown provider: ${providerId}`));
       }
 
-      res.json({ success: true, message: `${KNOWN_PROVIDER_LABELS[providerId] || providerId} connected successfully` });
+      return sendSuccess(res, { message: `${KNOWN_PROVIDER_LABELS[providerId] || providerId} connected successfully` });
     } catch (err) {
       log.warn(`Provider test failed: ${providerId}`, { error: err.message });
-      res.status(400).json({ success: false, error: err.message });
+      return sendError(res, badRequest(err.message));
     }
   }
 
-  // ── Platform info ──────────────────────────────────────────────────
+  // ── Platform info ─────────────────────────────────────
 
-  getPlatformInfo(req, res) {
-    const os = process.platform;   // 'darwin', 'win32', 'linux'
-    const arch = process.arch;     // 'arm64', 'x64', etc.
+  getPlatformInfo(req, res, next) {
+    const os = process.platform;
+    const arch = process.arch;
     const isAppleSilicon = os === 'darwin' && arch === 'arm64';
     const backend = isAppleSilicon ? 'mlx' : 'local';
 
-    res.json({
-      success: true,
+    return sendSuccess(res, {
       platform: os,
       arch,
       isAppleSilicon,
@@ -498,28 +487,27 @@ class ConfigController {
     });
   }
 
-  // ── Whisper model management ───────────────────────────────────────
+  // ── Whisper model management ─────────────────────────
 
-  async getWhisperModels(req, res) {
+  async getWhisperModels(req, res, next) {
     try {
       const resp = await fetch('http://localhost:8000/whisper-models', { signal: AbortSignal.timeout(3000) });
       const data = await resp.json();
-      return res.json({ success: true, models: data.models || [] });
+      return sendSuccess(res, { models: data.models || [] });
     } catch {
-      // Transcriber not running — return static list with unknown status
       const models = ['tiny', 'base', 'small', 'medium', 'large'].map(name => ({
         name,
         downloaded: null,
         sizeLabel: { tiny: '~75 MB', base: '~145 MB', small: '~465 MB', medium: '~1.5 GB', large: '~2.9 GB' }[name],
       }));
-      return res.json({ success: true, models, transcriber_offline: true });
+      return sendSuccess(res, { models, transcriber_offline: true });
     }
   }
 
-  async downloadWhisperModel(req, res) {
+  async downloadWhisperModel(req, res, next) {
     const { model } = req.body;
     if (!['tiny', 'base', 'small', 'medium', 'large'].includes(model)) {
-      return res.status(400).json({ success: false, error: 'Invalid model name' });
+      return sendError(res, badRequest('Invalid model name'));
     }
     try {
       const resp = await fetch('http://localhost:8000/download-whisper-model', {
@@ -529,14 +517,15 @@ class ConfigController {
         signal: AbortSignal.timeout(5000),
       });
       const data = await resp.json();
-      return res.json({ success: true, ...data });
+      return sendSuccess(res, data);
     } catch {
-      return res.status(503).json({ success: false, error: 'Transcriber not running. Start the app first.' });
+      return sendError(res, badRequest('Transcriber not running. Start the app first.'));
     }
   }
 
-  // ── Telemetry: read current config (no secrets exposed) ─────────────
-  getTelemetryStatus(req, res) {
+  // ── Telemetry: read current config ────────────────────
+
+  getTelemetryStatus(req, res, next) {
     this._reloadEnv();
     const t = {
       enabled:       process.env.TELEMETRY_ENABLED === 'true',
@@ -547,8 +536,7 @@ class ConfigController {
       grafana_url:   process.env.GRAFANA_URL                 || '',
       grafana_sa_token: process.env.GRAFANA_SA_TOKEN         || '',
     };
-    return res.json({
-      success: true,
+    return sendSuccess(res, {
       enabled:        t.enabled && isTelemetryEnabled(),
       configured:     t.enabled,
       otlp_endpoint:  t.otlp_endpoint || 'https://otlp-gateway-prod-us-east-0.grafana.net/otlp',
@@ -562,8 +550,9 @@ class ConfigController {
     });
   }
 
-  // ── Telemetry: validate + persist + reload both services ────────────
-  async saveAndReloadTelemetry(req, res) {
+  // ── Telemetry: validate + persist + reload ────────────
+
+  async saveAndReloadTelemetry(req, res, next) {
     const body = req.body || {};
     const enable        = !!body.enabled;
     const otlpEndpoint  = (body.otlp_endpoint  || '').trim();
@@ -586,7 +575,7 @@ class ConfigController {
       return `Bearer ${accessToken}`;
     };
 
-    // ── Disable path ──────────────────────────────────────────────────
+    // Disable path
     if (!enable) {
       const updates = { TELEMETRY_ENABLED: 'false' };
       if (otlpEndpoint) updates.OTLP_ENDPOINT = otlpEndpoint;
@@ -598,13 +587,13 @@ class ConfigController {
       try { await shutdownTelemetry(); } catch {}
       this._reloadPythonTelemetry().catch(() => {});
       log.info('Telemetry disabled via settings');
-      return res.json({ success: true, enabled: false, message: 'Telemetry disabled.' });
+      return sendSuccess(res, { enabled: false, message: 'Telemetry disabled.' });
     }
 
-    // ── Enable path: validate first ───────────────────────────────────
-    if (!otlpEndpoint) return res.status(400).json({ success: false, error: 'OTLP endpoint is required.' });
-    if (!accessToken)  return res.status(400).json({ success: false, error: 'Access policy token is required.' });
-    if (!instanceId)   return res.status(400).json({ success: false, error: 'Instance ID is required (Grafana Cloud uses Basic auth: instanceID:token).' });
+    // Enable path: validate first
+    if (!otlpEndpoint) return sendError(res, badRequest('OTLP endpoint is required.'));
+    if (!accessToken)  return sendError(res, badRequest('Access policy token is required.'));
+    if (!instanceId)   return sendError(res, badRequest('Instance ID is required (Grafana Cloud uses Basic auth: instanceID:token).'));
 
     const headerToken = buildHeader();
     log.info('Validating OTLP endpoint', { endpoint: otlpEndpoint, instanceId });
@@ -626,10 +615,10 @@ class ConfigController {
         unreachable: `Could not reach the endpoint: ${probe.error || 'network error'}.`,
       }[probe.reason] || `Endpoint returned HTTP ${probe.status}.`;
       log.warn('Telemetry validation failed — staying disabled', { reason: probe.reason, status: probe.status });
-      return res.json({ success: false, enabled: false, validation: probe, error: reasonMsg });
+      return sendError(res, badRequest(reasonMsg));
     }
 
-    // ── Validation passed → persist enabled=true and reload ───────────
+    // Validation passed → persist enabled=true and reload
     this._writeDotEnvKeys({
       TELEMETRY_ENABLED:       'true',
       OTLP_ENDPOINT:            otlpEndpoint,
@@ -655,13 +644,13 @@ class ConfigController {
       if (isTelemetryEnabled()) startSystemMetricsSampler(10).catch(() => {});
     } catch (e) {
       log.error('Telemetry reinit failed', { error: e.message });
-      return res.status(500).json({ success: false, error: `Reload failed: ${e.message}` });
+      return sendError(res, internal(`Reload failed: ${e.message}`));
     }
     const pyResult = await this._reloadPythonTelemetry();
 
     log.info('Telemetry enabled via settings', { endpoint: otlpEndpoint, prefix: servicePrefix, python: pyResult });
-    return res.json({
-      success: true, enabled: true, validation: probe, python: pyResult,
+    return sendSuccess(res, {
+      enabled: true, validation: probe, python: pyResult,
       message: 'Telemetry validated and enabled.',
     });
   }
@@ -675,13 +664,13 @@ class ConfigController {
       const body = await resp.json().catch(() => ({}));
       return { ok: resp.ok, ...body };
     } catch (e) {
-      // Transcriber may not be up yet — that's OK, it'll pick up the config on next start.
       return { ok: false, error: e.message };
     }
   }
 
-  // ── Dashboard auto-import to Grafana ──────────────────────────────────────
-  async importDashboardToGrafana(req, res) {
+  // ── Dashboard auto-import to Grafana ──────────────────
+
+  async importDashboardToGrafana(req, res, next) {
     const body = req.body || {};
     const grafanaUrl = (body.grafana_url || '').trim().replace(/\/+$/, '');
     let saToken      = (body.sa_token    || '').trim();
@@ -689,8 +678,8 @@ class ConfigController {
     this._reloadEnv();
     if (saToken === '***') saToken = process.env.GRAFANA_SA_TOKEN || '';
 
-    if (!grafanaUrl) return res.status(400).json({ success: false, error: 'Grafana URL is required (e.g., https://my-stack.grafana.net)' });
-    if (!saToken)   return res.status(400).json({ success: false, error: 'Service Account token is required (starts with glsa_…)' });
+    if (!grafanaUrl) return sendError(res, badRequest('Grafana URL is required (e.g., https://my-stack.grafana.net)'));
+    if (!saToken)   return sendError(res, badRequest('Service Account token is required (starts with glsa_…)'));
 
     const headers = { 'Authorization': `Bearer ${saToken}`, 'Content-Type': 'application/json' };
 
@@ -699,20 +688,20 @@ class ConfigController {
     try {
       const r = await fetch(`${grafanaUrl}/api/datasources`, { headers, signal: AbortSignal.timeout(10000) });
       if (r.status === 401 || r.status === 403) {
-        return res.json({ success: false, error: 'Service Account token rejected (HTTP ' + r.status + '). Token needs Editor role + dashboards:write scope.' });
+        return sendSuccess(res, { success: false, error: 'Service Account token rejected (HTTP ' + r.status + '). Token needs Editor role + dashboards:write scope.' });
       }
       if (!r.ok) {
-        return res.json({ success: false, error: `Grafana returned HTTP ${r.status} for /api/datasources. Check the URL.` });
+        return sendSuccess(res, { success: false, error: `Grafana returned HTTP ${r.status} for /api/datasources. Check the URL.` });
       }
       datasources = await r.json();
     } catch (err) {
-      return res.json({ success: false, error: `Could not reach Grafana: ${err.message}` });
+      return sendSuccess(res, { success: false, error: `Could not reach Grafana: ${err.message}` });
     }
 
     const prom = datasources.find((d) => d.type === 'prometheus' && /prom/i.test(d.name)) || datasources.find((d) => d.type === 'prometheus');
     const loki = datasources.find((d) => d.type === 'loki');
-    if (!prom) return res.json({ success: false, error: 'No Prometheus data source found in this Grafana stack.' });
-    if (!loki) return res.json({ success: false, error: 'No Loki data source found in this Grafana stack.' });
+    if (!prom) return sendSuccess(res, { success: false, error: 'No Prometheus data source found in this Grafana stack.' });
+    if (!loki) return sendSuccess(res, { success: false, error: 'No Loki data source found in this Grafana stack.' });
 
     // 2. Read dashboard JSON + substitute placeholders
     let dashboard;
@@ -722,13 +711,11 @@ class ConfigController {
         .replaceAll('${DS_PROMETHEUS}', prom.uid)
         .replaceAll('${DS_LOKI}',       loki.uid);
       dashboard = JSON.parse(raw);
-      // Strip import-wizard markers so Grafana accepts it as a real dashboard.
       delete dashboard.__inputs;
       delete dashboard.__requires;
-      // Force a fresh creation rather than version-overwrite when uid collides.
       dashboard.id = null;
     } catch (err) {
-      return res.status(500).json({ success: false, error: `Could not read dashboard JSON: ${err.message}` });
+      return sendError(res, internal(`Could not read dashboard JSON: ${err.message}`));
     }
 
     // 3. POST to Grafana
@@ -747,13 +734,13 @@ class ConfigController {
       });
       result = await r.json().catch(() => ({}));
       if (!r.ok) {
-        return res.json({ success: false, error: result.message || `Grafana returned HTTP ${r.status} on dashboard import.` });
+        return sendSuccess(res, { success: false, error: result.message || `Grafana returned HTTP ${r.status} on dashboard import.` });
       }
     } catch (err) {
-      return res.json({ success: false, error: `Dashboard import failed: ${err.message}` });
+      return sendSuccess(res, { success: false, error: `Dashboard import failed: ${err.message}` });
     }
 
-    // 4. Persist Grafana URL + SA token for next time
+    // 4. Persist Grafana URL + SA token
     try {
       this._writeDotEnvKeys({ GRAFANA_URL: grafanaUrl, GRAFANA_SA_TOKEN: saToken });
     } catch (e) {
@@ -762,10 +749,8 @@ class ConfigController {
 
     const dashboardUrl = `${grafanaUrl}${result.url || `/d/${result.uid}`}`;
     log.info('Dashboard imported to Grafana', { uid: result.uid, url: dashboardUrl });
-    // Persist so the settings page can show "Open Dashboard" on future loads
     try { this._writeDotEnvKeys({ GRAFANA_DASHBOARD_URL: dashboardUrl }); } catch (_) {}
-    return res.json({
-      success:        true,
+    return sendSuccess(res, {
       url:            dashboardUrl,
       uid:            result.uid,
       version:        result.version,

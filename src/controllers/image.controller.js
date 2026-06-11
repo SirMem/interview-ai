@@ -1,16 +1,15 @@
 import fs from 'fs';
 import imageProcessingService from '../services/image-processing.service.js';
-import { upload } from '../middleware/upload.middleware.js';
+import { sendSuccess, sendError } from '../lib/response.js';
+import { badRequest } from '../lib/errors.js';
 import logger from '../utils/logger.js';
 
 const log = logger('ImageController');
 
 class ImageController {
-  async uploadImage(req, res) {
+  async uploadImage(req, res, next) {
     if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, error: 'No file uploaded' });
+      return sendError(res, badRequest('No file uploaded'));
     }
 
     const filePath = req.file.path;
@@ -24,40 +23,35 @@ class ImageController {
         useContextEnabled,
       );
 
-      // Clean up uploaded file after processing
+      // 处理完成后清理临时文件
       fs.unlink(filePath, (err) => {
         if (err) log.error('Error deleting uploaded file', err);
       });
 
-      res.json({
-        success: true,
-        message: 'Image processed successfully',
+      return sendSuccess(res, {
         filename: fileName,
         extractedText: result.extractedText.substring(0, 200) + '...',
         gptResponse: result.gptResponse.substring(0, 200) + '...',
         usedContext: result.usedContext,
       });
     } catch (err) {
-      // Clean up uploaded file on error
+      // 出错时也要清理临时文件
       fs.unlink(filePath, (err) => {
         if (err) log.error('Error deleting uploaded file', err);
       });
 
       log.error('Error processing image', err);
-      res.status(500).json({
-        success: false,
-        error: err.message || 'Error processing image',
-      });
+      return sendError(res, err);
     }
   }
 
-  getProcessedData(req, res) {
+  getProcessedData(req, res, next) {
     try {
       const data = imageProcessingService.getProcessedData();
-      res.json(data || []);
+      return sendSuccess(res, { data });
     } catch (err) {
       log.error('Error serving data', err);
-      res.json([]);
+      return sendSuccess(res, { data: [] });
     }
   }
 }
