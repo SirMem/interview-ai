@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Layered backend architecture** — new `src/lib/` (unified infrastructure: `errors.js` with http-errors, `response.js` with sendSuccess/sendError, `validate.js` with Zod schema validation, `env.js` with Zod env validation), `src/repositories/` (data access layer), `src/services/config/` (extracted config sub-services), `src/controllers/config/` (extracted config sub-controllers).
+- **pino structured logging** — replaced custom `logger.js` with pino, keeping the same module-level API so no callers needed changes.
+- **JWT authentication middleware** — `src/middleware/auth.middleware.js`, optional via `JWT_SECRET` env var. When unset, authentication is disabled (dev mode).
+- **HTTP audit logging** — `telemetry.middleware.js` now logs every request's method, path, query params, and sanitized body on arrival and completion.
+- **Dependencies** — added `zod`, `http-errors`, `express-jwt`, `jsonwebtoken`, `express-rate-limit`, `pino`.
+
+### Changed
+- **Unified response format** — all 5 controllers (`context`, `image`, `channel`, `session`, `config`) now use `sendSuccess`/`sendError` from `src/lib/response.js`. Every API endpoint returns the standard envelope `{ success: true, ... }` / `{ success: false, error, code?, details? }`.
+- `src/middleware/error.middleware.js` — now handles `http-errors` (via `statusCode`), `ZodError` (→ 400 with validation details), `MulterError` (→ 400), and generic errors (→ 500).
 - **Restore ended Sessions into live Interview memory** (#6) — new `reactivateSession(sessionId)` method on `SessionService` changes an ended session back to active, clears `ended_at`, sets `activeSessionId`, and records a `session_restored` event. `InterviewTranscriptBuffer` gains `clear()` and `hydrateFromTurns(turns)` for resetting and loading conversation turns. `DataHandler` listens for `restore_session` Socket.IO event, reactivates the session, loads the 8 most recent turns into memory, and emits `session_restored`.
 - **`getTurns(sessionId, { limit: N })`** — new `limit` option returns the N most recent turns (via `slice(-N)`), enabling efficient memory hydration.
 - **21 new tests** — 8 InterviewTranscriptBuffer tests (clear, hydrate, cap, idempotent), 7 SessionService tests (reactivateSession lifecycle + getTurns limit), 5 DataHandler tests (restore_session success, errors for missing/active/no-id, stt_final append after restore). Plus 1 integration test for getTurns limit. Total tests: 95.
