@@ -3,12 +3,14 @@
  *
  * 所有 controller 的响应必须通过此模块返回，保证格式一致性：
  *   { success: true, ...data }
- *   { success: false, error: '...', details?: ... }
+ *   { success: false, error: '...', code: '...', details?: [...] }
+ *
+ * 兼容 http-errors（通过 err.statusCode 识别）和普通 Error。
  *
  * @example
  *   import { sendSuccess, sendError } from '../lib/response.js'
  *   sendSuccess(res, { session })
- *   sendError(res, error)  // 自动读取 error.statusCode
+ *   sendError(res, err)  // 自动读取 err.statusCode
  */
 
 /**
@@ -24,9 +26,9 @@ export function sendSuccess(res, data = {}, { status = 200, meta } = {}) {
 }
 
 /**
- * 错误响应
+ * 错误响应 — 兼容 http-errors（statusCode）和普通 Error
  * @param {import('express').Response} res
- * @param {Error|import('./errors.js').AppError} error
+ * @param {Error & { statusCode?: number, details?: unknown, code?: string }} error
  */
 export function sendError(res, error) {
   const statusCode = error.statusCode || 500;

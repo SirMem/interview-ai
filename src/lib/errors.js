@@ -1,61 +1,94 @@
 /**
- * AppError — 统一错误类体系
+ * 统一错误类体系
  *
- * 所有控制器/服务层抛出的业务错误统一使用此层级。
- * error.middleware.js 根据 instanceof 判断返回格式。
+ * 基于 http-errors 实现，一行创建带状态码的错误。
+ * 所有 controller/service 层抛出的业务错误统一使用此模块。
  *
  * @example
- *   throw new NotFoundError(`Session "${id}" not found`)
- *   throw new ValidationError('name is required')
- *   throw new AuthError('Invalid token')
+ *   import { notFound, badRequest, unauthorized } from '../lib/errors.js'
+ *   throw notFound(`Session "${id}" not found`)
+ *   throw badRequest('name is required')
  */
 
-export class AppError extends Error {
-  /**
-   * @param {number} statusCode - HTTP 状态码
-   * @param {string} message    - 错误描述
-   * @param {{ code?: string, details?: unknown }} [options]
-   */
-  constructor(statusCode, message, { code, details } = {}) {
-    super(message);
-    this.name = 'AppError';
-    this.statusCode = statusCode;
-    this.code = code || 'ERROR';
-    this.details = details;
-  }
-}
+import createError from 'http-errors';
 
-export class NotFoundError extends AppError {
-  constructor(message = 'Resource not found', options) {
-    super(404, message, { code: 'NOT_FOUND', ...options });
-    this.name = 'NotFoundError';
-  }
-}
+// ── 常见 HTTP 错误 —— 一行工厂函数 ──────────────────────
 
-export class ValidationError extends AppError {
-  constructor(message = 'Validation failed', options) {
-    super(400, message, { code: 'VALIDATION_ERROR', ...options });
-    this.name = 'ValidationError';
-  }
-}
+/** 400 Bad Request */
+export const badRequest = (message = 'Bad request', properties) => {
+  const err = createError(400, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
 
-export class AuthError extends AppError {
-  constructor(message = 'Unauthorized', options) {
-    super(401, message, { code: 'AUTH_ERROR', ...options });
-    this.name = 'AuthError';
-  }
-}
+/** 401 Unauthorized */
+export const unauthorized = (message = 'Unauthorized', properties) => {
+  const err = createError(401, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
 
-export class ForbiddenError extends AppError {
-  constructor(message = 'Forbidden', options) {
-    super(403, message, { code: 'FORBIDDEN', ...options });
-    this.name = 'ForbiddenError';
-  }
-}
+/** 403 Forbidden */
+export const forbidden = (message = 'Forbidden', properties) => {
+  const err = createError(403, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
 
-export class ConflictError extends AppError {
-  constructor(message = 'Resource already exists', options) {
-    super(409, message, { code: 'CONFLICT', ...options });
-    this.name = 'ConflictError';
-  }
-}
+/** 404 Not Found */
+export const notFound = (message = 'Resource not found', properties) => {
+  const err = createError(404, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
+
+/** 409 Conflict */
+export const conflict = (message = 'Resource already exists', properties) => {
+  const err = createError(409, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
+
+/** 422 Unprocessable Entity */
+export const unprocessable = (message = 'Unprocessable entity', properties) => {
+  const err = createError(422, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
+
+/** 429 Too Many Requests */
+export const tooManyRequests = (message = 'Rate limit exceeded', properties) => {
+  const err = createError(429, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
+
+/** 500 Internal Server Error */
+export const internal = (message = 'Internal server error', properties) => {
+  const err = createError(500, message);
+  if (properties) Object.assign(err, properties);
+  return err;
+};
+
+// ── 全通用接口 —— 任意状态码 ───────────────────────────
+
+/**
+ * 创建任意 HTTP 错误
+ * @param {number} status - HTTP 状态码
+ * @param {string} message - 错误描述
+ * @param {{ details?: unknown }} [options]
+ */
+export const httpError = (status, message, { details } = {}) => {
+  const err = createError(status, message);
+  if (details) err.details = details;
+  return err;
+};
+
+// ── 判断函数 ──────────────────────────────────────────
+
+/**
+ * 判断一个错误是否来自本模块（http-errors 实例或原生 Error）
+ * @param {unknown} err
+ * @returns {err is import('http-errors').HttpError}
+ */
+export const isHttpError = (err) => err?.statusCode != null;
