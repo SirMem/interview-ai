@@ -60,6 +60,7 @@
     "node-tesseract": "^0.2.7",
     "nodemon": "^3.1.9",
     "openai": "^6.10.0",
+    "pino": "^10.3.1",
     "robotjs": "^0.6.0",
     "screenshot-desktop": "^1.15.1",
     "sharp": "^0.34.5",
